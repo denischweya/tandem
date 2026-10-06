@@ -77,7 +77,7 @@ abstract class TestCase extends BaseTestCase
 
         if ($actual !== $expected) {
             throw new RuntimeException(
-                "Refusing to run tests: the active connection resolved to database "
+                'Refusing to run tests: the active connection resolved to database '
                 ."\"{$actual}\", not the required test database \"{$expected}\". This is a "
                 .'WRONG DATABASE failure, not a missing one - phpunit.xml\'s <env '
                 .'name="DB_DATABASE"> did not take effect. The near-certain cause is a '

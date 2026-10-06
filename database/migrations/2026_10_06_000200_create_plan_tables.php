@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -22,8 +23,8 @@ return new class extends Migration
             $table->string('visibility')->default('invite_only');
             $table->string('timezone');
             $table->string('cover_image_path')->nullable();
-            $table->timestampTz('archived_at')->nullable();
-            $table->timestampsTz();
+            $table->timestampTz('archived_at', 6)->nullable();
+            $table->timestampsTz(6);
 
             $table->index('owner_id');
             $table->index(['status', 'updated_at']);
@@ -35,9 +36,9 @@ return new class extends Migration
             $table->foreignUuid('user_id')->constrained()->cascadeOnDelete();
             $table->string('role')->default('member');
             $table->string('status')->default('invited');
-            $table->timestampTz('joined_at')->nullable();
+            $table->timestampTz('joined_at', 6)->nullable();
             $table->jsonb('notification_settings')->default('{}');
-            $table->timestampsTz();
+            $table->timestampsTz(6);
 
             $table->unique(['plan_id', 'user_id']);
             $table->index('user_id');
@@ -55,14 +56,19 @@ return new class extends Migration
             $table->string('email')->nullable();
             $table->string('token_hash')->unique();
             $table->string('role')->default('member');
-            $table->timestampTz('expires_at');
-            $table->timestampTz('accepted_at')->nullable();
+            $table->timestampTz('expires_at', 6);
+            $table->timestampTz('accepted_at', 6)->nullable();
             $table->foreignUuid('accepted_by')->nullable()->constrained('users')->nullOnDelete();
-            $table->timestampTz('revoked_at')->nullable();
-            $table->timestampsTz();
+            $table->timestampTz('revoked_at', 6)->nullable();
+            $table->timestampsTz(6);
 
             $table->index('plan_id');
         });
+
+        // Byte-exact uniqueness, same reasoning as users.email above: nullable, because
+        // not every invite carries an email (link-only invites), so the CHECK must allow
+        // NULL through rather than forcing a value.
+        DB::statement('ALTER TABLE plan_invites ADD CONSTRAINT plan_invites_email_lowercase CHECK (email IS NULL OR email = lower(email))');
 
         Schema::create('plan_activity', function (Blueprint $table): void {
             $table->uuid('id')->primary();
@@ -76,9 +82,15 @@ return new class extends Migration
             $table->string('subject_type')->nullable();
             $table->uuid('subject_id')->nullable();
             $table->jsonb('metadata')->default('{}');
-            $table->timestampTz('created_at');
+            $table->timestampTz('created_at', 6);
 
             $table->index(['plan_id', 'created_at']);
+            // Spec §9.3 step 3 anonymises plan_activity with an UPDATE ... WHERE actor_id = ?
+            // that runs inside the single transaction DELETE /api/v1/me uses for steps 1-4.
+            // Without this index that UPDATE seq-scans the highest-volume table in the schema
+            // from inside a user-facing request. Single-column: actor_id alone is the only
+            // predicate that UPDATE filters on.
+            $table->index('actor_id');
         });
     }
 

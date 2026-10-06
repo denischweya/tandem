@@ -16,8 +16,8 @@ return new class extends Migration
             $table->uuid('aggregate_id');
             $table->string('event_type');
             $table->jsonb('payload');
-            $table->timestampTz('occurred_at');
-            $table->timestampTz('published_at')->nullable();
+            $table->timestampTz('occurred_at', 6);
+            $table->timestampTz('published_at', 6)->nullable();
             $table->unsignedSmallInteger('attempts')->default(0);
             $table->text('last_error')->nullable();
 
@@ -32,8 +32,8 @@ return new class extends Migration
             $table->string('request_hash');
             $table->unsignedSmallInteger('response_status')->nullable();
             $table->jsonb('response_body')->nullable();
-            $table->timestampTz('expires_at');
-            $table->timestampsTz();
+            $table->timestampTz('expires_at', 6);
+            $table->timestampsTz(6);
 
             $table->unique(['user_id', 'key']);
         });
@@ -46,7 +46,7 @@ return new class extends Migration
             $table->uuid('subject_id')->nullable();
             $table->string('ip_address', 45)->nullable();
             $table->jsonb('context')->default('{}');
-            $table->timestampTz('created_at');
+            $table->timestampTz('created_at', 6);
 
             $table->index(['subject_type', 'subject_id']);
             $table->index('created_at');

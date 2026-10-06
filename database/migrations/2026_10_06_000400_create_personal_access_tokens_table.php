@@ -22,9 +22,9 @@ return new class extends Migration
             $table->text('name');
             $table->string('token', 64)->unique();
             $table->text('abilities')->nullable();
-            $table->timestampTz('last_used_at')->nullable();
-            $table->timestampTz('expires_at')->nullable()->index();
-            $table->timestampsTz();
+            $table->timestampTz('last_used_at', 6)->nullable();
+            $table->timestampTz('expires_at', 6)->nullable()->index();
+            $table->timestampsTz(6);
         });
     }
 
