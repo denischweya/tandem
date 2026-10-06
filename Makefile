@@ -2,7 +2,7 @@ PHP := /opt/homebrew/opt/php/bin/php
 COMPOSER := $(PHP) /usr/local/bin/composer
 ARTISAN := $(PHP) artisan
 
-.PHONY: up down migrate fresh api queue test test-db stan lint lint-fix openapi verify
+.PHONY: up down migrate fresh api queue test test-db stan lint lint-fix openapi openapi-check verify
 
 up:        ; docker compose up -d && sleep 2 && docker compose ps
 down:      ; docker compose down
@@ -21,7 +21,8 @@ test-db:
 stan:      ; $(PHP) vendor/bin/phpstan analyse --memory-limit=1G
 lint:      ; $(PHP) vendor/bin/pint --test
 lint-fix:  ; $(PHP) vendor/bin/pint
-openapi:   ; $(ARTISAN) scramble:export --path=openapi.json
+openapi:   ; $(ARTISAN) scramble:export --path=openapi.json --fail-on-unknown
+openapi-check: ; ./bin/check-openapi.sh
 
-verify: lint stan test-db test
+verify: lint stan openapi-check test-db test
 	@echo "all checks passed"
