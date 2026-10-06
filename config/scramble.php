@@ -54,7 +54,10 @@ return [
     ],
 
     'ui' => [
-        'title' => null,
+        // Pinned to a literal, not left to fall through to config('app.name'),
+        // which is env('APP_NAME'). openapi.json is gated on byte equality, so any
+        // environment-derived value in it makes the gate environment-dependent.
+        'title' => 'Tandem',
     ],
 
     /*
