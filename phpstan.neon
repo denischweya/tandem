@@ -8,4 +8,6 @@ parameters:
         - database
         - routes
         - tests
+    excludePaths:
+        - tests/Architecture/*
     tmpDir: build/phpstan
