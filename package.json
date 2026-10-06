@@ -1,0 +1,39 @@
+{
+  "name": "@tandem/shared",
+  "version": "0.1.0",
+  "description": "Generated API types, hand-written Zod schemas and timezone-safe date helpers, shared by `tandem-mobile` and `tandem-web`.",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "sync": "node scripts/sync-openapi.mjs",
+    "generate": "npx openapi-typescript openapi.json -o src/types/api.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src scripts",
+    "types-check": "npm run generate && git ls-files --error-unmatch src/types/api.ts >/dev/null && git diff --exit-code HEAD -- src/types/api.ts",
+    "format-check": "prettier --check .",
+    "verify": "npm run typecheck && npm run lint && npm run format-check && npm run test && npm run types-check"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "private": false,
+  "types": "src/index.ts",
+  "files": [
+    "src"
+  ],
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^26.6.4",
+    "eslint": "^9.39.5",
+    "globals": "^17.13.0",
+    "openapi-typescript": "^7.13.0",
+    "prettier": "^3.9.9",
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.71.1",
+    "vitest": "^3.2.7"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  }
+}
