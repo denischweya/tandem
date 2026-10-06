@@ -2,7 +2,15 @@ PHP := /opt/homebrew/opt/php/bin/php
 COMPOSER := $(PHP) /usr/local/bin/composer
 ARTISAN := $(PHP) artisan
 
-.PHONY: up down migrate fresh api queue config-clear test test-db stan lint lint-fix openapi openapi-check verify
+.PHONY: install setup up down migrate fresh api queue config-clear test test-db stan lint lint-fix openapi openapi-check verify
+
+install:   ; $(COMPOSER) install
+# Not migrate: migrate needs postgres up (`make up`), which setup must not assume. cp -n
+# leaves an existing .env alone rather than clobbering it. Semicolon, not &&, deliberately:
+# BSD cp (macOS, this project's target) exits 1 when -n skips an existing file, unlike GNU
+# cp which exits 0 - && would then skip key:generate on every machine that already has a
+# .env, which is the common case for a repeat `make setup`, not just the first one.
+setup:     install ; cp -n .env.example .env; $(ARTISAN) key:generate
 
 up:        ; docker compose up -d && sleep 2 && docker compose ps
 down:      ; docker compose down

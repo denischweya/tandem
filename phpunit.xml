@@ -22,6 +22,14 @@
     </source>
     <php>
         <env name="APP_ENV" value="testing"/>
+        <!-- Throwaway key, committed deliberately: Sanctum tokens, signed verification URLs
+             and encrypted cookies all need a real APP_KEY, and .env.example ships one blank.
+             Without this pinned here, the suite fails everywhere with "No application
+             encryption key has been specified" until a developer manually runs
+             `artisan key:generate` - see `make setup` in the Makefile, which also covers it
+             for `make api`. This key secures nothing: it is public, in version control, and
+             used only against the disposable tandem_test database. -->
+        <env name="APP_KEY" value="base64:3EVQEjyCqVgy50OyBXFOsjp6k55iIkj6TWRXTwtnbiw="/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
@@ -34,6 +42,18 @@
         <env name="DB_PASSWORD" value="tandem"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
+        <!-- REDIS_HOST/REDIS_PORT first, deliberately: an unpinned REDIS_CLIENT only makes
+             the suite fail (self-correcting, see below); an unpinned REDIS_HOST would let
+             /ready's Redis probe quietly pass against whatever Redis happens to be running
+             on the machine - the same silently-wrong-green failure DB_HOST is already
+             pinned to prevent. -->
+        <env name="REDIS_HOST" value="127.0.0.1"/>
+        <env name="REDIS_PORT" value="6379"/>
+        <!-- config/database.php defaults REDIS_CLIENT to phpredis, which this project does
+             not install (composer requires predis/predis instead). Unpinned, /health and
+             /ready fail with a 503 the moment anyone's shell does not already export
+             REDIS_CLIENT=predis. -->
+        <env name="REDIS_CLIENT" value="predis"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
