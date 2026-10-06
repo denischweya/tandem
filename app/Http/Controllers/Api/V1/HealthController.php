@@ -19,9 +19,25 @@ final class HealthController
     public function ready(): JsonResponse
     {
         $checks = [
-            'database' => $this->check(fn (): bool => DB::connection()->getPdo() !== null),
-            'redis' => $this->check(fn (): bool => Redis::connection()->ping() !== false),
-            'queue' => $this->check(fn (): bool => Redis::connection()->client()->llen('queues:default') !== false),
+            // Each probe performs a real round-trip and returns true, rather than comparing
+            // a return value against null or false. PHPStan level 8 rejects those comparisons
+            // as always-true, and a type assertion would not prove the service is reachable
+            // anyway. If the service is down, the call throws and check() returns false.
+            'database' => $this->check(function (): bool {
+                DB::connection()->select('select 1');
+
+                return true;
+            }),
+            'redis' => $this->check(function (): bool {
+                Redis::connection()->ping();
+
+                return true;
+            }),
+            'queue' => $this->check(function (): bool {
+                Redis::connection()->command('llen', ['queues:default']);
+
+                return true;
+            }),
         ];
 
         $ok = ! in_array(false, $checks, true);

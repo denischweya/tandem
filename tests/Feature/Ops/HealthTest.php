@@ -20,11 +20,13 @@ it('reports readiness of each dependency', function (): void {
 });
 
 it('does not leak infrastructure detail in readiness', function (): void {
-    $body = getJson('/ready')->getContent();
+    $body = (string) getJson('/ready')->getContent();
 
-    expect($body)
-        ->not->toContain('127.0.0.1')
-        ->not->toContain('5432')
-        ->not->toContain('postgres')
-        ->not->toContain('tandem_password');
+    // str_contains(...)->toBeFalse() rather than Pest's ->not chain: PHPStan level 8
+    // rejects `->not` as an undefined property on Expectation, and this project does not
+    // suppress PHPStan findings.
+    foreach (['127.0.0.1', '5432', 'postgres', 'tandem', 'redis'] as $needle) {
+        expect(str_contains($body, $needle))
+            ->toBeFalse("Readiness response leaked infrastructure detail: {$needle}");
+    }
 });
