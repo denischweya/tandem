@@ -7,7 +7,6 @@ namespace Database\Factories;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
 
 /**
  * @extends Factory<User>
@@ -15,23 +14,25 @@ use Illuminate\Support\Str;
 class UserFactory extends Factory
 {
     /**
-     * The current password being used by the factory.
+     * The current password hash being used by the factory.
      */
-    protected static ?string $password;
+    protected static ?string $passwordHash;
 
     /**
      * Define the model's default state.
+     *
+     * users has no "name" column (display_name lives on user_profiles) and no "password" or
+     * "remember_token" columns - see app/Models/User.php and the branch-review item this
+     * factory was rewritten to close.
      *
      * @return array<string, mixed>
      */
     public function definition(): array
     {
         return [
-            'name' => fake()->name(),
             'email' => fake()->unique()->safeEmail(),
             'email_verified_at' => now(),
-            'password' => static::$password ??= Hash::make('password'),
-            'remember_token' => Str::random(10),
+            'password_hash' => static::$passwordHash ??= Hash::make('password'),
         ];
     }
 
