@@ -56,6 +56,9 @@ return new class extends Migration
             $table->timestampsTz();
 
             $table->index(['user_id', 'revoked_at']);
+            // ADR 0003 makes revocation per-device, so "every token for device X" is a
+            // real access path and needs its own index.
+            $table->index('device_id');
         });
 
         Schema::create('password_reset_tokens', function (Blueprint $table): void {

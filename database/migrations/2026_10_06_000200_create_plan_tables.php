@@ -47,7 +47,11 @@ return new class extends Migration
         Schema::create('plan_invites', function (Blueprint $table): void {
             $table->uuid('id')->primary();
             $table->foreignUuid('plan_id')->constrained()->cascadeOnDelete();
-            $table->foreignUuid('invited_by')->constrained('users')->cascadeOnDelete();
+            // nullOnDelete, not cascade: hard-deleting the sender must not delete the
+            // invite record, including invites already accepted. That would destroy the
+            // historical "who invited whom" trail, and it would be inconsistent with
+            // accepted_by below, which is preserved the same way.
+            $table->foreignUuid('invited_by')->nullable()->constrained('users')->nullOnDelete();
             $table->string('email')->nullable();
             $table->string('token_hash')->unique();
             $table->string('role')->default('member');
