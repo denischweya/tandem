@@ -30,6 +30,14 @@
              for `make api`. This key secures nothing: it is public, in version control, and
              used only against the disposable tandem_test database. -->
         <env name="APP_KEY" value="base64:3EVQEjyCqVgy50OyBXFOsjp6k55iIkj6TWRXTwtnbiw="/>
+        <!-- Unpinned, this arrives from .env (locally) or `cp .env.example .env` (in CI) and
+             can be true. Spec §135 / blueprint §126 require that no raw backend error reach a
+             user, and APP_DEBUG is the one remaining unpinned value that changes what an HTTP
+             error response *contains* - with it true, Laravel's exception handler returns the
+             full stack trace and message instead of the production error shape. Any
+             error-shape test in a later plan would then be authored against the debug payload
+             and assert the wrong thing for production. -->
+        <env name="APP_DEBUG" value="false"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
