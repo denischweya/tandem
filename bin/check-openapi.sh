@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PHP=/opt/homebrew/opt/php/bin/php
+# Overridable, because CI's PHP is on PATH and is not a Homebrew build. A plain
+# assignment here made `make openapi-check PHP=php` silently ignore the override,
+# which is why the CI workflow used to re-implement this check inline — defining
+# anti-drift guarantee 1 in two places, free to diverge.
+PHP="${PHP:-/opt/homebrew/opt/php/bin/php}"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
