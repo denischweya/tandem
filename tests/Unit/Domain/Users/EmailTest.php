@@ -16,3 +16,10 @@ it('rejects an address that is too long for the column', function (): void {
     expect(fn () => Email::fromString(str_repeat('a', 250).'@example.com'))
         ->toThrow(InvalidArgumentException::class);
 });
+
+it('compares by value', function (): void {
+    expect(Email::fromString('denis@example.com')->equals(Email::fromString('denis@example.com')))
+        ->toBeTrue()
+        ->and(Email::fromString('denis@example.com')->equals(Email::fromString('alice@example.com')))
+        ->toBeFalse();
+});
