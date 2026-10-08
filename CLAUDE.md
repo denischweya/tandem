@@ -31,4 +31,13 @@ This is a Laravel 13 API pinned to PHP 8.4. A few hard constraints for any agent
 ## Architecture boundary
 
 - The `app/Domain/` layer must not import from `Illuminate\`, `Laravel\`, or any vendor SDK.
-  (A later task enforces this with a test.)
+  This is enforced by `tests/Architecture`.
+
+## Never cache config
+
+- Never run `artisan optimize` or `artisan config:cache` (and never commit
+  `bootstrap/cache/config.php`). Once a cached config file exists, Laravel skips reading
+  `.env` and `phpunit.xml`'s `<env>` pins entirely - `RefreshDatabase`'s `migrate:fresh` then
+  silently targets whatever database `.env` names, which is the real development database,
+  not `tandem_test`. This has destroyed a database before. `tests/TestCase.php` guards
+  against this at runtime, but do not rely on the guard - avoid the command.
