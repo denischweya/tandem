@@ -41,3 +41,9 @@ This is a Laravel 13 API pinned to PHP 8.4. A few hard constraints for any agent
   silently targets whatever database `.env` names, which is the real development database,
   not `tandem_test`. This has destroyed a database before. `tests/TestCase.php` guards
   against this at runtime, but do not rely on the guard - avoid the command.
+- `--env=testing` only targets the test database because `.env.testing` exists (it sets
+  `DB_DATABASE=tandem_test`). Destructive `artisan` commands - `migrate:fresh` included - are
+  **not** covered by the `tests/TestCase.php` guard: that guard runs inside PHPUnit's
+  bootstrap and protects the suite, not the CLI. A bare `artisan migrate:fresh --env=testing`
+  run before `.env.testing` existed wiped the development database, because Laravel found no
+  `.env.testing`, fell back to `.env`, and `.env` names the development database.
