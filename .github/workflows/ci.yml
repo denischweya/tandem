@@ -1,0 +1,64 @@
+name: CI
+on:
+  push: { branches: [main, wave-0-foundation] }
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: tandem
+          POSTGRES_USER: tandem
+          POSTGRES_PASSWORD: tandem
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U tandem -d tandem"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo_pgsql, intl
+          coverage: none
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      - run: cp .env.example .env && php artisan key:generate
+
+      - name: Create the test database
+        run: |
+          PGPASSWORD=tandem psql -h 127.0.0.1 -U tandem -d tandem \
+            -c "CREATE DATABASE tandem_test" || echo "already exists"
+
+      - run: php artisan migrate --force
+        env:
+          DB_HOST: 127.0.0.1
+          REDIS_HOST: 127.0.0.1
+
+      - name: Lint
+        run: php vendor/bin/pint --test
+
+      - name: Static analysis
+        run: php vendor/bin/phpstan analyse --memory-limit=1G
+
+      - name: Tests
+        run: php vendor/bin/pest
+        env:
+          DB_HOST: 127.0.0.1
+          REDIS_HOST: 127.0.0.1
+
+      - name: OpenAPI is in sync
+        run: PHP=php ./bin/check-openapi.sh
