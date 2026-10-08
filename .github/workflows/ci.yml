@@ -12,3 +12,22 @@ jobs:
         with: { node-version: '22', cache: npm }
       - run: npm ci
       - run: npm run verify
+      # I2: this is the missing middle link in the anti-drift chain. types-check (above, inside
+      # `verify`) only proves src/types/api.ts matches the openapi.json committed in THIS repo -
+      # it says nothing about whether that committed copy still matches tandem-api's. Without
+      # this step, tandem-api can merge a contract change with green CI while this repo's spec
+      # goes stale and this repo's CI stays green too, because nothing here ever looks upstream.
+      #
+      # Points at tandem-api's `main`, the correct steady state - not at the branch under review,
+      # even though main 404s until tandem-api's pull request merges (verified manually against
+      # wave-0-foundation instead; see the wave's fix report). tandem-api must therefore merge
+      # first. This step is expected to fail until then: a gate that tolerates a 404 by passing
+      # when the upstream file is simply missing is not a gate.
+      - name: The committed OpenAPI document matches tandem-api's
+        run: |
+          curl -fsSL -o /tmp/upstream-openapi.json \
+            https://raw.githubusercontent.com/denischweya/tandem-api/main/openapi.json
+          diff -u openapi.json /tmp/upstream-openapi.json || {
+            echo "::error::openapi.json is stale. Run 'npm run sync' against a tandem-api checkout, commit, and cut a new tag."
+            exit 1
+          }
