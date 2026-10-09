@@ -24,6 +24,44 @@ set -euo pipefail
 # repository does not overwrite variables that are already set.
 OUT="${1:?usage: generate-openapi.sh <output-path>}"
 PHP="${PHP:-/opt/homebrew/opt/php/bin/php}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Refuse to generate from cached config, because a cached config makes every pin above a
+# no-op AND leaves the seal test green - the worst combination available.
+#
+# With bootstrap/cache/config.php present, LoadConfiguration::bootstrap() requires that file
+# and never calls loadConfigurationFiles(), so no config file evaluates env() at all: all six
+# assignments below are dead, and config(...) returns whatever was frozen at cache time.
+# tests/Feature/Contract/OpenApiEnvironmentTest.php still passes in that state, because the
+# hostile run and the committed document were both generated from the same frozen values -
+# the test compares two runs, and freezing makes any two runs agree. That is precisely the
+# "guard reports green while verifying nothing" shape the seal exists to detect.
+#
+# Failing hard rather than clearing silently: a cached config here means someone ran
+# `artisan optimize` or `artisan config:cache`, which CLAUDE.md forbids outright because
+# RefreshDatabase then targets the development database. Clearing it quietly would repair
+# this script's output while hiding the fact that a destructive command was run - the
+# developer needs to know, not be papered over. The Makefile's `test:` target depends on
+# `config-clear` for the same hazard; `openapi-check` never did, and `verify` reaches
+# config-clear only as a prerequisite of `test`, i.e. after openapi-check has already run.
+if [[ -f "$ROOT/bootstrap/cache/config.php" ]]; then
+  cat >&2 <<'ERR'
+Refusing to generate openapi.json: bootstrap/cache/config.php exists.
+
+Laravel loads cached config instead of reading the config files, so every environment pin
+in bin/generate-openapi.sh is silently ignored and config(...) returns values frozen when
+the cache was written. The document would be generated from one machine's frozen state, and
+the environment-seal test would still pass - it compares two runs, and a frozen config makes
+any two runs agree.
+
+That file should not exist in this project at all: `artisan optimize` and
+`artisan config:cache` are forbidden here (see CLAUDE.md - a cached config also points
+RefreshDatabase at the development database).
+
+Run: /opt/homebrew/opt/php/bin/php artisan config:clear
+ERR
+  exit 1
+fi
 
 APP_NAME=Tandem \
 APP_ENV=local \

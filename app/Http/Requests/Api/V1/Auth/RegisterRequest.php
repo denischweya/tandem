@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Requests\Api\V1\Auth;
 
 use App\Http\Rules\IanaTimeZone;
+use App\Http\Rules\ValidEmail;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rules\Password;
 
@@ -55,7 +56,8 @@ final class RegisterRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'email' => ['required', 'string', 'email:rfc', 'max:254', 'unique:users,email'],
+            /** @format email */
+            'email' => ['required', 'string', new ValidEmail, 'max:254', 'unique:users,email'],
             'password' => ['required', 'string', Password::min(12)],
             'display_name' => ['required', 'string', 'max:80'],
             'timezone' => ['required', 'string', new IanaTimeZone],

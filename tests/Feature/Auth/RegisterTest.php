@@ -99,6 +99,18 @@ it('writes one outbox event and sends the verification mail through the dispatch
     Mail::assertSent(VerifyEmailMail::class, fn (VerifyEmailMail $mail) => $mail->hasTo('ada@example.test'));
 });
 
+it('rejects an address email:rfc accepts but the domain value object rejects', function (): void {
+    // The two validators disagreed: 'email:rfc' accepts ada@localhost (a plausible intranet
+    // address), filter_var(FILTER_VALIDATE_EMAIL) does not, and RegisterController calls
+    // Email::fromString() with no try/catch - so every address in that gap left the
+    // controller as a 500 instead of a 422.
+    postJson('/api/v1/auth/register', validRegistration(['email' => 'ada@localhost']))
+        ->assertStatus(422)
+        ->assertJsonValidationErrorFor('email');
+
+    expect(User::count())->toBe(0);
+});
+
 it('rejects a password shorter than twelve characters', function (): void {
     postJson('/api/v1/auth/register', validRegistration(['password' => 'short']))
         ->assertStatus(422)
