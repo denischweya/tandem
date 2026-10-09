@@ -12,6 +12,11 @@ final class ForgotPasswordRequest extends FormRequest
 {
     use NormalizesEmailInput;
 
+    protected function prepareForValidation(): void
+    {
+        $this->normalizeEmailInput();
+    }
+
     /** @return array<string, mixed> */
     public function rules(): array
     {

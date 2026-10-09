@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Infrastructure\Outbox\OutboxWriter;
 use Database\Factories\UserFactory;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -29,7 +30,7 @@ use Laravel\Sanctum\HasApiTokens;
  */
 #[Fillable(['email'])]
 #[Hidden(['password_hash'])]
-class User extends Authenticatable
+class User extends Authenticatable implements MustVerifyEmail
 {
     /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasFactory, HasUuids, Notifiable, SoftDeletes;
@@ -76,5 +77,32 @@ class User extends Authenticatable
     public function getAuthPassword(): string
     {
         return $this->password_hash;
+    }
+
+    /**
+     * Implemented directly rather than by using Illuminate's MustVerifyEmail trait. The trait
+     * supplies sendEmailVerificationNotification() backed by the notification system, which
+     * would bypass the outbox - the one path every email in this application takes (§85).
+     * Writing it out keeps that single path and makes the bypass impossible to take by
+     * accident.
+     */
+    public function hasVerifiedEmail(): bool
+    {
+        return $this->email_verified_at !== null;
+    }
+
+    public function markEmailAsVerified(): bool
+    {
+        return $this->forceFill(['email_verified_at' => $this->freshTimestamp()])->save();
+    }
+
+    public function sendEmailVerificationNotification(): void
+    {
+        app(OutboxWriter::class)->write('User', $this->id, 'user.registered', ['user_id' => $this->id]);
+    }
+
+    public function getEmailForVerification(): string
+    {
+        return $this->email;
     }
 }

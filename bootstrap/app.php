@@ -3,6 +3,7 @@
 use App\Application\Auth\InvalidCredentials;
 use App\Application\Auth\InvalidPasswordResetToken;
 use App\Application\Auth\InvalidRefreshToken;
+use Illuminate\Auth\Middleware\EnsureEmailIsVerified;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -30,7 +31,11 @@ return Application::configure(basePath: dirname(__DIR__))
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        // Registered as an alias so a route can declare `verified`. Laravel's
+        // EnsureEmailIsVerified redirects to a named route for web requests; for a JSON
+        // request it aborts 403, which is the only path this API takes - every request under
+        // api/* is forced to JSON by the shouldRenderJsonWhen callback below.
+        $middleware->alias(['verified' => EnsureEmailIsVerified::class]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

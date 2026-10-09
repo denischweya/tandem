@@ -129,6 +129,18 @@ it('rejects a display name longer than eighty characters', function (): void {
         ->assertJsonValidationErrorFor('display_name');
 });
 
+it('rejects a whitespace-only display name with a 422, not a 500', function (): void {
+    // DisplayName::fromString('   ') throws InvalidArgumentException, and
+    // RegisterController calls it with no try/catch. Without trimming in
+    // RegisterRequest::prepareForValidation(), `required` never sees the empty string and
+    // this would surface as a 500 instead.
+    postJson('/api/v1/auth/register', validRegistration(['display_name' => '   ']))
+        ->assertStatus(422)
+        ->assertJsonValidationErrorFor('display_name');
+
+    expect(User::count())->toBe(0);
+});
+
 it('creates nothing at all when validation fails', function (): void {
     postJson('/api/v1/auth/register', validRegistration(['timezone' => 'nope']))->assertStatus(422);
 

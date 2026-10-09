@@ -18,6 +18,27 @@ final class RegisterRequest extends FormRequest
     use NormalizesEmailInput;
 
     /**
+     * Trims display_name before `required` sees it, for the same reason
+     * UpdateProfileRequest does: DisplayName::fromString('   ') throws
+     * InvalidArgumentException, which RegisterController calls with no try/catch, so
+     * whitespace-only input would surface as a 500 rather than a 422 without this.
+     *
+     * Also where this class's own email normalization happens - see NormalizesEmailInput's
+     * docblock for why that trait exposes normalizeEmailInput() rather than declaring
+     * prepareForValidation() itself.
+     */
+    protected function prepareForValidation(): void
+    {
+        $this->normalizeEmailInput();
+
+        $name = $this->input('display_name');
+
+        if (is_string($name)) {
+            $this->merge(['display_name' => trim($name)]);
+        }
+    }
+
+    /**
      * Why the password rule is length-only, and why this note is in THIS docblock:
      *
      * No composition rules (mixed case, digits, symbols): NIST SP 800-63B advises against

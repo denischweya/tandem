@@ -12,6 +12,11 @@ final class LoginRequest extends FormRequest
 {
     use NormalizesEmailInput;
 
+    protected function prepareForValidation(): void
+    {
+        $this->normalizeEmailInput();
+    }
+
     /**
      * No Password::min() on `password` here, deliberately: a rule on the *submitted*
      * password would reject a sign-in attempt for a legacy credential before checking it,

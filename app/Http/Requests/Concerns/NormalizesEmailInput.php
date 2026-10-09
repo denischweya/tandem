@@ -17,10 +17,21 @@ use App\Http\Support\EmailInput;
  * reject it with a 422 naming the field, rather than this method crashing on a non-string
  * strtolower() call - has exactly one implementation. See EmailInput for why the actual
  * normalization formula is a further-shared static method rather than inlined here.
+ *
+ * Exposed as normalizeEmailInput(), not as prepareForValidation() itself, and that is
+ * deliberate: PHP resolves a method declared directly on a class over one supplied by a
+ * trait it uses, silently - no error, no warning, no deprecation. A trait that defined
+ * prepareForValidation() would be invisibly discarded the moment any using class declared
+ * its own (RegisterRequest needs to, to also trim display_name - see its prepareForValidation()),
+ * taking this normalization, and the invariants above that depend on it, with it. Naming
+ * this method something else means every using class must call it explicitly from its own
+ * prepareForValidation(), so a class that forgets to call it fails by leaving email
+ * unnormalized - visible in the lowercasing and case-insensitive-uniqueness tests - rather
+ * than by silently losing the override and staying green.
  */
 trait NormalizesEmailInput
 {
-    protected function prepareForValidation(): void
+    protected function normalizeEmailInput(): void
     {
         $email = $this->input('email');
 
