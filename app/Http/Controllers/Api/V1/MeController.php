@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Application\Users\DeleteAccount;
 use App\Application\Users\UpdateProfile;
 use App\Domain\Shared\TimeZoneId;
 use App\Domain\Users\DisplayName;
 use App\Http\Requests\Api\V1\UpdateProfileRequest;
 use App\Http\Resources\Api\V1\UserResource;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use RuntimeException;
 
 final class MeController
@@ -70,5 +72,26 @@ final class MeController
                 $request->has('locale') ? $request->string('locale')->toString() : null,
             )->load('profile'),
         );
+    }
+
+    // See show() above for why this null check exists and names no model class.
+    //
+    // 204, not a body: the client has nothing left to render, and spec §9.3 makes the
+    // deletion a soft one with a 30-day grace window - a response describing the deleted
+    // account would be a reason for a client to keep showing it.
+    public function destroy(Request $request, DeleteAccount $deleteAccount): Response
+    {
+        $user = $request->user();
+
+        if ($user === null) {
+            throw new RuntimeException(
+                'DELETE /me was reached without an authenticated user, which means '
+                .'auth:sanctum is no longer on this route.'
+            );
+        }
+
+        $deleteAccount->execute($user);
+
+        return response()->noContent();
     }
 }

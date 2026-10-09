@@ -178,6 +178,20 @@
                         "$ref": "#/components/responses/ValidationException"
                     }
                 }
+            },
+            "delete": {
+                "operationId": "me.destroy",
+                "tags": [
+                    "Me"
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No content"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/AuthenticationException"
+                    }
+                }
             }
         },
         "/auth/refresh": {

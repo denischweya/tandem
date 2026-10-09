@@ -127,6 +127,18 @@ class AppServiceProvider extends ServiceProvider
 
                 Mail::to($user->email)->send(new ResetPasswordMail($user->profile->display_name, $url, $token));
             });
+
+            // Deliberately a no-op that publishes. The event exists so the calendar cycle can
+            // hang §127's provider-token revocation off it without changing the use case, and
+            // registering it now means the dispatcher publishes rather than reporting an
+            // unhandled type forever. If this is ever given real work, the no-op comment is
+            // the thing to delete.
+            //
+            // The event type is 'user.deleted' and nothing else: OutboxHandlers::register()
+            // overwrites a duplicate type silently, so reusing 'user.registered' here would
+            // have replaced the verification email handler with this empty closure, with no
+            // error anywhere.
+            $handlers->register('user.deleted', function (array $payload): void {});
         });
     }
 }

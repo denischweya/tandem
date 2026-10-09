@@ -72,6 +72,40 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
+     * Plans this user OWNS, not Plans they are in - plans.owner_id, which is NOT NULL with
+     * RESTRICT, so this relation is also the set spec §9.3 step 2 has to empty before the
+     * account can ever be hard-deleted. Memberships are planMemberships() below.
+     *
+     * @return HasMany<Plan, $this>
+     */
+    public function plans(): HasMany
+    {
+        return $this->hasMany(Plan::class, 'owner_id');
+    }
+
+    /** @return HasMany<PlanMember, $this> */
+    public function planMemberships(): HasMany
+    {
+        return $this->hasMany(PlanMember::class);
+    }
+
+    /**
+     * Groups this user owns; see plans() for why owning and belonging are separate relations.
+     *
+     * @return HasMany<Group, $this>
+     */
+    public function groups(): HasMany
+    {
+        return $this->hasMany(Group::class, 'owner_id');
+    }
+
+    /** @return HasMany<GroupMember, $this> */
+    public function groupMemberships(): HasMany
+    {
+        return $this->hasMany(GroupMember::class);
+    }
+
+    /**
      * Get the password for the user, from the real column name.
      */
     public function getAuthPassword(): string
