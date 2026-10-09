@@ -3,6 +3,10 @@
 declare(strict_types=1);
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Monolog\Handler\TestHandler;
+use Monolog\Logger;
+use Monolog\LogRecord;
 use Tests\TestCase;
 
 use function Pest\Laravel\postJson;
@@ -89,4 +93,59 @@ function signIn(
     }
 
     return [$user, $refreshToken, $accessToken];
+}
+
+/**
+ * Captures everything written to the configured log channel for the rest of the current test.
+ *
+ * A Monolog TestHandler rather than Log::spy(): the spy replaces the LogManager, so it proves
+ * only that a facade method was called, and Log::shouldHaveReceived() is absent from the Log
+ * facade's documented method list, so level 8 rejects it outright (measured). Pushing a
+ * handler asserts the record actually
+ * reached the logging pipeline - level, message and context - which is what the structured
+ * `event` keys in RefreshSession, RefreshTokenRotator, OutboxDispatcher,
+ * PurgeDeletedUsersCommand and routes/console.php exist to be found by.
+ *
+ * pushHandler() puts the TestHandler at the FRONT of the stack, which matters under
+ * phpunit.xml's LOG_CHANNEL=null: NullHandler swallows a record and stops propagation, so a
+ * handler appended after it would never see anything. TestHandler bubbles, so the NullHandler
+ * behind it still runs and nothing is written to disk.
+ *
+ * Nothing pops the handler: the application - and with it the LogManager and its channels - is
+ * rebuilt for every test, so the handler cannot leak into the next one.
+ */
+function captureLogs(): TestHandler
+{
+    $logger = Log::getLogger();
+
+    if (! $logger instanceof Logger) {
+        throw new RuntimeException(
+            'captureLogs() needs the configured log channel to be backed by Monolog; got '.$logger::class.'.'
+        );
+    }
+
+    $handler = new TestHandler;
+    $logger->pushHandler($handler);
+
+    return $handler;
+}
+
+/**
+ * The records captureLogs() saw, as [level, message, context] triples.
+ *
+ * TestHandler::getRecords() returns Monolog\LogRecord objects; flattening to a list of arrays keeps the assertions in the tests
+ * readable without any of them having to know Monolog's record shape.
+ *
+ * @return list<array{level: string, message: string, context: array<mixed>}>
+ */
+function capturedLogRecords(TestHandler $handler): array
+{
+    return array_values(array_map(
+        fn (LogRecord $record): array => [
+            'level' => $record->level->getName(),
+            'message' => $record->message,
+            'context' => $record->context,
+        ],
+        $handler->getRecords(),
+    ));
 }

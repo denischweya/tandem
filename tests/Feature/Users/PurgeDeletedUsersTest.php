@@ -175,8 +175,10 @@ it('relies on account deletion having already resolved group ownership, not on p
     // warning about exactly that).
     $group = Group::factory()->create(['owner_id' => $user->id]);
 
-    // groups.owner_id is NOT NULL with RESTRICT, the same mechanism Step 5 of this task
-    // proves for plans.owner_id. This command does not duplicate DeleteAccount's
+    // groups.owner_id is NOT NULL with RESTRICT, the same mechanism "refuses to hard-delete
+    // a live multi-member plan..." below exercises for plans.owner_id. The two cases are now
+    // the same shape, which is the point: neither column is repaired here.
+    // This command does not duplicate DeleteAccount's
     // ownership-transfer logic for Groups - doing so here would let a broken invariant
     // silently "self-heal" on a different schedule than DeleteAccount's, with no evidence
     // anything was ever wrong. Failing loudly is the deliberate choice, but "loudly" now
@@ -184,6 +186,8 @@ it('relies on account deletion having already resolved group ownership, not on p
     // uncaught exception. See "continues purging healthy users..." below for why a thrown
     // exception would be the wrong shape: it would take every other purgeable user down
     // with it too.
+    $logs = captureLogs();
+
     runArtisan('users:purge-deleted')
         ->expectsOutputToContain('"purged":0,"failed":1')
         ->assertFailed();
@@ -191,6 +195,20 @@ it('relies on account deletion having already resolved group ownership, not on p
     // The transaction rolled back: nothing was purged, and the Group is untouched.
     assertSoftDeleted('users', ['id' => $user->id]);
     assertDatabaseHas('groups', ['id' => $group->id, 'owner_id' => $user->id]);
+
+    // ...and the failure is on the record somewhere other than a discarded output stream.
+    // ->components->warn() alone is invisible under the scheduler, so this log line is the
+    // only durable evidence that one specific user is stuck. Asserted by its stable `event`
+    // key and the user id, because an alert has to be able to match on both.
+    $failures = array_values(array_filter(
+        capturedLogRecords($logs),
+        fn (array $record): bool => $record['message'] === 'users.purge_deleted.user_failed',
+    ));
+
+    expect($failures)->toHaveCount(1);
+    expect($failures[0]['level'])->toBe('WARNING');
+    expect($failures[0]['context']['user_id'] ?? null)->toBe($user->id);
+    expect($failures[0]['context']['reason'] ?? null)->toBeString();
 });
 
 it('continues purging healthy users after one violates the group invariant, and fails the run', function (): void {
@@ -223,7 +241,12 @@ it('rejects a negative grace-days override instead of silently widening the purg
     // only yesterday must never be at risk from a typo like this.
     $recentlyDeleted = softDeletedDaysAgo(1);
 
-    runArtisan('users:purge-deleted', ['--grace-days' => -5])->assertFailed();
+    // The message matters as much as the exit code: the whole-string parse guard added
+    // alongside this one would otherwise swallow the negative case into its own, vaguer
+    // "must be a whole number of days" error and leave this branch unreachable.
+    runArtisan('users:purge-deleted', ['--grace-days' => -5])
+        ->expectsOutputToContain('must not be negative')
+        ->assertFailed();
 
     assertSoftDeleted('users', ['id' => $recentlyDeleted->id]);
 });
@@ -243,6 +266,63 @@ it('purges everything immediately when --grace-days=0 is paired with --force', f
     $user = softDeletedDaysAgo(1);
 
     runArtisan('users:purge-deleted', ['--grace-days' => 0, '--force' => true])->assertSuccessful();
+
+    assertModelMissing($user);
+});
+
+it('refuses to hard-delete a live multi-member plan the overdue user still owns', function (): void {
+    // Spec §9.3 names "the user's *archived sole-owned* Plans" and nothing wider. Without the
+    // status predicate this command hard-deleted an ACTIVE Plan whose only connection to the
+    // departing user was plans.owner_id - taking plan_members, plan_invites and plan_activity
+    // with it through CASCADE, for every remaining member - and exited 0 reporting it purged.
+    //
+    // The state seeded here cannot arise from DeleteAccount today (step 2 transfers ownership
+    // to the longest-standing active member, so an active Plan never keeps a soft-deleted
+    // owner), which is exactly why this has to be asserted: it is reachable through the
+    // ownership-successor gap two concurrent DELETE /api/v1/me calls leave, and the only thing
+    // standing between that and data loss is this predicate.
+    $departing = softDeletedDaysAgo(31);
+    $survivor = User::factory()->hasProfile()->create();
+
+    $plan = Plan::factory()->create(['owner_id' => $departing->id]);
+    PlanMember::create([
+        'plan_id' => $plan->id, 'user_id' => $survivor->id,
+        'role' => MemberRole::Admin->value, 'status' => MemberStatus::Active->value,
+        'joined_at' => now()->subDays(10),
+    ]);
+
+    // Loud, not silent: plans.owner_id is NOT NULL with RESTRICT, so once the Plan is left
+    // alone the user's forceDelete() raises a foreign-key violation, the per-user catch records
+    // it, and the run exits non-successfully - the same shape the Group branch already gets.
+    runArtisan('users:purge-deleted')
+        ->expectsOutputToContain('"purged":0,"failed":1')
+        ->assertFailed();
+
+    assertDatabaseHas('plans', ['id' => $plan->id, 'owner_id' => $departing->id, 'status' => 'active']);
+    assertDatabaseCount('plan_members', 1);
+    assertSoftDeleted('users', ['id' => $departing->id]);
+    assertNotSoftDeleted($survivor);
+});
+
+it('rejects a non-numeric grace-days override rather than parsing a prefix out of it', function (): void {
+    // (int) '3O' is 3, so the obvious typo for 30 - a letter O for a zero - silently became a
+    // THREE-day grace window and purged accounts 27 days early. The sign guard added earlier
+    // closed "--5 days" and nothing else: it validated the resolved integer, not the parse.
+    // (int) '1.9' is 1 for the same reason, and (int) 'abc' is 0, which fell through into the
+    // --force branch's error message and so misdescribed what was wrong.
+    $recentlyDeleted = softDeletedDaysAgo(5);
+
+    foreach (['3O', '1.9', 'abc', '30 ', '0x1e', '1e2', '+30'] as $option) {
+        runArtisan('users:purge-deleted', ['--grace-days' => $option])->assertFailed();
+    }
+
+    assertSoftDeleted('users', ['id' => $recentlyDeleted->id]);
+});
+
+it('still accepts a plain digit string, which is all the option is ever given as', function (): void {
+    $user = softDeletedDaysAgo(5);
+
+    runArtisan('users:purge-deleted', ['--grace-days' => '1'])->assertSuccessful();
 
     assertModelMissing($user);
 });

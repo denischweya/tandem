@@ -54,6 +54,15 @@
         <env name="DB_DATABASE" value="tandem_test"/>
         <env name="DB_USERNAME" value="tandem"/>
         <env name="DB_PASSWORD" value="tandem"/>
+        <!-- Pinned to the null channel. Several production paths now log structured
+             security and operational events (a detected refresh-token replay, an exhausted
+             chain walk, a user the purge could not delete, an abandoned outbox row), and the
+             default `stack` channel would append every one of them to storage/logs/laravel.log
+             on each run of the suite. The tests that assert these lines do not read that file:
+             captureLogs() in tests/Pest.php pushes a Monolog TestHandler onto whichever channel
+             is configured, so it works against `null` and asserts on the record rather than on
+             a file. -->
+        <env name="LOG_CHANNEL" value="null"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <!-- REDIS_HOST/REDIS_PORT first, deliberately: an unpinned REDIS_CLIENT only makes
