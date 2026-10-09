@@ -42,6 +42,17 @@ return [
             'driver' => 'session',
             'provider' => 'users',
         ],
+
+        // Sanctum registers the `sanctum` *driver* from its service provider, but the guard
+        // entry itself is not injected - Laravel's skeleton ships only `web`, so
+        // `auth:sanctum` resolves to "Auth guard [sanctum] is not defined" without this.
+        // The API speaks only bearer tokens (ADR 0003, spec §9.2); no stateful cookie guard
+        // is added for the browser, because the web client gets its cookies from its own BFF
+        // (ADR 0004) rather than from a second authentication path in this API.
+        'sanctum' => [
+            'driver' => 'sanctum',
+            'provider' => 'users',
+        ],
     ],
 
     /*
