@@ -6,6 +6,8 @@ namespace App\Application\Auth;
 
 use App\Domain\Shared\Clock;
 use App\Domain\Users\Email;
+use App\Infrastructure\Auth\DummyPasswordHash;
+use App\Infrastructure\Auth\LoginRateLimiter;
 use App\Infrastructure\Auth\RefreshTokenIssuer;
 use App\Infrastructure\Auth\TokenIssuer;
 use App\Models\Device;
@@ -15,26 +17,53 @@ use Illuminate\Support\Facades\Hash;
 
 final readonly class Login
 {
-    /**
-     * A valid bcrypt hash of a value no user has. Checked when no user matches, so that the
-     * unknown-email path costs the same as the wrong-password path. Without it, response time
-     * discloses whether an address is registered - the timing half of the oracle the
-     * identical-response test covers.
-     */
-    private const DUMMY_HASH = '$2y$12$usesomesillystringfore7hnbRJHxXVLeakoG8K30oukPsA.ztMG';
-
     public function __construct(
         private TokenIssuer $tokenIssuer,
         private RefreshTokenIssuer $refreshTokenIssuer,
+        private LoginRateLimiter $rateLimiter,
+        private DummyPasswordHash $dummyPasswordHash,
         private Clock $clock,
     ) {}
 
-    public function execute(Email $email, string $password, ?DeviceDescriptor $descriptor): Session
+    /**
+     * $ip identifies the caller for the per-IP half of spec §8.2's login throttle; it is a
+     * plain string, not a Request, so this use case stays free of the HTTP layer.
+     */
+    public function execute(Email $email, string $password, ?DeviceDescriptor $descriptor, string $ip): Session
     {
-        $user = User::query()->where('email', $email->toString())->first();
+        $emailString = $email->toString();
+
+        // Checked before the attempt, against attempts already on record - not this
+        // request's own outcome, which is not yet known. This is the reason the throttle
+        // cannot live in route middleware any more: middleware decides before the
+        // controller runs, and spec §8.2 now counts failures, not requests.
+        $this->rateLimiter->ensureNotExceeded($ip, $emailString);
+
+        try {
+            $session = $this->attempt($emailString, $password, $descriptor);
+        } catch (InvalidCredentials $e) {
+            $this->rateLimiter->hit($ip, $emailString);
+
+            throw $e;
+        }
+
+        // A successful sign-in is evidence the (ip, email) pair was legitimate, so it must
+        // not spend any of the budget a later legitimate attempt will need - that is the
+        // whole point of counting failures instead of requests.
+        $this->rateLimiter->clear($ip, $emailString);
+
+        return $session;
+    }
+
+    private function attempt(string $email, string $password, ?DeviceDescriptor $descriptor): Session
+    {
+        $user = User::query()->where('email', $email)->first();
 
         if ($user === null) {
-            Hash::check($password, self::DUMMY_HASH);
+            // Constant-time half of the sign-in-failure oracle: this keeps the unknown-email
+            // path costing the same as the wrong-password path. The identical-response test
+            // covers the other half, the body.
+            Hash::check($password, $this->dummyPasswordHash->value());
 
             throw new InvalidCredentials;
         }

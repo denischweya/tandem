@@ -20,6 +20,7 @@ final class LoginController
             Email::fromString($request->string('email')->toString()),
             $request->string('password')->toString(),
             $installId === '' ? null : new DeviceDescriptor($installId, $request->string('platform', 'web')->toString()),
+            $request->ip() ?? 'unknown',
         );
 
         return SessionResource::make($session);

@@ -11,8 +11,11 @@ Route::post('/auth/register', RegisterController::class)
     ->middleware('throttle:auth-register')
     ->name('auth.register');
 
+// No throttle middleware: spec §8.2 counts login's two limits by failed attempt, not by
+// request, and middleware decides before the controller runs - before this request's
+// outcome is known. LoginRateLimiter is applied from inside Login::execute() instead; see
+// its docblock.
 Route::post('/auth/login', LoginController::class)
-    ->middleware('throttle:auth-login')
     ->name('auth.login');
 
 // No throttle: the signature already bounds who can call this usefully, and a rate limit

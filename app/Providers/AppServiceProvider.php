@@ -45,19 +45,16 @@ class AppServiceProvider extends ServiceProvider
 
         RateLimiter::for('auth-register', fn (Request $request) => Limit::perHour(5)->by($request->ip() ?? 'unknown'));
 
-        // Two limits, both applied: §8.2 specifies 10 per 15 minutes per IP *and* 5 per 15
-        // minutes per email. The per-IP limit alone lets an attacker spread attempts across
-        // many accounts from one address; the per-email limit alone lets a botnet concentrate
-        // on one account.
-        RateLimiter::for('auth-login', function (Request $request): array {
-            $email = strtolower(trim((string) $request->input('email')));
-
-            return [
-                Limit::perMinutes(15, 10)->by('ip:'.($request->ip() ?? 'unknown')),
-                Limit::perMinutes(15, 5)->by('email:'.$email),
-            ];
-        });
-
+        // No named 'auth-login' limiter here (and so no throttle:auth-login on the route):
+        // spec §8.2 counts login's two limits by failed attempt, not by request, which
+        // middleware cannot do - it decides before the controller runs, before this
+        // request's own outcome is known. App\Infrastructure\Auth\LoginRateLimiter applies
+        // both limits from inside Login::execute() instead. A previous version of this
+        // closure read $request->input('email') directly and crashed with a 500 on a
+        // non-string email (an array passes Laravel's route dispatch but fails `(string)`
+        // cast with an E_WARNING the kernel promotes to an ErrorException, uncaught here)
+        // before LoginRequest's own 'string' rule ever got a chance to reject it with a 422
+        // - removing the closure removes that hazard along with the dead code.
         $this->app->resolving(OutboxHandlers::class, function (OutboxHandlers $handlers): void {
             $handlers->register('user.registered', function (array $payload): void {
                 // The payload is decoded JSON, so every value is mixed. A user_id that is not

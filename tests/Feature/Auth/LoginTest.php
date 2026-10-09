@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Infrastructure\Auth\DummyPasswordHash;
 use App\Models\Device;
 use App\Models\PersonalAccessToken;
 use App\Models\RefreshToken;
@@ -214,7 +215,27 @@ it('rejects an address email:rfc accepts but the domain value object rejects, wi
         ->assertJsonValidationErrorFor('email');
 });
 
-it('rate limits sign-in to ten per fifteen minutes per IP', function (): void {
+it('rejects a non-string email with 422, not a 500 from the rate limiter', function (): void {
+    // The limiter used to read $request->input('email') directly inside route middleware,
+    // ahead of LoginRequest's own validation - so an array value crashed the (string) cast
+    // with an uncaught ErrorException instead of ever reaching the 'string' rule. Moving
+    // the throttle into Login::execute(), which only ever runs after LoginRequest has
+    // validated, removes that code path entirely; this guards against it coming back.
+    postJson('/api/v1/auth/login', ['email' => ['ada@example.test'], 'password' => 'whatever'])
+        ->assertStatus(422);
+});
+
+it('derives its constant-time dummy hash from the configured bcrypt cost, not a hardcoded one', function (): void {
+    // A hardcoded cost-12 literal, under this project's own BCRYPT_ROUNDS=4 test
+    // configuration, made the unknown-email path ~222x *slower* than the wrong-password
+    // path - the constant-time mitigation inverted, and invisible to any test that only
+    // checks statuses and bodies. This checks the property directly instead.
+    $info = password_get_info(app(DummyPasswordHash::class)->value());
+
+    expect($info['options']['cost'] ?? null)->toBe((int) config('hashing.bcrypt.rounds'));
+});
+
+it('rate limits sign-in to ten failures per fifteen minutes per IP', function (): void {
     $user = userWithPassword();
 
     // Ten different emails, so the 5-per-email limit cannot be what fires.
@@ -227,7 +248,7 @@ it('rate limits sign-in to ten per fifteen minutes per IP', function (): void {
         ->assertStatus(429);
 });
 
-it('rate limits sign-in to five per fifteen minutes per email', function (): void {
+it('rate limits sign-in to five failures per fifteen minutes per email, even with the correct password on the sixth try', function (): void {
     $user = userWithPassword();
 
     foreach (range(1, 5) as $ignored) {
@@ -235,7 +256,47 @@ it('rate limits sign-in to five per fifteen minutes per email', function (): voi
             ->assertUnauthorized();
     }
 
-    // The per-email limit must fire at six even though the per-IP limit allows ten.
+    // Spec §8.2 (amended) counts failures, not requests: once five failures are on record,
+    // the sixth attempt is refused before the password is even checked, so a *correct*
+    // password here must still 429 rather than succeed. This is what proves the throttle
+    // fires ahead of the controller's own credential check, and the per-email limit must
+    // fire at six even though the per-IP limit here allows ten.
     postJson('/api/v1/auth/login', ['email' => $user->email, 'password' => 'correct horse battery staple'])
         ->assertStatus(429);
+});
+
+it('does not count a successful sign-in against either rate limit', function (): void {
+    $user = userWithPassword();
+
+    // Six successes, one email, one IP: under request-counting this would have tripped the
+    // 5-per-email limit on the sixth call. Under failure-counting it must not, because
+    // Login::execute() clears both keys on every success - this is the whole point of the
+    // spec amendment, and the converse of the test above.
+    foreach (range(1, 6) as $ignored) {
+        postJson('/api/v1/auth/login', [
+            'email' => $user->email,
+            'password' => 'correct horse battery staple',
+        ])->assertOk();
+    }
+});
+
+it('forgives prior failures on a success, so a later run of failures gets a fresh budget', function (): void {
+    $user = userWithPassword();
+
+    // Four failures - under the five-per-email cap, so no 429 yet.
+    foreach (range(1, 4) as $ignored) {
+        postJson('/api/v1/auth/login', ['email' => $user->email, 'password' => 'wrong password here'])
+            ->assertUnauthorized();
+    }
+
+    // A success in between must clear the count those four failures left behind. Without
+    // that, this test's second batch of four failures would be the fifth through eighth
+    // against the same uncleared counter, and the cap would fire inside it.
+    postJson('/api/v1/auth/login', ['email' => $user->email, 'password' => 'correct horse battery staple'])
+        ->assertOk();
+
+    foreach (range(1, 4) as $ignored) {
+        postJson('/api/v1/auth/login', ['email' => $user->email, 'password' => 'wrong password here'])
+            ->assertUnauthorized();
+    }
 });
