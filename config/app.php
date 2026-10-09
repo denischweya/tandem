@@ -54,6 +54,11 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
 
+    // Where a user-facing link in an email should land. Email links do not point at this API:
+    // they point at the web app, which renders a page with a button that POSTs back here.
+    // That is deliberate - see VerifyEmailController for why verification must not be a GET.
+    'web_url' => env('APP_WEB_URL', 'http://localhost:3000'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

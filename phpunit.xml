@@ -38,6 +38,12 @@
              error-shape test in a later plan would then be authored against the debug payload
              and assert the wrong thing for production. -->
         <env name="APP_DEBUG" value="false"/>
+        <!-- Pinned because signed URLs are host-sensitive. URL::temporarySignedRoute() signs
+             the absolute URL including host, and the test HTTP client issues requests against
+             http://localhost. Unpinned, APP_URL arrives from .env - where it is commonly
+             http://localhost:8000 for `make api` - and every email-verification signature test
+             fails on a host mismatch, on some machines and not others. -->
+        <env name="APP_URL" value="http://localhost"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>

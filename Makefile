@@ -35,7 +35,7 @@ test-db:
 stan:      ; $(PHP) vendor/bin/phpstan analyse --memory-limit=1G
 lint:      ; $(PHP) vendor/bin/pint --test
 lint-fix:  ; $(PHP) vendor/bin/pint
-openapi:   ; $(ARTISAN) scramble:export --path=openapi.json --fail-on-unknown
+openapi:   ; ./bin/generate-openapi.sh openapi.json
 openapi-check: ; ./bin/check-openapi.sh
 
 verify: lint stan openapi-check test-db test

@@ -10,11 +10,22 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Carbon;
 use Laravel\Sanctum\HasApiTokens;
 
+/**
+ * @property string $id
+ * @property string $email
+ * @property string $password_hash
+ * @property Carbon|null $email_verified_at
+ * @property Carbon|null $suspended_at
+ * @property Carbon|null $deleted_at
+ * @property-read UserProfile $profile
+ */
 #[Fillable(['email'])]
 #[Hidden(['password_hash'])]
 class User extends Authenticatable
@@ -38,6 +49,12 @@ class User extends Authenticatable
             // that decision lives, not whether the model may also carry this net).
             'password_hash' => 'hashed',
         ];
+    }
+
+    /** @return HasOne<UserProfile, $this> */
+    public function profile(): HasOne
+    {
+        return $this->hasOne(UserProfile::class);
     }
 
     /**
