@@ -7,7 +7,8 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-use Tests\TestCase;
+
+use function Pest\Laravel\withToken;
 
 uses(RefreshDatabase::class);
 
@@ -33,34 +34,31 @@ it('issues a token whose primary key is a UUIDv7, not an integer', function (): 
 });
 
 it('authenticates a bearer request with a live token', function (): void {
-    /** @var TestCase $this */
     $user = User::factory()->create();
     $token = $user->createToken('mobile', ['*'], now()->addMinutes(15));
 
-    $this->withToken($token->plainTextToken)
+    withToken($token->plainTextToken)
         ->getJson('/__sanctum-probe')
         ->assertOk()
         ->assertJson(['id' => $user->id]);
 });
 
 it('rejects a token whose own expires_at has passed', function (): void {
-    /** @var TestCase $this */
     $user = User::factory()->create();
     $token = $user->createToken('mobile', ['*'], now()->subSecond());
 
-    $this->withToken($token->plainTextToken)
+    withToken($token->plainTextToken)
         ->getJson('/__sanctum-probe')
         ->assertUnauthorized();
 });
 
 it('rejects a token belonging to a soft-deleted user', function (): void {
-    /** @var TestCase $this */
     $user = User::factory()->create();
     $token = $user->createToken('mobile', ['*'], now()->addMinutes(15));
 
     $user->delete();
 
-    $this->withToken($token->plainTextToken)
+    withToken($token->plainTextToken)
         ->getJson('/__sanctum-probe')
         ->assertUnauthorized();
 });
