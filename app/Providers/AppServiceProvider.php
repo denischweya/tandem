@@ -45,6 +45,19 @@ class AppServiceProvider extends ServiceProvider
 
         RateLimiter::for('auth-register', fn (Request $request) => Limit::perHour(5)->by($request->ip() ?? 'unknown'));
 
+        // Two limits, both applied: §8.2 specifies 10 per 15 minutes per IP *and* 5 per 15
+        // minutes per email. The per-IP limit alone lets an attacker spread attempts across
+        // many accounts from one address; the per-email limit alone lets a botnet concentrate
+        // on one account.
+        RateLimiter::for('auth-login', function (Request $request): array {
+            $email = strtolower(trim((string) $request->input('email')));
+
+            return [
+                Limit::perMinutes(15, 10)->by('ip:'.($request->ip() ?? 'unknown')),
+                Limit::perMinutes(15, 5)->by('email:'.$email),
+            ];
+        });
+
         $this->app->resolving(OutboxHandlers::class, function (OutboxHandlers $handlers): void {
             $handlers->register('user.registered', function (array $payload): void {
                 // The payload is decoded JSON, so every value is mixed. A user_id that is not
