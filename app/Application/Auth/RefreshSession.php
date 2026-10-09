@@ -6,6 +6,7 @@ namespace App\Application\Auth;
 
 use App\Domain\Auth\RotationOutcome;
 use App\Domain\Auth\RotationPolicy;
+use App\Infrastructure\Auth\AccessTokenRevoker;
 use App\Infrastructure\Auth\RefreshTokenRotator;
 use App\Infrastructure\Auth\TokenIssuer;
 use App\Models\RefreshToken;
@@ -15,6 +16,7 @@ final readonly class RefreshSession
 {
     public function __construct(
         private RefreshTokenRotator $rotator,
+        private AccessTokenRevoker $accessTokenRevoker,
         private TokenIssuer $tokenIssuer,
     ) {}
 
@@ -54,8 +56,26 @@ final readonly class RefreshSession
             if ($outcome === RotationOutcome::RevokeChain) {
                 $this->rotator->revokeChainFrom($token);
 
-                // Returned, never thrown: a throw here rolls this transaction back and with
-                // it every row the line above just revoked. See the method docblock.
+                // Spec §9.1.1: the refresh lineage alone is not the whole credential. Every
+                // access token already minted from this chain keeps working until it expires -
+                // up to TokenIssuer::TTL_MINUTES, so up to fifteen minutes of full API access
+                // for whoever triggered the detection. Chain revocation already signs the
+                // legitimate user out, because that is the deliberate cost of the mechanism;
+                // leaving the thief a quarter of an hour alongside it is not a trade anyone
+                // chose. Sanctum tokens carry no device association, so the scope is every
+                // access token the user holds - which §9.1.1 records as the right scope
+                // regardless, a detected replay meaning a credential of theirs is in someone
+                // else's hands.
+                //
+                // Keyed on $token->user_id, not on a resolved User: the branch below is where
+                // a soft-deleted account turns into a null, and this delete must not be
+                // skipped for one.
+                $this->accessTokenRevoker->revokeAllFor($token->user_id);
+
+                // Returned, never thrown: a throw here rolls this transaction back and with it
+                // both the rows just revoked and the tokens just deleted. See the method
+                // docblock - that is the defect this shape exists to prevent, so the throw
+                // stays after the commit.
                 return null;
             }
 

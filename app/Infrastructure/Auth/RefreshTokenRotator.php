@@ -61,6 +61,31 @@ final readonly class RefreshTokenRotator
      * presented. Forward is sufficient: ancestors are already revoked (rotate() revokes as it
      * replaces), and the live token is always a descendant.
      *
+     * Every hop is a LOCKING read, which is the point of this method rather than a precaution.
+     * RefreshSession locks only the row that was presented; on the normal replay path that row
+     * is an ancestor, so a plain SELECT for each subsequent hop reads a READ COMMITTED snapshot
+     * - and readers do not block on FOR UPDATE in Postgres. The losing interleaving:
+     *
+     *   T2 refreshes tail C: takes FOR UPDATE on C, sees Active, and starts minting successor D
+     *     and an access token, holding C's row lock for the whole of that work.
+     *   T1 replays ancestor A: walks A -> B -> C, reads C unblocked, and sees
+     *     revoked_at = NULL, replaced_by_id = NULL.
+     *   T1's UPDATE of C then blocks on T2. T2 commits (C revoked, replaced_by_id = D). T1's
+     *     update proceeds - harmless in itself - but T1's in-memory replaced_by_id is still
+     *     NULL, so the loop breaks and D is never revoked.
+     *
+     * T1 then returns its 401 having left a live refresh token in circulation, which is exactly
+     * what this method exists to prevent, and the window is the whole duration of the concurrent
+     * refresh rather than an instruction-level sliver. lockForUpdate() both serialises against
+     * that rotation and reads the latest committed row instead of a snapshot.
+     *
+     * No deadlock is introduced: every walker takes locks in chain order (ancestor before
+     * descendant), and a refresh locks only the row it was handed, so no cycle can form.
+     *
+     * The race is NOT reproduced by the suite, and cannot be: RefreshDatabase wraps each test
+     * in one transaction on one connection, so no single-connection assertion can express two
+     * transactions interleaving. See the Task 5 fix report.
+     *
      * @return int how many rows were revoked
      */
     public function revokeChainFrom(RefreshToken $token): int
@@ -79,7 +104,9 @@ final readonly class RefreshTokenRotator
                 $revoked++;
             }
 
-            $next = $current->replaced_by_id === null ? null : $current->replacedBy;
+            $next = $current->replaced_by_id === null
+                ? null
+                : RefreshToken::query()->whereKey($current->replaced_by_id)->lockForUpdate()->first();
 
             if ($next === null) {
                 break;

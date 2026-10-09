@@ -54,15 +54,17 @@ final class RefreshToken extends Model
         return $this->belongsTo(Device::class);
     }
 
-    /**
-     * The successor minted when this token was rotated. Deliberately not a database foreign
-     * key (see the migration comment): the rotation chain writes the link before the
-     * successor exists in some orderings.
-     *
-     * @return BelongsTo<RefreshToken, $this>
-     */
-    public function replacedBy(): BelongsTo
-    {
-        return $this->belongsTo(self::class, 'replaced_by_id');
-    }
+    // There is deliberately NO replacedBy() relation for $replaced_by_id, and adding one back
+    // would be a regression rather than a convenience. Its only caller was
+    // RefreshTokenRotator::revokeChainFrom(), which must follow this link with a locking read:
+    // a plain relation load is an unlocked READ COMMITTED snapshot, and readers do not block on
+    // FOR UPDATE in Postgres, so a chain walk through the relation can miss a successor a
+    // concurrent refresh is in the middle of creating - leaving a live refresh token behind
+    // after a detected replay. See that method's docblock for the interleaving.
+    //
+    // Removing the accessor is what makes the safe form the only reachable one: following the
+    // link now means writing the query, and the query is where lockForUpdate() lives. The
+    // column itself stays first-class as $replaced_by_id above, and the migration records why
+    // it is not a self-referential foreign key (the chain writes the link before the successor
+    // row exists in some orderings).
 }

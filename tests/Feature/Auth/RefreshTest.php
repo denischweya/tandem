@@ -74,6 +74,30 @@ it('revokes the entire chain when a rotated token is replayed', function (): voi
     postJson('/api/v1/auth/refresh', ['refresh_token' => $tokenC])->assertUnauthorized();
 });
 
+it('deletes every access token the user holds when a replay is detected', function (): void {
+    [$user, $tokenA] = signIn();
+
+    $tokenB = postJson('/api/v1/auth/refresh', ['refresh_token' => $tokenA])->json('data.refresh_token');
+    $live = postJson('/api/v1/auth/refresh', ['refresh_token' => $tokenB])->assertOk()->json('data');
+
+    // One access token per login and per refresh, and the newest is live and legitimate.
+    expect($user->tokens()->count())->toBe(3);
+
+    postJson('/api/v1/auth/refresh', ['refresh_token' => $tokenA])->assertUnauthorized();
+
+    // Spec §9.1.1. Revoking the lineage alone leaves every access token already minted from it
+    // working until it expires - up to TokenIssuer::TTL_MINUTES of full API access for whoever
+    // triggered the detection. Nothing else in this file would notice: the chain test checks
+    // refresh_tokens rows, and refresh needs no access token to be refused.
+    expect($user->tokens()->count())->toBe(0);
+
+    // The row count is not the claim that matters - the guard refusing the token is. 401 here
+    // is Sanctum rejecting a token whose row is gone, before LogoutController is reached.
+    withToken($live['access_token'])
+        ->postJson('/api/v1/auth/logout', ['refresh_token' => $live['refresh_token']])
+        ->assertUnauthorized();
+});
+
 it('rejects an expired refresh token without revoking the chain', function (): void {
     [, $refresh] = signIn();
 
