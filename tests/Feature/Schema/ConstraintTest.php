@@ -27,15 +27,31 @@ function insertUser(string $email): string
     return $id;
 }
 
-function insertPlan(string $ownerId): string
+function insertPlan(string $ownerId, ?string $groupId = null): string
 {
     $id = (string) Str::uuid7();
 
     DB::table('plans')->insert([
         'id' => $id,
         'owner_id' => $ownerId,
+        'group_id' => $groupId,
         'title' => 'Dinner',
         'timezone' => 'Africa/Nairobi',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    return $id;
+}
+
+function insertGroup(string $ownerId): string
+{
+    $id = (string) Str::uuid7();
+
+    DB::table('groups')->insert([
+        'id' => $id,
+        'owner_id' => $ownerId,
+        'name' => 'The Boys',
         'created_at' => now(),
         'updated_at' => now(),
     ]);
@@ -102,8 +118,38 @@ it('refuses to delete a user who still owns a plan', function (): void {
         ->toThrow(QueryException::class);
 });
 
-// Spec §7's eight unique constraints. All eight already exist in the live database;
-// these tests exist to catch a future migration regression, not to establish correctness.
+it('refuses to delete a user who still owns a group', function (): void {
+    // Mirrors the plan-ownership test above: groups.owner_id restricts on delete for the
+    // same reason plans.owner_id does - see 2026_10_06_000200_create_plan_tables.php. No
+    // Cycle 1 code path creates a Group row yet (no endpoint exists), so this cannot fire
+    // in production today; the test exists so the day Group endpoints ship, whoever builds
+    // them hits this in CI immediately rather than discovering it against a live
+    // DELETE /api/v1/me request, per ADR 0007.
+    $owner = insertUser('stubborn-group-owner@example.com');
+    insertGroup($owner);
+
+    expect(fn () => DB::table('users')->where('id', $owner)->delete())
+        ->toThrow(QueryException::class);
+});
+
+it('deleting a group leaves its plans intact', function (): void {
+    // plans.group_id is nullOnDelete, not cascadeOnDelete: a Group is incidental to a Plan,
+    // not load-bearing, so removing the Group must leave the Plan (and its members,
+    // invites and activity) exactly where they were, only no longer attributed to a Group.
+    $owner = insertUser('group-plan-owner@example.com');
+    $group = insertGroup($owner);
+    $plan = insertPlan($owner, $group);
+
+    DB::table('groups')->where('id', $group)->delete();
+
+    expect(DB::table('plans')->where('id', $plan)->exists())->toBeTrue();
+    expect(DB::table('plans')->where('id', $plan)->value('group_id'))->toBeNull();
+});
+
+// Spec §7's nine unique constraints (eight at Wave 0, plus group_members(group_id,
+// user_id) added alongside the groups/group_members tables - see ADR 0007). All nine
+// already exist in the live database; these tests exist to catch a future migration
+// regression, not to establish correctness.
 //
 // Each factory returns a row WITHOUT an `id`: the test below assigns a fresh uuid7 to
 // each of the two inserts. Sharing one fixed `id` across both inserts (tried first) made
@@ -111,7 +157,7 @@ it('refuses to delete a user who still owns a plan', function (): void {
 // before Postgres ever reaches the unique index under test. Confirmed by temporarily
 // dropping the devices(user_id, install_id) unique constraint from the migration: with a
 // shared `id` the test still passed; with a fresh `id` per insert it failed as expected.
-it('enforces the eight spec §7 unique constraints at the database level', function (string $table, callable $rowFactory) {
+it('enforces the nine spec §7 unique constraints at the database level', function (string $table, callable $rowFactory) {
     $row = $rowFactory();
 
     DB::table($table)->insert(['id' => (string) Str::uuid7(), ...$row]);
@@ -203,6 +249,17 @@ it('enforces the eight spec §7 unique constraints at the database level', funct
             'endpoint' => '/api/v1/plans',
             'request_hash' => 'fixed-request-hash',
             'expires_at' => now()->addDay(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
+    }],
+    'group_members(group_id, user_id)' => ['group_members', function () {
+        $owner = insertUser('group-member-'.Str::lower(Str::random(8)).'@example.com');
+        $group = insertGroup($owner);
+
+        return [
+            'group_id' => $group,
+            'user_id' => $owner,
             'created_at' => now(),
             'updated_at' => now(),
         ];
