@@ -98,6 +98,47 @@ it('deletes every access token the user holds when a replay is detected', functi
         ->assertUnauthorized();
 });
 
+it('still detects a replayed ancestor after the live tail was revoked by a logout', function (): void {
+    // The claim that makes Revoked => Reject safe, asserted rather than trusted:
+    // RefreshTokenRotator::stateOf() tests replaced_by_id BEFORE revoked_at, so an ancestor of
+    // a chain whose tail was revoked without being rotated still reports Rotated - and a
+    // replay of it is still the stolen-token signal with its full consequences.
+    $user = userWithPassword();
+    [, $tokenA, $accessA] = signIn($user);
+
+    $tokenB = postJson('/api/v1/auth/refresh', ['refresh_token' => $tokenA])->assertOk()->json('data.refresh_token');
+
+    // B is the live tail. Logging out revokes it WITHOUT rotating it, so B is Revoked while A
+    // is both revoked and replaced - the exact row shape this test exists for.
+    withToken($accessA)->postJson('/api/v1/auth/logout', ['refresh_token' => $tokenB])->assertNoContent();
+
+    $b = RefreshToken::where('token_hash', hash('sha256', $tokenB))->sole();
+    expect($b->revoked_at)->not->toBeNull();
+    expect($b->replaced_by_id)->toBeNull();
+
+    // A second, unrelated session, so the consequences of a detected replay are observable.
+    [, $otherRefresh, $otherAccess] = signIn($user);
+
+    postJson('/api/v1/auth/refresh', ['refresh_token' => $tokenA])->assertUnauthorized();
+
+    // Detected, not merely refused: every access token the user holds is gone (spec §9.1.1),
+    // so the other session's access token stops authenticating too.
+    expect($user->tokens()->count())->toBe(0);
+    // forgetAuthenticatedUser() first, or this assertion cannot fail: the logout above
+    // authenticated, and the guard caches its resolved user for the rest of the test. See the
+    // helper's docblock for the measurement.
+    forgetAuthenticatedUser();
+    withToken($otherAccess)->getJson('/api/v1/me')->assertUnauthorized();
+
+    // The other session's REFRESH token survives, and that is correct rather than a gap:
+    // revokeChainFrom() walks one lineage, and §9.1 makes refresh-token revocation per device.
+    // A second login starts its own chain, which this replay says nothing about. Measured here
+    // because the access-token scope and the refresh-token scope genuinely differ, and reading
+    // §9.1.1's "every access token the user holds" as "every credential" would be wrong.
+    expect(RefreshToken::where('token_hash', hash('sha256', $otherRefresh))->sole()->revoked_at)->toBeNull();
+    postJson('/api/v1/auth/refresh', ['refresh_token' => $otherRefresh])->assertOk();
+});
+
 it('rejects an expired refresh token without revoking the chain', function (): void {
     [, $refresh] = signIn();
 
@@ -126,9 +167,16 @@ it('gives a byte-identical 401 for an unknown, expired, revoked and replayed tok
     RefreshToken::where('token_hash', hash('sha256', $expiredToken))->update(['expires_at' => now()->subMinute()]);
     $expired = postJson('/api/v1/auth/refresh', ['refresh_token' => $expiredToken]);
 
-    [, $revokedToken] = signIn();
+    [$revokedUser, $revokedToken] = signIn();
     RefreshToken::where('token_hash', hash('sha256', $revokedToken))->update(['revoked_at' => now()]);
+    $accessTokensBeforeTheRevokedReplay = $revokedUser->tokens()->count();
     $revoked = postJson('/api/v1/auth/refresh', ['refresh_token' => $revokedToken]);
+
+    // The revoked case is the one that must do nothing beyond answering 401. It used to map to
+    // RevokeChain alongside Rotated, so this very request deleted every access token the user
+    // held - see LogoutTest's two cases for the full account. Asserted here because this test
+    // already walks all four causes and would otherwise keep passing on the body alone.
+    expect($revokedUser->tokens()->count())->toBe($accessTokensBeforeTheRevokedReplay);
 
     [, $replayedToken] = signIn();
     postJson('/api/v1/auth/refresh', ['refresh_token' => $replayedToken])->assertOk();

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 use App\Models\User;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Monolog\Handler\TestHandler;
@@ -148,4 +149,26 @@ function capturedLogRecords(TestHandler $handler): array
         ],
         $handler->getRecords(),
     ));
+}
+
+/**
+ * Drops the auth manager's resolved guards, so the next request re-authenticates from scratch.
+ *
+ * Needed by any test that makes an AUTHENTICATED request and then asserts that a token no
+ * longer works. Illuminate\Auth\GuardHelpers caches the resolved user on the guard instance,
+ * and Sanctum's guard is registered with app()->refresh('request', $guard, 'setRequest') -
+ * which swaps the request on each of a test's HTTP calls but never clears that cached user.
+ * The guards are singletons on the one application the test runs against, so the cache
+ * survives from one call to the next.
+ *
+ * Measured with a probe, because the consequence is a security test that cannot fail: sign in,
+ * GET /me (200), delete every personal_access_tokens row, GET /me again - and the second /me
+ * still returns 200, from the cache, with zero token rows in the database. After
+ * Auth::forgetGuards() the same request returns 401. Any "this credential is dead now"
+ * assertion placed after an authenticated request in the same test is therefore vacuous
+ * without this call.
+ */
+function forgetAuthenticatedUser(): void
+{
+    Auth::forgetGuards();
 }
