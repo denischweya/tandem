@@ -24,12 +24,27 @@ arch('the domain layer does not reach for a global helper function')
     ->expect('App\Domain')
     ->not->toUse(['config', 'now', 'app', 'collect', 'auth']);
 
-// Known residual gap, not closed by either rule above (verified): a root facade alias used
-// with a leading backslash (e.g. \DB::table(...), \Redis::connection()) and an Illuminate
-// type that appears only in a docblock, never in a `use` statement or a real type position,
-// both leave this file green. Closing that requires a custom PHPStan rule over app/Domain -
-// see ADR 0001 and the plan, both corrected to describe the enforcement that actually
-// exists (this Pest suite) rather than a PHPStan rule that does not.
+// Known residual gap in the rule above, measured directly rather than assumed, and wider
+// than "a root facade alias" suggests: of eight root aliases tried with a leading
+// backslash, six pass this file clean - \DB::table(...), \Log::info(...), \Hash::make(...),
+// \Redis::connection()->ping(), \Http::get(...) and \Storage::disk(...)->get(...) all leave
+// every assertion above green. Only \Cache:: and \Auth:: fail here ("it also uses 'Cache'"
+// / "'Auth'"), and for a reason that has nothing to do with the alias form: `cache` and
+// `auth` are also global helper functions, already named in the not->toUse() rule two
+// classes up, which is a function-call check that happens to share a spelling with these
+// two facades. The other six have no such coincidence and are not caught by anything here.
+// An Illuminate type referenced only in a docblock, never in a `use` statement or a real
+// type position, leaves this file green too, though Pint closes that one in practice by
+// rewriting FQCN docblock types into imports (verified).
+//
+// Both the alias gap (all eight, not just six) and the docblock gap are closed by a
+// PHPStan rule over app/Domain - phpstan-rules/src/DomainPurity/, registered in
+// phpstan.neon - which does not trust what an alias resolves to, only what is written, so
+// it needs no update when Laravel adds or removes an alias. See ADR 0001 (revised
+// 2026-10-09) for the full account, including why \Redis needed an explicit addition to
+// the alias list the PHPStan rule relies on. This Pest suite stays in place regardless: it
+// is the one guard that also catches a bare `use Illuminate\...;` import with no call at
+// all.
 
 // Renamed from "controllers hold no business logic and no Eloquent" - that name claimed to
 // check for business logic, which nothing here does; this checks that a controller touches
