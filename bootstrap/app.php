@@ -1,6 +1,7 @@
 <?php
 
 use App\Application\Auth\InvalidCredentials;
+use App\Application\Auth\InvalidPasswordResetToken;
 use App\Application\Auth\InvalidRefreshToken;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -48,4 +49,12 @@ return Application::configure(basePath: dirname(__DIR__))
             ['message' => 'The refresh token is not valid.'],
             401,
         ));
+
+        // 422, not 401: this is a form submission with a bad field (the token), not a failed
+        // authentication attempt. One body for unknown, used, expired and wrong-email - see
+        // InvalidPasswordResetToken.
+        $exceptions->render(fn (InvalidPasswordResetToken $e) => new JsonResponse([
+            'message' => 'This password reset link is no longer valid. Request a new one.',
+            'errors' => ['token' => ['This password reset link is no longer valid. Request a new one.']],
+        ], 422));
     })->create();

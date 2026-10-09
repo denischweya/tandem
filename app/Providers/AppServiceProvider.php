@@ -7,6 +7,7 @@ namespace App\Providers;
 use App\Domain\Shared\Clock;
 use App\Domain\Shared\SystemClock;
 use App\Infrastructure\Auth\EmailVerificationLink;
+use App\Infrastructure\Notifications\Mail\ResetPasswordMail;
 use App\Infrastructure\Notifications\Mail\VerifyEmailMail;
 use App\Infrastructure\OpenApi\PasswordRuleTransformer;
 use App\Infrastructure\Outbox\OutboxHandlers;
@@ -15,6 +16,7 @@ use App\Models\User;
 use Dedoc\Scramble\Scramble;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
@@ -44,6 +46,21 @@ class AppServiceProvider extends ServiceProvider
         Sanctum::usePersonalAccessTokenModel(PersonalAccessToken::class);
 
         RateLimiter::for('auth-register', fn (Request $request) => Limit::perHour(5)->by($request->ip() ?? 'unknown'));
+
+        // §8.2: 3 per hour per email, keyed on the email rather than the IP. Unlike login,
+        // this row counts requests, not failures, so route-level throttle: (on
+        // auth.forgot-password) is correct - see routes/api/v1/auth.php.
+        //
+        // is_string() guarded, not a bare (string) cast: an array value for `email` passes
+        // route dispatch and would otherwise emit an E_WARNING that becomes an
+        // ErrorException inside this closure, before ForgotPasswordRequest's own 'string'
+        // rule ever gets a chance to reject it with a 422 - the same reachable 500 Task 4
+        // found and fixed for the login limiter.
+        RateLimiter::for('auth-forgot-password', function (Request $request): Limit {
+            $email = $request->input('email');
+
+            return Limit::perHour(3)->by('email:'.strtolower(trim(is_string($email) ? $email : '')));
+        });
 
         // No named 'auth-login' limiter here (and so no throttle:auth-login on the route):
         // spec §8.2 counts login's two limits by failed attempt, not by request, which
@@ -77,6 +94,30 @@ class AppServiceProvider extends ServiceProvider
                     $user->profile->display_name,
                     app(EmailVerificationLink::class)->for($user),
                 ));
+            });
+
+            $handlers->register('password.reset_requested', function (array $payload): void {
+                $userId = $payload['user_id'] ?? null;
+
+                $user = is_string($userId)
+                    ? User::query()->with('profile')->find($userId)
+                    : null;
+
+                if ($user === null) {
+                    return;
+                }
+
+                // Decrypt what RequestPasswordReset encrypted. A malformed or foreign
+                // payload throws DecryptException rather than silently mailing a broken
+                // link, which the dispatcher records as a failed attempt and retries - the
+                // correct outcome, so this deliberately does not catch it.
+                $raw = $payload['token'] ?? null;
+                $token = Crypt::decryptString(is_string($raw) ? $raw : '');
+
+                $url = rtrim((string) config('app.web_url'), '/').'/reset-password?token='.urlencode($token)
+                    .'&email='.urlencode($user->email);
+
+                Mail::to($user->email)->send(new ResetPasswordMail($user->profile->display_name, $url, $token));
             });
         });
     }

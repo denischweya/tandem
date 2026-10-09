@@ -2,10 +2,12 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\V1\Auth\ForgotPasswordController;
 use App\Http\Controllers\Api\V1\Auth\LoginController;
 use App\Http\Controllers\Api\V1\Auth\LogoutController;
 use App\Http\Controllers\Api\V1\Auth\RefreshController;
 use App\Http\Controllers\Api\V1\Auth\RegisterController;
+use App\Http\Controllers\Api\V1\Auth\ResetPasswordController;
 use App\Http\Controllers\Api\V1\Auth\VerifyEmailController;
 use Illuminate\Support\Facades\Route;
 
@@ -32,3 +34,15 @@ Route::post('/auth/refresh', RefreshController::class)->name('auth.refresh');
 Route::post('/auth/logout', LogoutController::class)
     ->middleware('auth:sanctum')
     ->name('auth.logout');
+
+// §8.2's forgot-password row counts requests, not failures (unlike login - see the comment
+// above), so route-level throttle: is correct here, unlike for /auth/login.
+Route::post('/auth/forgot-password', ForgotPasswordController::class)
+    ->middleware('throttle:auth-forgot-password')
+    ->name('auth.forgot-password');
+
+// No throttle: the token itself is the credential (single-use, expiring, bound to one
+// email), and a route-level limit here would rate-limit someone correctly typing a new
+// password after a typo, not an attacker - who is already rate-limited at issuance.
+Route::post('/auth/reset-password', ResetPasswordController::class)
+    ->name('auth.reset-password');
