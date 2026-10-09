@@ -43,6 +43,18 @@ final class RefreshToken extends Model
     }
 
     /**
+     * The device this token is bound to, or null for a client that sends no install_id -
+     * the web BFF (ADR 0004), which has no install_id concept. Nullable here because
+     * refresh_tokens.device_id is nullable for exactly that reason; see the migration.
+     *
+     * @return BelongsTo<Device, $this>
+     */
+    public function device(): BelongsTo
+    {
+        return $this->belongsTo(Device::class);
+    }
+
+    /**
      * The successor minted when this token was rotated. Deliberately not a database foreign
      * key (see the migration comment): the rotation chain writes the link before the
      * successor exists in some orderings.

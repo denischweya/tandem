@@ -15,13 +15,9 @@ use function Pest\Laravel\postJson;
 
 uses(RefreshDatabase::class);
 
-/** @param array<string, mixed> $attributes */
-function userWithPassword(string $password = 'correct horse battery staple', array $attributes = []): User
-{
-    return User::factory()
-        ->hasProfile()
-        ->create(array_merge(['password_hash' => Hash::make($password)], $attributes));
-}
+// userWithPassword() moved to tests/Pest.php when RefreshTest/LogoutTest's signIn()
+// needed the same user shape: a file-scope helper here is process-global and cannot be
+// redeclared, so a second file could only inherit it by load order or duplicate it.
 
 it('returns a token pair and the user', function (): void {
     $user = userWithPassword();

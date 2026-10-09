@@ -1,6 +1,7 @@
 <?php
 
 use App\Application\Auth\InvalidCredentials;
+use App\Application\Auth\InvalidRefreshToken;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -37,6 +38,14 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $exceptions->render(fn (InvalidCredentials $e) => new JsonResponse(
             ['message' => 'These credentials do not match our records.'],
+            401,
+        ));
+
+        // One body for unknown, expired, revoked and replayed - see InvalidRefreshToken.
+        // Distinguishing them here would tell an attacker holding a captured token whether
+        // their replay was detected, and tells a legitimate client nothing it can act on.
+        $exceptions->render(fn (InvalidRefreshToken $e) => new JsonResponse(
+            ['message' => 'The refresh token is not valid.'],
             401,
         ));
     })->create();
