@@ -11,7 +11,6 @@ use App\Models\Plan;
 use App\Models\PlanActivity;
 use App\Models\PlanMember;
 use App\Models\User;
-use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\PendingCommand;
@@ -180,12 +179,70 @@ it('relies on account deletion having already resolved group ownership, not on p
     // proves for plans.owner_id. This command does not duplicate DeleteAccount's
     // ownership-transfer logic for Groups - doing so here would let a broken invariant
     // silently "self-heal" on a different schedule than DeleteAccount's, with no evidence
-    // anything was ever wrong. Failing loudly, mid-transaction, is the deliberate choice:
-    // a QueryException aborts the run and surfaces the bug instead of reporting a quiet
-    // "purged" for a row that was not actually removed.
-    expect(fn () => runArtisan('users:purge-deleted')->run())->toThrow(QueryException::class);
+    // anything was ever wrong. Failing loudly is the deliberate choice, but "loudly" now
+    // means the run completes, reports the failure, and exits non-successfully - not an
+    // uncaught exception. See "continues purging healthy users..." below for why a thrown
+    // exception would be the wrong shape: it would take every other purgeable user down
+    // with it too.
+    runArtisan('users:purge-deleted')
+        ->expectsOutputToContain('"purged":0,"failed":1')
+        ->assertFailed();
 
     // The transaction rolled back: nothing was purged, and the Group is untouched.
     assertSoftDeleted('users', ['id' => $user->id]);
     assertDatabaseHas('groups', ['id' => $group->id, 'owner_id' => $user->id]);
+});
+
+it('continues purging healthy users after one violates the group invariant, and fails the run', function (): void {
+    // Older deleted_at first: the command orders by deleted_at ascending, so this
+    // deterministically puts $broken ahead of $healthy in the loop - the same position a
+    // systematically failing row would occupy in every future run. Without that ordering
+    // this test would be at the mercy of whatever order Postgres happens to return today,
+    // which is exactly the nondeterminism that makes the underlying bug dangerous rather
+    // than merely cosmetic (see the class doc).
+    $broken = softDeletedDaysAgo(40);
+    Group::factory()->create(['owner_id' => $broken->id]);
+
+    $healthy = softDeletedDaysAgo(31);
+
+    runArtisan('users:purge-deleted')
+        ->expectsOutputToContain('"purged":1,"failed":1')
+        ->assertFailed();
+
+    // The one invariant violation did not take the healthy user down with it.
+    assertModelMissing($healthy);
+    // ...and the broken one is exactly as it was: still queued for the next run, not
+    // silently dropped or half-purged.
+    assertSoftDeleted('users', ['id' => $broken->id]);
+});
+
+it('rejects a negative grace-days override instead of silently widening the purge', function (): void {
+    // The bug this guards against: "-{$graceDays} days" with $graceDays = -5 builds the
+    // literal string "--5 days", which PHP's relative-date parser resolves as "+5 days" -
+    // a WIDER purge than the default, silently, rather than an error. A user soft-deleted
+    // only yesterday must never be at risk from a typo like this.
+    $recentlyDeleted = softDeletedDaysAgo(1);
+
+    runArtisan('users:purge-deleted', ['--grace-days' => -5])->assertFailed();
+
+    assertSoftDeleted('users', ['id' => $recentlyDeleted->id]);
+});
+
+it('rejects --grace-days=0 without --force', function (): void {
+    $user = softDeletedDaysAgo(1);
+
+    runArtisan('users:purge-deleted', ['--grace-days' => 0])->assertFailed();
+
+    assertSoftDeleted('users', ['id' => $user->id]);
+});
+
+it('purges everything immediately when --grace-days=0 is paired with --force', function (): void {
+    // "Purge everyone right now" is a legitimate operator intent (e.g. acting on a
+    // compliance request) - rejecting 0 unconditionally would remove a real capability,
+    // not just a footgun. --force is the one keystroke that turns this back on.
+    $user = softDeletedDaysAgo(1);
+
+    runArtisan('users:purge-deleted', ['--grace-days' => 0, '--force' => true])->assertSuccessful();
+
+    assertModelMissing($user);
 });
