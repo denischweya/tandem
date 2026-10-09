@@ -63,9 +63,18 @@ final readonly class DeleteAccount
             // Step 2.
             $this->resolvePlanOwnership($user, $now);
 
+            // The role is demoted along with the status, in the one update that was already
+            // running. Without it a transferred Plan carries two rows claiming
+            // role = 'owner' - the departing one, now `left`, and the successor promoted
+            // just above - which is schema-legal, since the only unique key here is
+            // (plan_id, user_id), and wrong for any reader that answers "who owns this Plan"
+            // from plan_members.role rather than from plans.owner_id.
             PlanMember::query()
                 ->where('user_id', $user->id)
-                ->update(['status' => MemberStatus::Left->value]);
+                ->update([
+                    'status' => MemberStatus::Left->value,
+                    'role' => MemberRole::Member->value,
+                ]);
 
             // Step 1. Every refresh token and every Sanctum access token the account holds.
             // revokeAllFor() rather than a third copy of $user->tokens()->delete(): it is

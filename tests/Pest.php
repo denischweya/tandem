@@ -42,16 +42,40 @@ function userWithPassword(string $password = 'correct horse battery staple', arr
  * so a hand-built row would mean asserting rotation behaviour against a token this
  * application never issued.
  *
+ * $installId is null by default, because most callers do not care which client shape they
+ * get: a login that sends no install_id creates no devices row at all, which is the web
+ * BFF's shape (ADR 0004). A caller that passes one gets the mobile shape instead, device
+ * row included - which is what a test asserting that account deletion removes devices needs
+ * in order to be asserting anything.
+ *
+ * A parameter here rather than a second helper at a test file's scope, for the reason
+ * userWithPassword() above records: this file is the one place Pest loads exactly once, and a
+ * file-scope copy would be a second process-global function restating this one almost
+ * character for character.
+ *
  * @return array{User, string, string}
  */
-function signIn(?User $user = null, string $password = 'correct horse battery staple'): array
-{
+function signIn(
+    ?User $user = null,
+    string $password = 'correct horse battery staple',
+    ?string $installId = null,
+): array {
     $user ??= userWithPassword($password);
 
-    $data = postJson('/api/v1/auth/login', [
+    $payload = [
         'email' => $user->email,
         'password' => $password,
-    ])->assertOk()->json('data');
+    ];
+
+    if ($installId !== null) {
+        // platform travels with install_id: LoginController defaults a missing platform to
+        // 'web', so an install_id arriving on its own would store a device whose platform
+        // contradicts the client that sent it.
+        $payload['install_id'] = $installId;
+        $payload['platform'] = 'ios';
+    }
+
+    $data = postJson('/api/v1/auth/login', $payload)->assertOk()->json('data');
 
     $refreshToken = is_array($data) ? $data['refresh_token'] ?? null : null;
     $accessToken = is_array($data) ? $data['access_token'] ?? null : null;

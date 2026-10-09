@@ -38,42 +38,14 @@ function member(Plan $plan, User $user, MemberRole $role, string $joinedAt): Pla
     ]);
 }
 
-/**
- * Signs in sending an install_id, which is the only thing that creates a devices row.
- *
- * signIn() in tests/Pest.php deliberately sends none - the web BFF has no install_id
- * concept (ADR 0004) - so it cannot be reused by the one test here that must see a device
- * exist before the deletion in order for "no device survives" to mean anything.
- *
- * The two is_string() checks are the same real narrowing signIn() does, and for the same
- * reason: TestResponse::json() is declared mixed, and both values are fed straight into
- * withToken() and a refresh request.
- *
- * @return array{string, string} [access token, refresh token]
- */
-function signInOnDevice(User $user, string $password = 'correct horse battery staple'): array
-{
-    $data = postJson('/api/v1/auth/login', [
-        'email' => $user->email,
-        'password' => $password,
-        'install_id' => 'install-abc',
-        'platform' => 'ios',
-    ])->assertOk()->json('data');
-
-    $access = is_array($data) ? $data['access_token'] ?? null : null;
-    $refresh = is_array($data) ? $data['refresh_token'] ?? null : null;
-
-    if (! is_string($access) || ! is_string($refresh)) {
-        throw new RuntimeException('POST /api/v1/auth/login did not return both tokens as strings.');
-    }
-
-    return [$access, $refresh];
-}
-
 it('soft-deletes the account and ends every session', function (): void {
-    $user = userWithPassword();
+    // An install_id, so the login really creates a devices row - signIn()'s default sends
+    // none (the web BFF has no install_id: ADR 0004), and without one the "no device
+    // survives" assertion below would pass just as happily against a login that never
+    // created a device in the first place.
+    [$user, $refresh, $access] = signIn(installId: 'install-abc');
 
-    [$access, $refresh] = signInOnDevice($user);
+    assertDatabaseCount('devices', 1);
 
     withToken($access)->deleteJson('/api/v1/me')->assertNoContent();
 
@@ -129,6 +101,15 @@ it('transfers plan ownership to the longest-standing admin', function (): void {
     expect($plan->refresh()->status)->toBe(PlanStatus::Active->value);
     expect(PlanMember::where('plan_id', $plan->id)->where('user_id', $olderAdmin->id)->sole()->role)
         ->toBe(MemberRole::Owner->value);
+
+    // The departing owner's own row is demoted as well as marked left. Only (plan_id,
+    // user_id) is unique here, so leaving it at 'owner' would give this Plan two rows
+    // claiming the role - one left, one active - and any reader that answers "who owns this
+    // Plan" from plan_members.role rather than plans.owner_id would see both.
+    $departing = PlanMember::where('plan_id', $plan->id)->where('user_id', $owner->id)->sole();
+
+    expect($departing->role)->toBe(MemberRole::Member->value);
+    expect($departing->status)->toBe(MemberStatus::Left->value);
 });
 
 it('falls back to the longest-standing active member when there is no admin', function (): void {
@@ -179,6 +160,65 @@ it('archives a plan whose only member was the departing owner', function (): voi
     // owner_id stays, because plans.owner_id is NOT NULL with RESTRICT. The day-30 job in
     // Task 9 is what finally removes this Plan.
     expect($plan->refresh()->owner_id)->toBe($owner->id);
+});
+
+it('resolves every plan it owns in one pass, not just the first', function (): void {
+    [$owner, , $access] = signIn();
+    $successor = User::factory()->hasProfile()->create();
+
+    $shared = Plan::factory()->create(['owner_id' => $owner->id]);
+    member($shared, $owner, MemberRole::Owner, '2026-01-01 00:00:00');
+    member($shared, $successor, MemberRole::Member, '2026-02-01 00:00:00');
+
+    $firstSolo = Plan::factory()->create(['owner_id' => $owner->id]);
+    member($firstSolo, $owner, MemberRole::Owner, '2026-01-01 00:00:00');
+
+    $secondSolo = Plan::factory()->create(['owner_id' => $owner->id]);
+    member($secondSolo, $owner, MemberRole::Owner, '2026-01-01 00:00:00');
+
+    withToken($access)->deleteJson('/api/v1/me')->assertNoContent();
+
+    // The transfer branch and the archive branch in one pass, which is the only thing that
+    // catches a `break` written where the archive branch's `continue` belongs: that would
+    // leave every Plan after the first archived one sitting on an owner who no longer exists,
+    // and stranding a Plan is the worst thing this use case can do.
+    //
+    // Two sole-member Plans rather than one, deliberately. Plan::query() carries no ORDER BY,
+    // so the row order belongs to Postgres, and with only one archiving Plan a `break` would
+    // go unnoticed in every order that happened to visit it last. With two, there is no order
+    // in which breaking out after the first archive strands nothing.
+    expect($shared->refresh()->owner_id)->toBe($successor->id);
+    expect($shared->refresh()->status)->toBe(PlanStatus::Active->value);
+
+    foreach ([$firstSolo, $secondSolo] as $solo) {
+        expect($solo->refresh()->status)->toBe(PlanStatus::Archived->value);
+        expect($solo->refresh()->archived_at)->not->toBeNull();
+        expect($solo->refresh()->owner_id)->toBe($owner->id);
+    }
+});
+
+it('resolves every group it owns in one pass, not just the first', function (): void {
+    [$owner, , $access] = signIn();
+    $successor = User::factory()->hasProfile()->create();
+
+    $shared = Group::factory()->create(['owner_id' => $owner->id]);
+    GroupMember::create(['group_id' => $shared->id, 'user_id' => $owner->id, 'created_at' => '2026-01-01', 'updated_at' => '2026-01-01']);
+    GroupMember::create(['group_id' => $shared->id, 'user_id' => $successor->id, 'created_at' => '2026-02-01', 'updated_at' => '2026-02-01']);
+
+    // Two sole-member Groups, for the reason the Plan test above records: it makes a `break`
+    // substituted for the delete branch's `continue` fail in every possible row order.
+    foreach (['2026-01-01', '2026-01-02'] as $created) {
+        $solo = Group::factory()->create(['owner_id' => $owner->id]);
+        GroupMember::create(['group_id' => $solo->id, 'user_id' => $owner->id, 'created_at' => $created, 'updated_at' => $created]);
+    }
+
+    withToken($access)->deleteJson('/api/v1/me')->assertNoContent();
+
+    assertDatabaseCount('groups', 1);
+    expect($shared->refresh()->owner_id)->toBe($successor->id);
+    // Only the successor's membership is left: the departing user's three rows went with them
+    // and the two deleted Groups took their own with them by cascade.
+    assertDatabaseCount('group_members', 1);
 });
 
 it('marks the departing user as left in every plan they were a member of', function (): void {
