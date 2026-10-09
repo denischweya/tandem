@@ -2,7 +2,7 @@ PHP := /opt/homebrew/opt/php/bin/php
 COMPOSER := $(PHP) /usr/local/bin/composer
 ARTISAN := $(PHP) artisan
 
-.PHONY: install setup up down migrate fresh api queue config-clear test test-db stan lint lint-fix openapi openapi-check verify
+.PHONY: install setup up down migrate fresh api queue config-clear test test-db stan lint lint-fix openapi openapi-check verify verify-ci
 
 install:   ; $(COMPOSER) install
 # Not migrate: migrate needs postgres up (`make up`), which setup must not assume. cp -n
@@ -39,4 +39,18 @@ openapi:   ; $(ARTISAN) scramble:export --path=openapi.json --fail-on-unknown
 openapi-check: ; ./bin/check-openapi.sh
 
 verify: lint stan openapi-check test-db test
+	@echo "all checks passed"
+
+# What CI actually runs - one definition of the gate, not two free to diverge (I10). Takes
+# `COMPOSER` (hardcodes a path that does not exist on a runner) and `test-db` (shells into
+# `docker compose`, which CI's services: block does not provide) out of its path; CI creates
+# the test database itself with `psql`/`createdb` instead. `make install` and migrating are
+# left to the workflow too, for the same reason `verify` leaves them to `make setup`/`up`:
+# this target is the gate, not the environment that makes the gate meaningful to run.
+# Invoked as `make verify-ci PHP=php` - a command-line assignment, which GNU Make exports to
+# every recipe's environment, so both `$(PHP)` (used textually by lint/stan/test below) and
+# bin/check-openapi.sh's own `${PHP:-...}` default (read from the environment, not from
+# Make) pick up the same override. See bin/check-openapi.sh's own comment for why that
+# script reads PHP from the environment rather than taking it as an argument.
+verify-ci: config-clear lint stan openapi-check test
 	@echo "all checks passed"
