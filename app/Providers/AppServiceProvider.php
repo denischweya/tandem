@@ -8,9 +8,11 @@ use App\Domain\Shared\Clock;
 use App\Domain\Shared\SystemClock;
 use App\Infrastructure\Auth\EmailVerificationLink;
 use App\Infrastructure\Notifications\Mail\VerifyEmailMail;
+use App\Infrastructure\OpenApi\PasswordRuleTransformer;
 use App\Infrastructure\Outbox\OutboxHandlers;
 use App\Models\PersonalAccessToken;
 use App\Models\User;
+use Dedoc\Scramble\Scramble;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Mail;
@@ -27,6 +29,11 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->app->bind(Clock::class, SystemClock::class);
         $this->app->singleton(OutboxHandlers::class);
+
+        // Scramble documents the string rule `min:12` but ships nothing that understands
+        // Illuminate's Password rule object, so Password::min(12) published no minLength at
+        // all - a documented contract weaker than the enforced one. See the transformer.
+        Scramble::configure()->withRuleTransformers(PasswordRuleTransformer::class);
     }
 
     /**

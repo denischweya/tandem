@@ -110,7 +110,7 @@
                     },
                     "password": {
                         "type": "string",
-                        "description": "Length only, no composition rules: NIST SP 800-63B advises against them, and\nthey measurably push users toward predictable substitutions. ->uncompromised()\nis deliberately absent: it calls the Have I Been Pwned API, which would put a\nnetwork round trip inside the registration request and make CI depend on an\nexternal service. Revisit with a locally shipped breach list."
+                        "minLength": 12
                     },
                     "display_name": {
                         "type": "string",
