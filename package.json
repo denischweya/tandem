@@ -1,6 +1,6 @@
 {
   "name": "@tandem/shared",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Generated API types, hand-written Zod schemas and timezone-safe date helpers, shared by `tandem-mobile` and `tandem-web`.",
   "main": "src/index.ts",
   "scripts": {
