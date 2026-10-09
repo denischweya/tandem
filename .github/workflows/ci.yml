@@ -2,6 +2,20 @@ name: CI
 on:
   push: { branches: [main, wave-0-foundation] }
   pull_request:
+  # The upstream drift gate in the verify job below only tells the truth when something
+  # re-runs it, and nothing in tandem-api can. A contract change merged there leaves this
+  # repo's last run green while its committed openapi.json has silently gone stale - the
+  # half of I2 that the gate itself does not close. A nightly run bounds that blind window
+  # to 24 hours and needs no credentials of any kind. The precise fix is a
+  # repository_dispatch sent from tandem-api's main-branch workflow, which requires a
+  # cross-repo token this project has not issued; until it does, this is the honest
+  # approximation. workflow_dispatch is here so the gate can be re-run by hand the moment
+  # tandem-api merges, rather than waiting for 06:00 UTC.
+  #
+  # Both triggers only take effect once this branch is on main - GitHub schedules and manual
+  # dispatches read the workflow from the default branch only.
+  schedule: [{ cron: '0 6 * * *' }]
+  workflow_dispatch:
 
 jobs:
   verify:
