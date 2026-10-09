@@ -2,6 +2,10 @@
 
 declare(strict_types=1);
 
+use App\Application\Auth\Register;
+use App\Domain\Shared\TimeZoneId;
+use App\Domain\Users\DisplayName;
+use App\Domain\Users\Email;
 use App\Infrastructure\Notifications\Mail\VerifyEmailMail;
 use App\Infrastructure\Outbox\OutboxDispatcher;
 use App\Models\OutboxEvent;
@@ -9,6 +13,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Validation\ValidationException;
 
 use function Pest\Laravel\postJson;
 
@@ -156,4 +161,34 @@ it('rate limits registration to five per hour per IP', function (): void {
 
     postJson('/api/v1/auth/register', validRegistration(['email' => 'six@example.test']))
         ->assertStatus(429);
+});
+
+it('turns a unique-constraint race at the database into a 422, not a 500', function (): void {
+    // RegisterRequest's `unique:users,email` rule does a SELECT before the use case's INSERT
+    // runs - two concurrent registrations for the same case-folded address can both pass that
+    // SELECT and then collide on the real users_email_unique constraint. RefreshDatabase wraps
+    // a single connection, so true concurrency can't be reproduced here. Instead this calls
+    // Register::execute() directly, bypassing RegisterRequest's `unique` rule the way a real
+    // race would - the use case still has to reach the real INSERT with the email already
+    // present, and Postgres still throws the real UniqueConstraintViolationException.
+    User::factory()->create(['email' => 'ada@example.test']);
+
+    try {
+        app(Register::class)->execute(
+            Email::fromString('ada@example.test'),
+            DisplayName::fromString('Ada Lovelace'),
+            TimeZoneId::fromString('Europe/London'),
+            'en',
+            'correct horse battery staple',
+        );
+
+        expect(false)->toBeTrue('Expected Register::execute() to throw a ValidationException.');
+    } catch (ValidationException $e) {
+        expect($e->status)->toBe(422);
+        expect($e->errors())->toHaveKey('email');
+    }
+
+    // Still exactly one row: the colliding insert rolled back along with its profile and
+    // outbox write, inside the same transaction.
+    expect(User::count())->toBe(1);
 });

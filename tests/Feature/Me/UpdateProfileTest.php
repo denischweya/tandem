@@ -77,16 +77,27 @@ it('rejects an empty display name', function (): void {
 });
 
 it('does not let a client change its own email or verification state', function (): void {
-    [$user, $access] = authenticatedUser();
+    // Starting from an unverified user, not authenticatedUser()'s default (already verified):
+    // sending email_verified: true against an already-verified user would pass whether or not
+    // the field is read at all, which asserts nothing about the half of this test's name that
+    // concerns verification state.
+    $user = User::factory()->unverified()
+        ->hasProfile(['display_name' => 'Before', 'timezone' => 'UTC', 'locale' => 'en'])
+        ->create(['password_hash' => Hash::make('correct horse battery staple')]);
+
+    [, , $access] = signIn($user);
 
     withToken($access)->patchJson('/api/v1/me', [
         'email' => 'someone-else@example.test',
         'email_verified' => true,
+        'email_verified_at' => now()->toISOString(),
     ])->assertOk();
 
     // Neither field is in the request's rules, so neither reaches the use case. Changing an
-    // email needs a re-verification flow, which no cycle has specified yet.
+    // email needs a re-verification flow, which no cycle has specified yet, and verification
+    // state is never client-supplied - the user created above is still unverified afterwards.
     expect($user->refresh()->email)->not->toBe('someone-else@example.test');
+    expect($user->refresh()->hasVerifiedEmail())->toBeFalse();
 });
 
 it('requires authentication', function (): void {
