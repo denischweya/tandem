@@ -8,14 +8,24 @@
  *
  * Usage:
  *
- *   import type { components } from '../types/api';
+ *   import type { paths } from '../types/api';
  *   import type { Expect, WireEquivalent } from './assignability';
  *   import { RegisterSchema } from './auth';
  *   import type { z } from 'zod';
  *
+ *   type RegisterBody = NonNullable<
+ *     paths['/auth/register']['post']['requestBody']
+ *   >['content']['application/json'];
+ *
  *   export type _RegisterMatchesApi = Expect<
- *     WireEquivalent<z.infer<typeof RegisterSchema>, components['schemas']['RegisterRequest']>
+ *     WireEquivalent<z.infer<typeof RegisterSchema>, RegisterBody>
  *   >;
+ *
+ * Reach the contract through `paths`, as above, and not through
+ * `components['schemas']['RegisterRequest']`. Both resolve to the same type here, but the
+ * path form additionally pins the URL, the HTTP method and the media type, so moving an
+ * endpoint breaks the proof rather than passing it. auth.ts and session.ts record the
+ * accessor for every endpoint in this wave.
  *
  * `WireEquivalent` is the helper to reach for when proving a schema against the contract.
  * `Assignable` and `Equivalent` are the primitives it is built from, exported for narrower
@@ -77,9 +87,19 @@ type IsOptionalProp<T, K extends keyof T> = undefined extends T[K] ? true : fals
  *    `string` are not mutually assignable, so an optional field made required still fails,
  *    and so does a required field made optional.
  *
- * What survives, therefore, is exactly the contract: the set of property names, whether each
- * one may be omitted, and each one's value type - recursively, so a rename nested inside
- * `SessionResource.user` fails too.
+ * What survives, therefore, is the part of the contract TypeScript can carry: the set of
+ * property names, whether each one may be omitted, and each one's value type - recursively,
+ * so a rename nested inside `SessionResource.user` fails too.
+ *
+ * What does NOT survive is every value CONSTRAINT, and that is this harness's real blind
+ * spot rather than a detail. openapi.json records `maxLength: 254`, `minLength: 64`,
+ * `format: email` and the platform enum; openapi-typescript erases all but the enum, so
+ * `email` and `display_name` are both bare `string` in src/types/api.ts. Changing `max:254`
+ * to `max:320` upstream therefore fails nothing at this level, however strict
+ * WireEquivalent is. The lengths, caps and enums the Zod schemas encode are checked against
+ * openapi.json by a runtime test instead - "the contract's own constraints" in auth.test.ts -
+ * because that document is where those constraints actually live. Nothing on this line
+ * proves them.
  *
  * One conflation is accepted and recorded: a REQUIRED property typed `T | undefined` is
  * indistinguishable here from an optional `T`, because `undefined extends T[K]` is the only

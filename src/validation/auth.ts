@@ -44,6 +44,32 @@ import type { Expect, WireEquivalent } from './assignability';
  * Response parsers live in session.ts, PATCH /me's body in users.ts.
  */
 
+/**
+ * The email rule every request in this file shares, and deliberately NOT `z.email()`.
+ *
+ * A client-side validator must never be stricter than the server's, and `z.email()` is.
+ * tandem-api's gate is `filter_var(FILTER_VALIDATE_EMAIL)` via `Email::fromString`, which
+ * accepts addresses Zod's regex rejects - an IP-literal domain (`ada@[127.0.0.1]`) being the
+ * clearest case. Rejecting one here would mean an address the API accepts cannot be used
+ * through either client at all: a client-side narrowing of the product's own contract, and
+ * the same mistake `UserSchema.email` in session.ts avoids on the response side. The brief
+ * prescribed `.email()`, but it prescribed validating the address - not out-validating the
+ * server.
+ *
+ * So this is a shape check for form UX plus the server's own length cap. The regex accepts a
+ * strict superset of what filter_var does: every address filter_var accepts has exactly one
+ * unquoted `@` and no whitespace (`"ada bob"@example.test` is rejected there, as
+ * ValidEmail's docblock records). Nothing the API would accept is refused here, while an
+ * obviously-mistyped address still fails before a round trip, and the server stays
+ * authoritative and answers 422.
+ *
+ * `.max(254)` mirrors `'max:254'`, so even the cap is the server's rule and not an extra one.
+ */
+const apiEmail = z
+  .string()
+  .max(254)
+  .regex(/^[^\s@]+@[^\s@]+$/, 'must look like an email address');
+
 type RegisterBody = NonNullable<
   paths['/auth/register']['post']['requestBody']
 >['content']['application/json'];
@@ -75,7 +101,7 @@ type RegisterBody = NonNullable<
  * smoothing it over.
  */
 export const RegisterSchema = z.object({
-  email: z.email().max(254),
+  email: apiEmail,
   password: z.string().min(12),
   display_name: z.string().trim().min(1).max(80),
   timezone: z.string().min(1),
@@ -96,14 +122,17 @@ type LoginBody = NonNullable<
 /**
  * Mirrors LoginRequest::rules().
  *
- * No minimum on `password`, matching the API: a length rule on a *submitted* password would
- * refuse a sign-in attempt for a legacy credential before checking it.
+ * `password` is `.min(1)` and nothing more, which mirrors `required` exactly: the empty
+ * string is rejected and no length is imposed beyond that. The API's LoginRequest
+ * deliberately omits Password::min(12), because a length rule on a *submitted* password
+ * would refuse a sign-in attempt for a legacy credential before checking it - so there is no
+ * 12-character minimum here either.
  *
  * install_id and platform are ['sometimes', 'required', …], which is optional-but-not-empty -
  * hence `.min(1)` inside `.optional()`.
  */
 export const LoginSchema = z.object({
-  email: z.email().max(254),
+  email: apiEmail,
   password: z.string().min(1),
   install_id: z.string().min(1).max(255).optional(),
   platform: z.enum(['ios', 'android', 'web']).optional(),
@@ -149,7 +178,7 @@ type ForgotPasswordBody = NonNullable<
 
 /** Mirrors ForgotPasswordRequest::rules(). */
 export const ForgotPasswordSchema = z.object({
-  email: z.email().max(254),
+  email: apiEmail,
 });
 
 export type _ForgotPasswordMatchesApi = Expect<
@@ -163,7 +192,7 @@ type ResetPasswordBody = NonNullable<
 /** Mirrors ResetPasswordRequest::rules(). `token` is `size:64`, like the refresh token. */
 export const ResetPasswordSchema = z.object({
   token: z.string().length(64),
-  email: z.email().max(254),
+  email: apiEmail,
   password: z.string().min(12),
 });
 

@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import {
   ForgotPasswordSchema,
@@ -44,8 +45,32 @@ describe('RegisterSchema', () => {
     ).toBe(false);
   });
 
-  it('rejects a malformed address regardless of length', () => {
+  it('rejects a malformed address but accepts anything the server would', () => {
+    // The email rule is a shape check, not z.email(), because the server's gate is
+    // filter_var(FILTER_VALIDATE_EMAIL) and a client must not be stricter than it. See
+    // apiEmail in auth.ts. These two are the cases that fix the boundary in place.
     expect(RegisterSchema.safeParse({ ...validRegistration, email: 'ada' }).success).toBe(false);
+    expect(RegisterSchema.safeParse({ ...validRegistration, email: 'ada@' }).success).toBe(false);
+    expect(RegisterSchema.safeParse({ ...validRegistration, email: '@example.test' }).success).toBe(
+      false,
+    );
+    expect(
+      RegisterSchema.safeParse({ ...validRegistration, email: 'ada bob@example.test' }).success,
+    ).toBe(false);
+    expect(
+      RegisterSchema.safeParse({ ...validRegistration, email: 'ada@a@example.test' }).success,
+    ).toBe(false);
+
+    // An IP-literal domain: filter_var accepts it, z.email() does not. Accepting it here is
+    // the whole point - an address the API accepts must be usable through a client.
+    expect(
+      RegisterSchema.safeParse({ ...validRegistration, email: 'ada@[127.0.0.1]' }).success,
+    ).toBe(true);
+    // A single-label domain: filter_var rejects this one, and so does the server. The schema
+    // is deliberately looser, so the 422 comes from the API rather than from the client.
+    expect(RegisterSchema.safeParse({ ...validRegistration, email: 'ada@example' }).success).toBe(
+      true,
+    );
   });
 
   it('rejects a password of 11 characters and accepts 12', () => {
@@ -112,10 +137,13 @@ describe('RegisterSchema', () => {
 });
 
 describe('LoginSchema', () => {
-  it('imposes no minimum length on the submitted password', () => {
-    // Matching LoginRequest, which deliberately omits Password::min(12): a rule on the
-    // submitted password would refuse a legacy credential before checking it.
+  it('mirrors `required` on the password and imposes no length beyond it', () => {
+    // LoginRequest deliberately omits Password::min(12): a rule on the submitted password
+    // would refuse a legacy credential before checking it. So one character is accepted...
     expect(LoginSchema.safeParse({ email: 'ada@example.test', password: 'x' }).success).toBe(true);
+    // ...and the empty string is not, which is all `required` means. Without this case the
+    // schema could silently lose its .min(1) and nothing would notice.
+    expect(LoginSchema.safeParse({ email: 'ada@example.test', password: '' }).success).toBe(false);
   });
 
   it('rejects a platform outside the enum and accepts each member', () => {
@@ -306,40 +334,171 @@ describe('UserSchema and SessionSchema', () => {
   });
 });
 
+describe("the contract's own constraints", () => {
+  /**
+   * The blind spot named in WireShape's docblock: openapi-typescript erases maxLength,
+   * minLength and format, so `email` and `display_name` are both bare `string` in
+   * src/types/api.ts and NO type-level assertion in this repo can notice `max:254` becoming
+   * `max:320` upstream.
+   *
+   * Those constraints do live in openapi.json, so this reads them from there rather than
+   * trusting the numbers the schemas above chose. That makes it a real second end of the
+   * anti-drift chain and not another hand-copied constant: CI diffs the committed
+   * openapi.json against tandem-api's main, so a constraint changed upstream reaches this
+   * test by the same route the types take.
+   */
+  const ConstraintDocument = z.object({
+    components: z.object({
+      schemas: z.record(
+        z.string(),
+        z.object({
+          properties: z.record(
+            z.string(),
+            // z.object() strips the keys this test does not read (`type`, `description`),
+            // which is what makes the "no constraint at all" assertion below readable as
+            // toEqual({}).
+            z.object({
+              maxLength: z.number().optional(),
+              minLength: z.number().optional(),
+              format: z.string().optional(),
+              enum: z.array(z.string()).optional(),
+            }),
+          ),
+        }),
+      ),
+    }),
+  });
+
+  type Constraints = {
+    maxLength?: number;
+    minLength?: number;
+    format?: string;
+    enum?: readonly string[];
+  };
+
+  /** Every constraint the schemas in this directory encode, as openapi.json states it. */
+  const ENCODED: ReadonlyArray<readonly [string, string, Constraints]> = [
+    ['RegisterRequest', 'email', { maxLength: 254, format: 'email' }],
+    ['RegisterRequest', 'password', { minLength: 12 }],
+    ['RegisterRequest', 'display_name', { maxLength: 80 }],
+    ['RegisterRequest', 'locale', { maxLength: 10 }],
+    ['LoginRequest', 'email', { maxLength: 254, format: 'email' }],
+    ['LoginRequest', 'install_id', { maxLength: 255 }],
+    ['LoginRequest', 'platform', { enum: ['ios', 'android', 'web'] }],
+    ['RefreshTokenRequest', 'refresh_token', { minLength: 64, maxLength: 64 }],
+    ['ForgotPasswordRequest', 'email', { maxLength: 254, format: 'email' }],
+    ['ResetPasswordRequest', 'token', { minLength: 64, maxLength: 64 }],
+    ['ResetPasswordRequest', 'email', { maxLength: 254, format: 'email' }],
+    ['ResetPasswordRequest', 'password', { minLength: 12 }],
+    ['UpdateProfileRequest', 'display_name', { maxLength: 80 }],
+    ['UpdateProfileRequest', 'locale', { maxLength: 10 }],
+  ];
+
+  const loadConstraints = async (): Promise<z.infer<typeof ConstraintDocument>> => {
+    const raw = await readFile(new URL('../../openapi.json', import.meta.url), 'utf8');
+    const data: unknown = JSON.parse(raw);
+
+    return ConstraintDocument.parse(data);
+  };
+
+  it('still states every length, format and enum the schemas encode', async () => {
+    const document = await loadConstraints();
+
+    for (const [schema, field, constraints] of ENCODED) {
+      const property = document.components.schemas[schema]?.properties[field];
+
+      expect(property, `${schema}.${field} is missing from openapi.json`).toBeDefined();
+      expect(property, `${schema}.${field}`).toMatchObject(constraints);
+    }
+  });
+
+  it('still imposes no constraint on the submitted login password', async () => {
+    // The mirror image of the test above, and the one that keeps LoginSchema's docblock
+    // honest: it claims the API imposes no length on a submitted password. If upstream ever
+    // adds Password::min() to LoginRequest, this fails and that claim must be revisited.
+    const document = await loadConstraints();
+
+    expect(document.components.schemas['LoginRequest']?.properties['password']).toEqual({});
+  });
+});
+
 describe('the assertion harness itself', () => {
-  // Step 4's third outcome: deleting an `Expect<...>` line leaves every gate green, so
-  // nothing makes an assertion mandatory and a schema can be added with no proof at all.
-  // This test fails when the number of exported schemas and the number of exported
-  // assertions diverge - crude, but it converts a silent omission into a failing test.
-  it('carries one assignability assertion per exported schema', async () => {
+  /**
+   * Step 4's third outcome: deleting an `Expect<...>` line leaves every type-level gate
+   * green, so nothing makes an assertion mandatory and a schema can be added with no proof at
+   * all. This test is what turns that silent omission into a failing one.
+   *
+   * It pairs assertions to schemas BY NAME. The first version counted them with `>=`, which
+   * left four assertions of slack in session.ts - two schemas there carry six assertions, one
+   * per enveloped response, so an unproven schema added to that file would have left 6 >= 3
+   * and every gate green. The slack survived because this test's own proof only ever sampled
+   * files whose counts are tight (users.ts, and a scratch devices.ts). A verification that
+   * samples only the passing case is worth less than no verification, because it is believed.
+   *
+   * The convention enforced: an assertion proves the schema whose name prefixes its own, so
+   * `_RegisterMatchesApi` proves `RegisterSchema` and `_SessionAcceptsLoginResponse` proves
+   * `SessionSchema`. Each assertion is credited to the LONGEST schema name it starts with, so
+   * a `_RefreshTokenMatchesApi` could never stand in as proof for a separate `RefreshSchema`.
+   *
+   * What this still does not catch, stated rather than implied: deleting one of several
+   * assertions that prove the SAME schema. Any one of session.ts's four UserResource envelope
+   * proofs satisfies the pairing on its own. The guarantee is that no schema is unproven, not
+   * that a particular set of proofs is present - an exact per-file count would catch the
+   * second as well, at the cost of failing on every legitimate addition, and that trade was
+   * made deliberately.
+   */
+  const named = (pattern: RegExp, source: string): string[] => {
+    const names: string[] = [];
+
+    for (const match of source.matchAll(pattern)) {
+      const name = match[1];
+      if (name !== undefined) names.push(name);
+    }
+
+    return names;
+  };
+
+  it('pairs an assignability assertion to every exported schema', async () => {
     const directory = new URL('.', import.meta.url);
     const files = (await readdir(directory)).filter(
       (name) => name.endsWith('.ts') && !name.endsWith('.test.ts'),
     );
 
     // Read the directory rather than a hard-coded list, so a schema file added later is
-    // covered without anyone remembering to add it here. The two guards below are what stop
-    // that convenience from making the test vacuous: an empty or regex-broken scan would
-    // otherwise compare 0 against 0 in every file and pass.
+    // covered without anyone remembering to add it here. The guard below is what stops that
+    // convenience from making the test vacuous: an empty scan, or a regex that stopped
+    // matching, would find nothing to pair and pass.
     expect(files).toEqual(expect.arrayContaining(['auth.ts', 'session.ts', 'users.ts']));
 
     let schemaCount = 0;
 
     for (const file of files) {
       const source = await readFile(new URL(file, directory), 'utf8');
-      const schemas = source.match(/^export const \w+Schema/gm) ?? [];
-      const assertions = source.match(/^export type _\w+ = Expect</gm) ?? [];
+      const schemas = named(/^export const (\w+)Schema\b/gm, source);
+      const assertions = named(/^export type (_\w+) = Expect</gm, source);
 
-      schemaCount += schemas.length;
+      const proven = new Set<string>();
+
+      for (const assertion of assertions) {
+        const owner = schemas
+          .filter((schema) => assertion.startsWith(`_${schema}`))
+          .sort((a, b) => b.length - a.length)
+          .at(0);
+
+        if (owner !== undefined) proven.add(owner);
+      }
 
       expect(
-        assertions.length,
-        `${file}: ${schemas.length} exported schema(s) but ${assertions.length} assertion(s)`,
-      ).toBeGreaterThanOrEqual(schemas.length);
+        schemas.filter((schema) => !proven.has(schema)),
+        `${file}: exported schema(s) with no matching assignability assertion`,
+      ).toEqual([]);
+
+      schemaCount += schemas.length;
     }
 
-    // The ten schemas this wave specifies. Not an exact count - adding an eleventh with its
-    // assertion must not fail - but a floor, so a regex that stopped matching is caught.
+    // The ten schemas this wave specifies. A floor rather than an exact count - adding an
+    // eleventh WITH its assertion must not fail - so that a regex which stopped matching is
+    // still caught, since pairing an empty list against an empty list would otherwise pass.
     expect(schemaCount).toBeGreaterThanOrEqual(10);
   });
 });
