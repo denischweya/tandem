@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Api\V1\Auth;
 
+use App\Http\Requests\Concerns\NormalizesEmailInput;
 use App\Http\Rules\IanaTimeZone;
 use App\Http\Rules\ValidEmail;
 use Illuminate\Foundation\Http\FormRequest;
@@ -11,20 +12,10 @@ use Illuminate\Validation\Rules\Password;
 
 final class RegisterRequest extends FormRequest
 {
-    /**
-     * Lowercased before validation, not after: the `unique` rule below and the
-     * users_email_lowercase CHECK both need the normalized value, and Email::fromString()
-     * downstream would otherwise produce a value that fails the uniqueness check it already
-     * passed.
-     */
-    protected function prepareForValidation(): void
-    {
-        $email = $this->input('email');
-
-        if (is_string($email)) {
-            $this->merge(['email' => strtolower(trim($email))]);
-        }
-    }
+    // The `unique` rule below and the users_email_lowercase CHECK both need the normalized
+    // value - see NormalizesEmailInput for why this is lowercased before validation, not
+    // after, and why that is now one shared implementation rather than this class's own.
+    use NormalizesEmailInput;
 
     /**
      * Why the password rule is length-only, and why this note is in THIS docblock:

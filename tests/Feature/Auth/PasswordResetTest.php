@@ -12,16 +12,21 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\RateLimiter;
 
 use function Pest\Laravel\postJson;
 
 uses(RefreshDatabase::class);
 
+// No RateLimiter::clear() calls here for either 'auth-forgot-password' or 'auth-login' - the
+// brief had both, and both are no-ops dressed as protection, for the same reason RefreshTest.php
+// already documents for 'auth-login': the named-limiter middleware hashes its real key as
+// md5($limiterName.$limit->key) (Illuminate\Routing\Middleware\ThrottleRequests::
+// handleRequestUsingNamedLimiter()), and LoginRateLimiter writes 'auth-login:ip:<ip>' /
+// 'auth-login:email:<email>' directly - neither real key is the bare string this file used to
+// clear. Nothing is needed in its place: CACHE_STORE is 'array' under phpunit.xml and the
+// application is rebuilt per test, so limiter state never crosses a test boundary.
 beforeEach(function (): void {
     Mail::fake();
-    RateLimiter::clear('auth-forgot-password');
-    RateLimiter::clear('auth-login');
 });
 
 /** Requests a reset and returns the plaintext token the email carries. */
@@ -63,9 +68,16 @@ it('accepts a reset request for an unknown address and sends nothing', function 
 it('returns a byte-identical response for a known and an unknown address', function (): void {
     $user = User::factory()->hasProfile()->create();
 
+    // Two different emails, so this is not the same rate-limit bucket and needs no clearing
+    // between the calls - see the no-op comment on RateLimiter::clear() above.
     $known = postJson('/api/v1/auth/forgot-password', ['email' => $user->email]);
-    RateLimiter::clear('auth-forgot-password');
     $unknown = postJson('/api/v1/auth/forgot-password', ['email' => 'nobody@example.test']);
+
+    // Pins the actual value, not just the equality: toBe() alone passes identically whether
+    // both responses are 202 or both are 429/404/500, so a regression that broke the oracle
+    // protection for every caller could still leave this assertion green.
+    $known->assertAccepted();
+    $unknown->assertAccepted();
 
     expect($known->status())->toBe($unknown->status());
     expect($known->content())->toBe($unknown->content());
@@ -194,4 +206,37 @@ it('rate limits reset requests to three per hour per email', function (): void {
     }
 
     postJson('/api/v1/auth/forgot-password', ['email' => $user->email])->assertStatus(429);
+});
+
+it('rejects a forgot-password address email:rfc accepts but the domain value object rejects, with 422 not 500', function (): void {
+    // Same gap RegisterRequest/LoginRequest closed: 'email:rfc' accepts ada@localhost,
+    // filter_var() (what Email::fromString() uses) does not, and ForgotPasswordController
+    // calls Email::fromString() with no try/catch. Without ValidEmail on this request, that
+    // address would reach the controller and throw out as a 500 instead of a 422.
+    postJson('/api/v1/auth/forgot-password', ['email' => 'ada@localhost'])
+        ->assertStatus(422)
+        ->assertJsonValidationErrorFor('email');
+});
+
+it('rejects a non-string forgot-password email with 422, not a 500 from the rate limiter', function (): void {
+    // auth.forgot-password is the one route in this codebase with a route-level throttle:
+    // middleware, so the limiter closure in AppServiceProvider runs on every request to this
+    // URL before ForgotPasswordRequest ever validates - unlike auth-login, which has no
+    // throttle: middleware at all. An array value for `email` passes route dispatch, and a
+    // bare (string) cast on it inside that closure would crash with an uncaught
+    // ErrorException - the same reachable 500 Task 4 found and fixed for the login limiter.
+    // This request necessarily goes through that closure: it is what proves the closure's
+    // own is_string() guard, not just ForgotPasswordRequest's 'string' rule, holds here.
+    postJson('/api/v1/auth/forgot-password', ['email' => ['ada@example.test']])
+        ->assertStatus(422);
+});
+
+it('rejects a reset-password address email:rfc accepts but the domain value object rejects, with 422 not 500', function (): void {
+    // Same gap as forgot-password above: ResetPasswordController also calls
+    // Email::fromString() with no try/catch.
+    postJson('/api/v1/auth/reset-password', [
+        'token' => str_repeat('a', 64),
+        'email' => 'ada@localhost',
+        'password' => 'a brand new password',
+    ])->assertStatus(422)->assertJsonValidationErrorFor('email');
 });

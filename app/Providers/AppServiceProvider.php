@@ -6,6 +6,7 @@ namespace App\Providers;
 
 use App\Domain\Shared\Clock;
 use App\Domain\Shared\SystemClock;
+use App\Http\Support\EmailInput;
 use App\Infrastructure\Auth\EmailVerificationLink;
 use App\Infrastructure\Notifications\Mail\ResetPasswordMail;
 use App\Infrastructure\Notifications\Mail\VerifyEmailMail;
@@ -56,10 +57,17 @@ class AppServiceProvider extends ServiceProvider
         // ErrorException inside this closure, before ForgotPasswordRequest's own 'string'
         // rule ever gets a chance to reject it with a 422 - the same reachable 500 Task 4
         // found and fixed for the login limiter.
+        //
+        // EmailInput::normalize() here is the same call ForgotPasswordRequest's
+        // NormalizesEmailInput trait makes. The 3-per-hour-per-email limit is only
+        // un-bypassable by casing because this bucket key and that request's validated
+        // email agree - two independent strtolower(trim(...)) copies would make that
+        // agreement coincidental, and a future edit to one could silently reopen the limit
+        // to a casing bypass.
         RateLimiter::for('auth-forgot-password', function (Request $request): Limit {
             $email = $request->input('email');
 
-            return Limit::perHour(3)->by('email:'.strtolower(trim(is_string($email) ? $email : '')));
+            return Limit::perHour(3)->by('email:'.EmailInput::normalize(is_string($email) ? $email : ''));
         });
 
         // No named 'auth-login' limiter here (and so no throttle:auth-login on the route):
