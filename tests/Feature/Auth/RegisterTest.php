@@ -208,3 +208,17 @@ it('still treats locale as optional, and defaults it when omitted', function ():
         ->assertCreated()
         ->assertJsonPath('data.locale', 'en');
 });
+
+it('accepts an address with leading or trailing whitespace, as TrimStrings leaves it', function (): void {
+    // The server half of a cross-repo agreement, pinned here so neither side can drift alone.
+    // TrimStrings runs before every rule on every api/* request, so this address reaches
+    // ValidEmail already trimmed and NormalizesEmailInput lowercases it - it registers, and the
+    // stored address is the normalised one. tandem-shared's apiEmail regex rejected exactly
+    // this input until its own fix, which made an address the API accepts unusable through
+    // either client.
+    postJson('/api/v1/auth/register', validRegistration(['email' => '  Ada@Example.test  ']))
+        ->assertCreated()
+        ->assertJsonPath('data.email', 'ada@example.test');
+
+    expect(User::query()->where('email', 'ada@example.test')->exists())->toBeTrue();
+});
