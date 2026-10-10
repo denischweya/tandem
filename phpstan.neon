@@ -18,7 +18,16 @@ parameters:
 # arch rule entirely, because toOnlyUse() is a name check and the alias form never spells
 # "Illuminate". See phpstan-rules/src/DomainPurity/ForbiddenRootFacadeAliases.php for the
 # full account, including why \Redis needed special handling.
+# Closes the OTHER measured gap in the same arch rule: toOnlyUse() admits every PHP internal
+# class, because pest-plugin-arch's walker does not count one as a use. Reducing that rule to
+# toOnlyUse(['App\Domain']) left the suite green, and a domain class using DateTime,
+# ArrayObject, SplQueue and Closure was flagged for none of them - so the three names in its
+# allow-list were decoration. See phpstan-rules/src/DomainPurity/NoUnlistedGlobalClassRule.php.
 services:
+    -
+        class: PhpStanRules\DomainPurity\NoUnlistedGlobalClassRule
+        tags:
+            - phpstan.rules.rule
     -
         class: PhpStanRules\DomainPurity\NoRootFacadeAliasInStaticCallRule
         tags:

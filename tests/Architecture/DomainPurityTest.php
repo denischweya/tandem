@@ -12,7 +12,23 @@ declare(strict_types=1);
 // internal functions such as trim(), preg_replace() and mb_strlen() alone - config(), now(),
 // app('log'), auth() and collect() are each independently caught too ("it also uses
 // 'config'", etc.), with no second rule required for them.
-arch('the domain layer uses nothing but itself and a small, explicit set of PHP primitives')
+// THE THREE INTERNAL NAMES IN THIS ALLOW-LIST ARE DECORATION AS FAR AS PEST IS CONCERNED, and
+// that is measured. pest-plugin-arch's dependency walker does not count a PHP INTERNAL class as
+// a use at all, so toOnlyUse() cannot restrict them: reducing this rule to
+// ->toOnlyUse(['App\Domain']) leaves the whole suite green, and a probe domain class using
+// DateTime, ArrayObject, SplQueue, Closure and RuntimeException is flagged for none of them.
+// What this rule actually enforces, on its own, is "uses nothing USERLAND but itself" - which
+// is still worth having (the userland and vendor halves both bite: see the probes named below),
+// but is not what its name says.
+//
+// The gap is closed by a PHPStan rule, not by rewording the name: phpstan-rules/src/
+// DomainPurity/NoUnlistedGlobalClassRule.php enforces exactly this allow-list over every class
+// position in app/Domain, and the two share one policy by keeping the same three names. It
+// matters that mutable DateTime cannot slip in, because spec §6.1 promises the availability
+// engine strict purity over precisely the DST and midnight arithmetic a mutable date type gets
+// wrong. The names stay here as well, so the policy is readable from the test that is named
+// after it.
+arch('the domain layer uses nothing userland but itself (internals: see the PHPStan rule)')
     ->expect('App\Domain')
     ->toOnlyUse(['App\Domain', 'DateTimeImmutable', 'DateTimeZone', 'InvalidArgumentException']);
 
@@ -45,6 +61,10 @@ arch('the domain layer does not reach for a global helper function')
 // the alias list the PHPStan rule relies on. This Pest suite stays in place regardless: it
 // is the one guard that also catches a bare `use Illuminate\...;` import with no call at
 // all.
+//
+// The internals gap recorded above the first rule is closed by a third rule in the same
+// directory, on the same reasoning: a guard whose name promises more than it checks is worse
+// than one that checks less and says so.
 
 // Renamed from "controllers hold no business logic and no Eloquent" - that name claimed to
 // check for business logic, which nothing here does; this checks that a controller touches
