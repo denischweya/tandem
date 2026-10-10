@@ -87,9 +87,16 @@ it('refuses a session-authenticated caller with no bearer token', function (): v
     // asserted. This asserts the thing the spec actually claims instead.
     $user = User::factory()->hasProfile()->create();
 
-    expect(config('sanctum.guard'))->toBe([]);
-
     actingAs($user, 'web');
 
+    // The behaviour first, deliberately: an assertion on config('sanctum.guard') placed above
+    // this one short-circuits the test, so every mutation fails on the config value and the
+    // 401 is never exercised. The 401 is the claim; the config value is the mechanism.
     getJson('/api/v1/me')->assertUnauthorized();
+
+    expect(config('sanctum.guard'))->toBe(
+        [],
+        'Laravel\Sanctum\Guard::__invoke() iterates this list before reading the bearer token, '
+        .'so any entry here is a second authentication path.',
+    );
 });
