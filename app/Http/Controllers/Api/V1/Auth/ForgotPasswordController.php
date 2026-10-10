@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\V1\Auth;
 use App\Application\Auth\RequestPasswordReset;
 use App\Domain\Users\Email;
 use App\Http\Requests\Api\V1\Auth\ForgotPasswordRequest;
+use Dedoc\Scramble\Attributes\Response as ResponseDoc;
 use Illuminate\Http\Response;
 
 /**
@@ -17,6 +18,8 @@ use Illuminate\Http\Response;
  */
 final class ForgotPasswordController
 {
+    // Aliased to ResponseDoc because Illuminate\Http\Response is this method's return type.
+    #[ResponseDoc(status: 429, description: 'Too many reset requests for this address: 3 per hour per email address. Carries Retry-After.', type: 'array{message: string}')]
     public function __invoke(ForgotPasswordRequest $request, RequestPasswordReset $requestPasswordReset): Response
     {
         $requestPasswordReset->execute(Email::fromString($request->string('email')->toString()));

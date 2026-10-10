@@ -63,6 +63,22 @@ final class RegisterRequest extends FormRequest
      * rules() key, or on the class, is public API documentation - treat those two positions
      * accordingly.
      *
+     * `timezone` uses that first position DELIBERATELY, which is the other half of the same
+     * rule: the one thing a client cannot work out for itself is that this field wants an IANA
+     * identifier, and IanaTimeZone correctly declines to enumerate the ~400 values (the tz
+     * database differs between machines, so a published enum would be a per-machine document -
+     * exactly what spec §5's byte gate exists to prevent). So the client-facing sentence goes
+     * where Scramble publishes it. The test is that the published description is that sentence
+     * and nothing else.
+     *
+     * `locale` carries `required` alongside `sometimes`, matching UpdateProfileRequest. Those
+     * two rules were asymmetric and the asymmetry was an oversight, not a design: Laravel's
+     * ConvertEmptyStringsToNull middleware turns `""` into null before any rule runs, and null
+     * fails `string`, so sending an empty locale was ALREADY a 422 here - `sometimes, string`
+     * simply described that wrongly. tandem-shared's RegisterSchema had mirrored the written
+     * rule and accepted `""`, which no client could then send. The published schema does not
+     * move: `required` adds no minLength.
+     *
      * @return array<string, mixed>
      */
     public function rules(): array
@@ -72,8 +88,9 @@ final class RegisterRequest extends FormRequest
             'email' => ['required', 'string', new ValidEmail, 'max:254', 'unique:users,email'],
             'password' => ['required', 'string', Password::min(12)],
             'display_name' => ['required', 'string', 'max:80'],
+            /** An IANA time zone identifier, such as "Europe/London" or "America/New_York". */
             'timezone' => ['required', 'string', new IanaTimeZone],
-            'locale' => ['sometimes', 'string', 'max:10'],
+            'locale' => ['sometimes', 'required', 'string', 'max:10'],
         ];
     }
 }

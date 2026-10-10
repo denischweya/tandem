@@ -1,6 +1,7 @@
 <?php
 
 use Dedoc\Scramble\Http\Middleware\RestrictedDocsAccess;
+use Dedoc\Scramble\SecurityDocumentation\MiddlewareAuthSecurityStrategy;
 
 return [
     /*
@@ -182,6 +183,17 @@ return [
      *     ],
      * ],
      */
-    // 'security_strategy' => \Dedoc\Scramble\SecurityDocumentation\MiddlewareAuthSecurityStrategy::class,
-    'security_strategy' => null,
+    // Enabled, where it shipped as null with the line above commented out. Four operations
+    // require `auth:sanctum` - POST /auth/logout, and all three /me verbs - and the document
+    // declared no securitySchemes and no `security` on any operation, so the published
+    // contract never said the API is authenticated at all. A generated client gets no
+    // Authorization header and no way to describe one, and spec §9.2's "the API speaks only
+    // bearer tokens" was true of the code and absent from the thing clients are built from.
+    //
+    // MiddlewareAuthSecurityStrategy derives this from the route's own middleware rather than
+    // from a second list: it matches `auth` and `auth:*`, applies bearer auth globally, and
+    // marks every route without matching middleware `security: []`. So adding auth:sanctum to
+    // a route updates the document, and tests/Feature/Contract/OpenApiContractTest.php
+    // asserts the correspondence in both directions.
+    'security_strategy' => MiddlewareAuthSecurityStrategy::class,
 ];

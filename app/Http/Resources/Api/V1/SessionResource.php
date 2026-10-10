@@ -24,6 +24,15 @@ final class SessionResource extends JsonResource
      * load-bearing, so renaming a Session property is caught by `make stan` instead of at
      * runtime.
      *
+     * The two @format date-time annotations are the published type, not a note: both fields
+     * are RFC3339 strings, and the document gave them as bare `string`, so a generated client
+     * typed them as `string` and the stated reason for returning them at all - a client
+     * scheduling a refresh ahead of expiry, a BFF setting a cookie's Max-Age - was left to
+     * each client to rediscover. A docblock directly above an array key is the position
+     * Scramble reads (TypeTransformer's ArrayItemType_ branch calls ->format() from an
+     *
+     * @format tag), which is the same mechanism RegisterRequest::rules() uses for `email`.
+     *
      * The (string) casts on the two formatted expiries are for Scramble, not PHPStan:
      * DateTimeImmutable::format() has no declared return type in PHP's own reflection
      * metadata (verified: ReflectionMethod::hasReturnType() is false for it), so
@@ -38,8 +47,10 @@ final class SessionResource extends JsonResource
     {
         return [
             'access_token' => $this->accessToken,
+            /** @format date-time */
             'access_token_expires_at' => (string) $this->accessTokenExpiresAt->format(DATE_RFC3339_EXTENDED),
             'refresh_token' => $this->refreshToken,
+            /** @format date-time */
             'refresh_token_expires_at' => (string) $this->refreshTokenExpiresAt->format(DATE_RFC3339_EXTENDED),
             'user' => UserResource::make($this->user),
         ];
