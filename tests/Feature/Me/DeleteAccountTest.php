@@ -62,7 +62,7 @@ it('writes one user.deleted outbox event', function (): void {
     // handler registered", so without this the event type would silently accumulate
     // unpublishable rows. Dispatching here is the only thing that proves the registration in
     // AppServiceProvider exists and spells the type exactly as the use case writes it -
-    // OutboxHandlers::register() overwrites a duplicate silently, so a typo is invisible.
+    // A typo in the event type would leave this row unpublishable for ever instead.
     $summary = app(OutboxDispatcher::class)->dispatchPending();
 
     expect($summary->published)->toBe(1);

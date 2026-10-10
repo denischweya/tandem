@@ -55,8 +55,9 @@ class AppServiceProvider extends ServiceProvider
         // is_string() guarded, not a bare (string) cast: an array value for `email` passes
         // route dispatch and would otherwise emit an E_WARNING that becomes an
         // ErrorException inside this closure, before ForgotPasswordRequest's own 'string'
-        // rule ever gets a chance to reject it with a 422 - the same reachable 500 Task 4
-        // found and fixed for the login limiter.
+        // rule ever gets a chance to reject it with a 422 - the same reachable 500 the login
+        // limiter had while it still read the request from middleware, before it moved inside
+        // Login::execute().
         //
         // EmailInput::normalize() here is the same call ForgotPasswordRequest's
         // NormalizesEmailInput trait makes. The 3-per-hour-per-email limit is only
@@ -134,10 +135,11 @@ class AppServiceProvider extends ServiceProvider
             // unhandled type forever. If this is ever given real work, the no-op comment is
             // the thing to delete.
             //
-            // The event type is 'user.deleted' and nothing else: OutboxHandlers::register()
-            // overwrites a duplicate type silently, so reusing 'user.registered' here would
-            // have replaced the verification email handler with this empty closure, with no
-            // error anywhere.
+            // The event type is 'user.deleted' and nothing else. Reusing 'user.registered'
+            // here would have replaced the verification email handler with this empty
+            // closure; OutboxHandlers::register() now throws on a duplicate type rather than
+            // leaving that hazard to a comment at one of three independent registration
+            // sites.
             $handlers->register('user.deleted', function (array $payload): void {});
         });
     }
