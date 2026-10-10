@@ -6,11 +6,15 @@ bearer tokens only and never sets a cookie, so Next route handlers under `/api/a
 a thin **backend-for-frontend** that holds the token pair as `HttpOnly; Secure; SameSite=Lax`
 cookies and browser JavaScript never handles a token.
 
-> **State of the BFF, measured 2026-10-10: it is specified but not yet built.** There is no
-> `src/server/` and no `src/app/api/` on any branch of this repo. `src/lib/env.ts` reads a
-> public API base URL and that is the whole of the API wiring today. An earlier version of this
-> README described the BFF as present; it is not. ADR 0004 is the design to build against, and
-> `vitest.config.mts`'s comments are written in anticipation of it.
+> **State of the BFF, measured 2026-10-11: built.** `src/server/` now holds the eight route
+> handlers' logic (`handlers.ts`), the cookie policy (`cookies.ts`), the Origin-based CSRF
+> check (`csrf.ts`), the error vocabulary (`errors.ts`), the single outbound caller
+> (`apiFetch.ts`) and the server-only `API_BASE_URL` read (`env.ts`, which replaces the
+> deleted `src/lib/env.ts`). `src/app/api/auth/*` wires each handler to a route. `src/lib/
+env.ts` is gone; the one place `API_BASE_URL` is read is `src/server/env.ts`, and it is no
+> longer a `NEXT_PUBLIC_*` variable - the browser never calls the API directly under ADR 0004,
+> so nothing needs that value inlined into the client bundle. `vitest.config.mts`'s comments,
+> written in anticipation of this, now describe the real thing.
 
 ---
 
@@ -42,13 +46,13 @@ The same is true of `tandem-mobile` (`feature/home-dashboard`), `tandem-api` and
 
 Cloned side by side, all under the `denischweya` GitHub account. All five are private.
 
-| Repo | Owns | Work is on |
-|---|---|---|
-| `tandem-docs` | Blueprint, specs, ADRs, plans, reviews. Authoritative for *why*. | `main` |
-| `tandem-api` | Laravel 13 / PHP 8.4 API. Source of truth for the contract; bearer tokens only. | `wave-0-foundation` |
-| `tandem-shared` | Raw TypeScript: types generated from the API's `openapi.json`, hand-written Zod schemas proved against them, timezone-safe date helpers. | `wave-0-foundation` |
-| `tandem-mobile` | Expo SDK 57 / React Native client. Sibling of this repo. | `feature/home-dashboard` |
-| **`tandem-web`** (this repo) | Next.js 16 App Router client, and the BFF cookie layer (ADR 0004). | `feature/guest-invite` |
+| Repo                         | Owns                                                                                                                                     | Work is on               |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `tandem-docs`                | Blueprint, specs, ADRs, plans, reviews. Authoritative for _why_.                                                                         | `main`                   |
+| `tandem-api`                 | Laravel 13 / PHP 8.4 API. Source of truth for the contract; bearer tokens only.                                                          | `wave-0-foundation`      |
+| `tandem-shared`              | Raw TypeScript: types generated from the API's `openapi.json`, hand-written Zod schemas proved against them, timezone-safe date helpers. | `wave-0-foundation`      |
+| `tandem-mobile`              | Expo SDK 57 / React Native client. Sibling of this repo.                                                                                 | `feature/home-dashboard` |
+| **`tandem-web`** (this repo) | Next.js 16 App Router client, and the BFF cookie layer (ADR 0004).                                                                       | `feature/guest-invite`   |
 
 ---
 
@@ -84,7 +88,7 @@ to be authenticated. Configure **one** of:
 Without one of those, `npm ci` fails at the fetch with an authentication or "repository not
 found" error — which reads like a typo in the specifier and is not.
 
-### CI needs a token for a *second* private repository, and does not have one
+### CI needs a token for a _second_ private repository, and does not have one
 
 **Measured 2026-10-10: `.github/workflows/ci.yml` has no such token configured.** It runs
 `actions/checkout@v4`, then `npm ci`, with no SSH-agent step, no `NODE_AUTH_TOKEN`, and no
@@ -129,7 +133,7 @@ npm install '@tandem/shared@github:denischweya/tandem-shared#<ref>'
 ## Running
 
 ```bash
-cp .env.example .env.local   # NEXT_PUBLIC_API_BASE_URL
+cp .env.example .env.local   # API_BASE_URL
 npm run dev                  # http://localhost:3000
 ```
 
@@ -141,17 +145,17 @@ in `tandem-api`.
 `next.config.ts` sets `transpilePackages: ['@tandem/shared']`, which is what lets this app
 consume that package's **raw TypeScript** (it ships no build), and `reactStrictMode: true`.
 
-| Script | What it does |
-|---|---|
-| `npm run dev` | `next dev` |
-| `npm run build` | `next build` |
-| `npm run start` | `next start` |
-| `npm run typecheck` | `next typegen && tsc --noEmit` |
-| `npm run lint` | `eslint . --max-warnings 0` |
-| `npm run format-check` | `prettier --check .` |
-| `npm run test` | `vitest run` |
-| `npm run e2e` | `playwright test` — **builds first**, see below |
-| `npm run verify` | the gate |
+| Script                 | What it does                                    |
+| ---------------------- | ----------------------------------------------- |
+| `npm run dev`          | `next dev`                                      |
+| `npm run build`        | `next build`                                    |
+| `npm run start`        | `next start`                                    |
+| `npm run typecheck`    | `next typegen && tsc --noEmit`                  |
+| `npm run lint`         | `eslint . --max-warnings 0`                     |
+| `npm run format-check` | `prettier --check .`                            |
+| `npm run test`         | `vitest run`                                    |
+| `npm run e2e`          | `playwright test` — **builds first**, see below |
+| `npm run verify`       | the gate                                        |
 
 Installed versions: Next 16.3.8, React 19.2.8, TypeScript 5.9.3, Vitest 4.1.11,
 `@playwright/test` 1.61.1, Zod 4.6.5.
@@ -213,7 +217,7 @@ pinned Git dependency, not a workspace, and only its `files` allowlist is instal
 > union. Verified against the installed TypeScript 5.9.3: `Record<'a'|'b', number>` indexes to
 > `number`, while `{ [k: string]: number }` indexes to `number | undefined`. So defensive
 > narrowing added for a `Record` over a literal union is **dead code** — it cannot be reached.
-> Narrowing *is* required for a `Record<string, T>` lookup table or a computed array index; see
+> Narrowing _is_ required for a `Record<string, T>` lookup table or a computed array index; see
 > the comments in `src/lib/format-list.ts` and `src/lib/invite/format.ts`, both of which assert
 > a bound explicitly for exactly that reason.
 
@@ -283,15 +287,25 @@ src/
 │   ├── page.tsx              landing page; renders the API target and a Nairobi clock
 │   ├── layout.tsx
 │   ├── globals.css
+│   ├── api/auth/*/route.ts   eight three-line handlers, each re-exporting src/server/handlers.ts
 │   └── invite/[token]/       the guest-invite page (spec §11, screen 3j)
 ├── architecture/             the runner gate (see above)
 ├── components/
 │   ├── invite/               InviteHeader, PlanSummary, RsvpResponse, SignupPrompt
 │   └── ui/                   Avatar, Button
-└── lib/
-    ├── env.ts                the one place NEXT_PUBLIC_API_BASE_URL is read
-    ├── format-list.ts
-    └── invite/               fixture + formatting
+├── server/                   the BFF (ADR 0004) - see its own module docblocks
+│   ├── env.ts                the one place API_BASE_URL is read (server-only)
+│   ├── cookies.ts             tandem_at / tandem_rt: Max-Age, Path, HttpOnly/Secure/SameSite
+│   ├── csrf.ts                Origin + Sec-Fetch-Site check for every mutating route
+│   ├── errors.ts              the error envelope and its user-facing copy rules
+│   ├── apiFetch.ts            the single outbound caller to tandem-api
+│   ├── handlers.ts            the eight (Request) => Promise<Response> handlers
+│   └── session.ts             getSession() for a Server Component render
+├── lib/
+│   ├── session/               refreshSession() (the browser's one refresh initiator),
+│   │                          useSession()/SessionProvider, the query client
+│   ├── format-list.ts
+│   └── invite/                fixture + formatting
 e2e/                          Playwright specs
 ```
 

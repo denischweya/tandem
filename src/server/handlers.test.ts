@@ -1,0 +1,681 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ACCESS_COOKIE, REFRESH_COOKIE } from './cookies';
+
+// vi.mock with a factory, NOT vi.spyOn over a namespace import: an ESM namespace object is
+// not extensible, so spyOn on it throws in a plain `environment: 'node'` Vitest run. The
+// factory is hoisted above the imports, which is why `callApi` is read back through
+// vi.mocked() rather than captured here.
+vi.mock('./apiFetch', () => ({ callApi: vi.fn() }));
+
+import { callApi as callApiImpl } from './apiFetch';
+import * as handlersModule from './handlers';
+import {
+  forgotPasswordHandler,
+  loginHandler,
+  logoutHandler,
+  refreshHandler,
+  registerHandler,
+  resetPasswordHandler,
+  sessionHandler,
+  verifyEmailHandler,
+} from './handlers';
+
+const callApi = vi.mocked(callApiImpl);
+
+const SESSION = {
+  access_token: 'uuid|abc',
+  access_token_expires_at: '2026-10-10T12:15:00.000+00:00',
+  refresh_token: 'f'.repeat(64),
+  refresh_token_expires_at: '2026-11-09T12:00:00.000+00:00',
+  user: {
+    id: '0199e2a0-7b1c-7000-8000-000000000001',
+    email: 'ada@example.test',
+    email_verified: false,
+    display_name: 'Ada Lovelace',
+    timezone: 'Africa/Nairobi',
+    locale: 'en',
+  },
+};
+
+const headers = (extra: Record<string, string> = {}): Record<string, string> => ({
+  origin: 'https://tandem.test',
+  host: 'tandem.test',
+  'content-type': 'application/json',
+  ...extra,
+});
+
+function post(path: string, body: unknown, extra: Record<string, string> = {}): Request {
+  return new Request(`https://tandem.test${path}`, {
+    method: 'POST',
+    headers: headers(extra),
+    body: JSON.stringify(body),
+  });
+}
+
+beforeEach(() => {
+  callApi.mockReset();
+});
+
+describe('loginHandler', () => {
+  it('sets both cookies and returns the user with NO token in the body', async () => {
+    callApi.mockResolvedValue({ kind: 'ok', status: 200, json: { data: SESSION } });
+
+    const response = await loginHandler(
+      post('/api/auth/login', { email: 'ada@example.test', password: 'hunter2hunter2' }),
+    );
+
+    expect(response.status).toBe(200);
+    const cookies = response.headers.getSetCookie();
+    expect(cookies.some((c) => c.startsWith(`${ACCESS_COOKIE}=`))).toBe(true);
+    expect(cookies.some((c) => c.startsWith(`${REFRESH_COOKIE}=`))).toBe(true);
+
+    const body = await response.text();
+    // Blueprint §91: browser JavaScript never holds a token. This assertion is the mechanical
+    // guarantee of it - an added field that happened to include a token fails here.
+    expect(body).not.toContain(SESSION.access_token);
+    expect(body).not.toContain(SESSION.refresh_token);
+    expect(JSON.parse(body)).toEqual({ user: SESSION.user });
+  });
+
+  it('sends an inert platform web and omits install_id', async () => {
+    // ADR 0003: "the web BFF has no install_id concept to bind to". LoginController maps an
+    // empty install_id to a NULL DeviceDescriptor, so the refresh row lands with device_id
+    // NULL, which that ADR explicitly permits. If a web install_id is ever minted, the ADR
+    // must be updated in the same change.
+    //
+    // `platform: 'web'` IS INERT TODAY, and this test's name says so rather than letting a
+    // future reader treat it as load-bearing. MEASURED in LoginController: the descriptor is
+    // `$installId === '' ? null : new DeviceDescriptor($installId, $request->string('platform',
+    // 'web')->toString())` - so with no install_id the descriptor is null and `platform` is
+    // NEVER READ. An earlier draft's comment said LoginController "defaults the platform to
+    // 'web' when a descriptor exists", which is true and does not apply to the request being
+    // asserted here.
+    //
+    // It is sent anyway, deliberately: it is the value this client would supply if a
+    // descriptor ever existed, LoginRequest validates it (`sometimes|required|string|
+    // in:ios,android,web`, measured), and declaring it means adding an install_id later is one
+    // line rather than a decision. `src/session/types.ts`'s AuthApi docblock states the same
+    // rule from the mobile side, where the field is deliberately NOT sent at all.
+    //
+    // Alternative considered and declined: drop `platform` so the body matches LoginSchema
+    // exactly. Declined because the field and its enum then have to be rediscovered by
+    // whoever adds the descriptor, and an inert field a test calls inert costs nothing.
+    callApi.mockResolvedValue({ kind: 'ok', status: 200, json: { data: SESSION } });
+    await loginHandler(
+      post('/api/auth/login', { email: 'ada@example.test', password: 'hunter2hunter2' }),
+    );
+
+    const sent = callApi.mock.calls[0]?.[1];
+    expect(sent?.body).toEqual({
+      email: 'ada@example.test',
+      password: 'hunter2hunter2',
+      platform: 'web',
+    });
+    expect(sent?.body).not.toHaveProperty('install_id');
+  });
+
+  it('passes a 401 through with its own message and sets no cookie', async () => {
+    callApi.mockResolvedValue({
+      kind: 'error',
+      status: 401,
+      envelope: { message: 'These credentials do not match our records.' },
+      retryAfterSeconds: null,
+    });
+
+    const response = await loginHandler(
+      post('/api/auth/login', { email: 'ada@example.test', password: 'x' }),
+    );
+
+    expect(response.status).toBe(401);
+    expect(response.headers.getSetCookie()).toEqual([]);
+    expect(await response.json()).toEqual({
+      message: 'These credentials do not match our records.',
+    });
+  });
+
+  it('passes a 429 through with Retry-After and no attempts counter', async () => {
+    // §8.2: login's two limits count FAILED ATTEMPTS and a success clears the budget, so any
+    // remaining-attempts number the UI shows is wrong the moment the user succeeds. The
+    // handler forwards Retry-After and nothing else.
+    callApi.mockResolvedValue({
+      kind: 'error',
+      status: 429,
+      envelope: { message: 'Too Many Attempts.' },
+      retryAfterSeconds: 540,
+    });
+
+    const response = await loginHandler(
+      post('/api/auth/login', { email: 'ada@example.test', password: 'x' }),
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('retry-after')).toBe('540');
+  });
+
+  it('rejects a 422 body before calling the API at all', async () => {
+    const response = await loginHandler(
+      post('/api/auth/login', { email: 'not-an-email', password: '' }),
+    );
+
+    expect(response.status).toBe(422);
+    expect(callApi).not.toHaveBeenCalled();
+    const body = await response.json();
+    expect(body).toHaveProperty('errors');
+  });
+
+  it('refuses a cross-origin POST without calling the API', async () => {
+    const response = await loginHandler(
+      post(
+        '/api/auth/login',
+        { email: 'ada@example.test', password: 'hunter2hunter2' },
+        {
+          origin: 'https://evil.test',
+        },
+      ),
+    );
+
+    expect(response.status).toBe(403);
+    expect(callApi).not.toHaveBeenCalled();
+    expect(response.headers.getSetCookie()).toEqual([]);
+  });
+});
+
+describe('registerHandler', () => {
+  it('registers then logs in, because register returns no tokens', async () => {
+    // POST /auth/register answers 201 with a UserResource and NO TOKENS. Confirmed in
+    // openapi.json. So "create an account and be signed in" is two API calls, and this
+    // handler owns the sequencing.
+    callApi
+      .mockResolvedValueOnce({ kind: 'ok', status: 201, json: { data: SESSION.user } })
+      .mockResolvedValueOnce({ kind: 'ok', status: 200, json: { data: SESSION } });
+
+    const response = await registerHandler(
+      post('/api/auth/register', {
+        email: 'ada@example.test',
+        password: 'hunter2hunter2',
+        display_name: 'Ada Lovelace',
+        timezone: 'Africa/Nairobi',
+      }),
+    );
+
+    expect(callApi).toHaveBeenCalledTimes(2);
+    expect(callApi.mock.calls[0]?.[0]).toBe('/auth/register');
+    expect(callApi.mock.calls[1]?.[0]).toBe('/auth/login');
+    expect(response.status).toBe(201);
+    expect(response.headers.getSetCookie()).toHaveLength(2);
+  });
+
+  it('reports registeredNotSignedIn when the follow-up login fails, rather than a dead end', async () => {
+    callApi
+      .mockResolvedValueOnce({ kind: 'ok', status: 201, json: { data: SESSION.user } })
+      .mockResolvedValueOnce({
+        kind: 'error',
+        status: 429,
+        envelope: { message: 'Too Many Attempts.' },
+        retryAfterSeconds: 60,
+      });
+
+    const response = await registerHandler(
+      post('/api/auth/register', {
+        email: 'ada@example.test',
+        password: 'hunter2hunter2',
+        display_name: 'Ada Lovelace',
+        timezone: 'Africa/Nairobi',
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(response.headers.getSetCookie()).toEqual([]);
+    expect(await response.json()).toEqual({
+      user: SESSION.user,
+      signedIn: false,
+      email: 'ada@example.test',
+    });
+  });
+
+  it('does not call login when register fails', async () => {
+    callApi.mockResolvedValueOnce({
+      kind: 'error',
+      status: 422,
+      envelope: { message: 'The given data was invalid.', errors: { email: ['taken'] } },
+      retryAfterSeconds: null,
+    });
+
+    const response = await registerHandler(
+      post('/api/auth/register', {
+        email: 'ada@example.test',
+        password: 'hunter2hunter2',
+        display_name: 'Ada Lovelace',
+        timezone: 'Africa/Nairobi',
+      }),
+    );
+
+    expect(callApi).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(422);
+  });
+});
+
+describe('refreshHandler', () => {
+  it('re-sets BOTH cookies with Max-Age recomputed from the new expiries', async () => {
+    // Every rotation issues a fresh 30-day refresh token (§9.1.1: a sliding window with no
+    // absolute cap in Cycle 1). A handler that re-sets only the access cookie silently caps
+    // the session at the FIRST refresh token's 30 days.
+    callApi.mockResolvedValue({ kind: 'ok', status: 200, json: { data: SESSION } });
+
+    const response = await refreshHandler(
+      new Request('https://tandem.test/api/auth/refresh', {
+        method: 'POST',
+        headers: headers({ cookie: `${REFRESH_COOKIE}=${'f'.repeat(64)}` }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const cookies = response.headers.getSetCookie();
+    expect(cookies).toHaveLength(2);
+    expect(cookies.some((c) => c.startsWith(`${REFRESH_COOKIE}=`))).toBe(true);
+  });
+
+  it('DELETES both cookies on a 401 and reports signed out, with nothing alarming', async () => {
+    // bootstrap/app.php returns one identical 401 for unknown, expired, revoked AND replayed,
+    // and RotationPolicy now maps Revoked to Reject - so this 401 is indistinguishable from
+    // the user having logged out in another tab. The BFF must not infer theft.
+    callApi.mockResolvedValue({
+      kind: 'error',
+      status: 401,
+      envelope: { message: 'The refresh token is not valid.' },
+      retryAfterSeconds: null,
+    });
+
+    const response = await refreshHandler(
+      new Request('https://tandem.test/api/auth/refresh', {
+        method: 'POST',
+        headers: headers({ cookie: `${REFRESH_COOKIE}=${'f'.repeat(64)}` }),
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    const cookies = response.headers.getSetCookie();
+    expect(cookies).toHaveLength(2);
+    expect(cookies.every((c) => c.includes('Max-Age=0'))).toBe(true);
+    const body = await response.json();
+    expect(body).toEqual({ signedIn: false });
+    expect(JSON.stringify(body).toLowerCase()).not.toContain('compromis');
+  });
+
+  it('answers 401 with no API call when there is no refresh cookie', async () => {
+    const response = await refreshHandler(
+      new Request('https://tandem.test/api/auth/refresh', { method: 'POST', headers: headers() }),
+    );
+    expect(response.status).toBe(401);
+    expect(callApi).not.toHaveBeenCalled();
+  });
+
+  it('answers 401 without calling the API when the cookie is not 64 characters', async () => {
+    // RefreshTokenRequest pins refresh_token to exactly 64 characters, so a truncated cookie
+    // is a 422 upstream - a pointless round trip for a value that can never succeed.
+    const response = await refreshHandler(
+      new Request('https://tandem.test/api/auth/refresh', {
+        method: 'POST',
+        headers: headers({ cookie: `${REFRESH_COOKIE}=short` }),
+      }),
+    );
+    expect(response.status).toBe(401);
+    expect(callApi).not.toHaveBeenCalled();
+    expect(response.headers.getSetCookie()).toHaveLength(2);
+  });
+});
+
+describe('logoutHandler', () => {
+  it('clears both cookies even when the API answers 401', async () => {
+    // The access token may have expired while the page sat open. Leaving cookies behind
+    // after a failed logout leaves the user looking signed in.
+    callApi.mockResolvedValue({
+      kind: 'error',
+      status: 401,
+      envelope: { message: 'Unauthenticated.' },
+      retryAfterSeconds: null,
+    });
+
+    const response = await logoutHandler(
+      new Request('https://tandem.test/api/auth/logout', {
+        method: 'POST',
+        headers: headers({
+          cookie: `${ACCESS_COOKIE}=uuid%7Cabc; ${REFRESH_COOKIE}=${'f'.repeat(64)}`,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(204);
+    const cookies = response.headers.getSetCookie();
+    // toHaveLength(2) FIRST: Array.prototype.every on an empty array returns true
+    // vacuously, regardless of the predicate. MEASURED: without this line, a handler that
+    // returns zero Set-Cookie headers on a 401 (i.e. clears NOTHING) still passes the
+    // `.every(...)` assertion below, because `[].every(...)` is `true` - the exact failure
+    // mode this task's own instructions warn about ("an enumerated list needs its liveness
+    // half"). `refreshHandler`'s sibling 401 test two describe blocks up already includes
+    // this check; it was missing here.
+    expect(cookies).toHaveLength(2);
+    expect(cookies.every((c) => c.includes('Max-Age=0'))).toBe(true);
+  });
+
+  it('clears both cookies without an API call when there is no session', async () => {
+    const response = await logoutHandler(
+      new Request('https://tandem.test/api/auth/logout', { method: 'POST', headers: headers() }),
+    );
+    expect(response.status).toBe(204);
+    expect(callApi).not.toHaveBeenCalled();
+    expect(response.headers.getSetCookie()).toHaveLength(2);
+  });
+
+  it('never refreshes in order to obtain a bearer', async () => {
+    callApi.mockResolvedValue({ kind: 'ok', status: 204, json: null });
+    await logoutHandler(
+      new Request('https://tandem.test/api/auth/logout', {
+        method: 'POST',
+        headers: headers({
+          cookie: `${ACCESS_COOKIE}=uuid%7Cabc; ${REFRESH_COOKIE}=${'f'.repeat(64)}`,
+        }),
+      }),
+    );
+    expect(callApi).toHaveBeenCalledTimes(1);
+    expect(callApi.mock.calls[0]?.[0]).toBe('/auth/logout');
+  });
+});
+
+describe('verifyEmailHandler', () => {
+  it('relays the raw query byte-for-byte and sends no body', async () => {
+    // UrlGenerator::hasCorrectSignature rebuilds the signed original from the raw QUERY_STRING
+    // in arrival order. Measured: URLSearchParams re-serialisation turns '%20' into '+',
+    // '~' into '%7E' and '%2A' into '*' - each a permanent 403.
+    const raw =
+      'expires=1791635696&id=0199e2a0-7b1c-7000-8000-000000000001&hash=ab%2Fcd&signature=ZZ%3D%3D&pad=a~b';
+    callApi.mockResolvedValue({ kind: 'ok', status: 200, json: { data: SESSION.user } });
+
+    const response = await verifyEmailHandler(
+      new Request(`https://tandem.test/api/auth/verify-email?${raw}`, {
+        method: 'POST',
+        headers: headers(),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(callApi.mock.calls[0]?.[0]).toBe(`/auth/verify-email?${raw}`);
+    expect(callApi.mock.calls[0]?.[1]?.body).toBeUndefined();
+  });
+
+  it('passes a 403 through as one unexplained answer', async () => {
+    // One answer for a tampered signature, an expired link, an unknown id and a hash that no
+    // longer matches the current address. 403 means "this link is not usable" and never "no
+    // such account".
+    callApi.mockResolvedValue({
+      kind: 'error',
+      status: 403,
+      envelope: { message: 'This action is unauthorized.' },
+      retryAfterSeconds: null,
+    });
+
+    const response = await verifyEmailHandler(
+      new Request('https://tandem.test/api/auth/verify-email?id=x', {
+        method: 'POST',
+        headers: headers(),
+      }),
+    );
+    expect(response.status).toBe(403);
+  });
+});
+
+describe('sessionHandler', () => {
+  it('returns the user with no token when the access cookie is live', async () => {
+    callApi.mockResolvedValue({ kind: 'ok', status: 200, json: { data: SESSION.user } });
+
+    const response = await sessionHandler(
+      new Request('https://tandem.test/api/auth/session', {
+        headers: { cookie: `${ACCESS_COOKIE}=uuid%7Cabc` },
+      }),
+    );
+
+    // clone() BEFORE the first read: a Response's body can only be consumed once, and
+    // calling clone() after response.json() has already read it throws "Body has already
+    // been consumed" (measured against the installed Node 22's Fetch implementation) - a
+    // defect in this test as originally given, not in the handler under test. Cloning first
+    // preserves the same two assertions without disturbing either stream.
+    const clonedForRawCheck = response.clone();
+    expect(await response.json()).toEqual({ status: 'signedIn', user: SESSION.user });
+    expect(await clonedForRawCheck.text()).not.toContain('uuid|abc');
+  });
+
+  it('reports expired - not signedOut - on a 401, so the client can refresh', async () => {
+    callApi.mockResolvedValue({
+      kind: 'error',
+      status: 401,
+      envelope: { message: 'Unauthenticated.' },
+      retryAfterSeconds: null,
+    });
+
+    const response = await sessionHandler(
+      new Request('https://tandem.test/api/auth/session', {
+        headers: { cookie: `${ACCESS_COOKIE}=uuid%7Cabc` },
+      }),
+    );
+    expect(await response.json()).toEqual({ status: 'expired' });
+  });
+
+  it('reports signedOut with no API call when there is no cookie at all', async () => {
+    const response = await sessionHandler(new Request('https://tandem.test/api/auth/session'));
+    expect(await response.json()).toEqual({ status: 'signedOut' });
+    expect(callApi).not.toHaveBeenCalled();
+  });
+});
+
+// Everything below is supplementary to the brief's given suite. The brief's handlers.test.ts
+// never imports forgotPasswordHandler or resetPasswordHandler at all - two of the eight route
+// handlers go completely unexercised - and tests CSRF rejection on exactly one of the seven
+// mutating handlers (loginHandler), leaving the other six's assertSameOrigin call unproven.
+// Both are exactly the "enumerated list with no liveness half" shape the task's own
+// instructions warn recurred eight times in Task 6.
+
+describe('forgotPasswordHandler', () => {
+  it('answers 202 with an empty body on success and writes no cookie', async () => {
+    callApi.mockResolvedValue({ kind: 'ok', status: 202, json: null });
+
+    const response = await forgotPasswordHandler(
+      post('/api/auth/forgot-password', { email: 'ada@example.test' }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(response.headers.getSetCookie()).toEqual([]);
+    expect(await response.text()).toBe('');
+  });
+
+  it('never parses a body and never implies whether the account exists, win or lose', async () => {
+    callApi.mockResolvedValue({ kind: 'ok', status: 202, json: null });
+    await forgotPasswordHandler(post('/api/auth/forgot-password', { email: 'ada@example.test' }));
+    expect(callApi.mock.calls[0]?.[0]).toBe('/auth/forgot-password');
+    expect(callApi.mock.calls[0]?.[1]?.body).toEqual({ email: 'ada@example.test' });
+  });
+
+  it('forwards a 429 Retry-After, §8.2 (3/hour/email)', async () => {
+    callApi.mockResolvedValue({
+      kind: 'error',
+      status: 429,
+      envelope: { message: 'Too Many Attempts.' },
+      retryAfterSeconds: 1800,
+    });
+
+    const response = await forgotPasswordHandler(
+      post('/api/auth/forgot-password', { email: 'ada@example.test' }),
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('retry-after')).toBe('1800');
+  });
+
+  it('rejects an invalid email before calling the API', async () => {
+    const response = await forgotPasswordHandler(
+      post('/api/auth/forgot-password', { email: 'not-an-email' }),
+    );
+    expect(response.status).toBe(422);
+    expect(callApi).not.toHaveBeenCalled();
+  });
+
+  it('refuses a cross-origin POST without calling the API', async () => {
+    const response = await forgotPasswordHandler(
+      post(
+        '/api/auth/forgot-password',
+        { email: 'ada@example.test' },
+        { origin: 'https://evil.test' },
+      ),
+    );
+    expect(response.status).toBe(403);
+    expect(callApi).not.toHaveBeenCalled();
+  });
+});
+
+describe('resetPasswordHandler', () => {
+  const resetBody = {
+    token: 'a'.repeat(64),
+    email: 'ada@example.test',
+    password: 'hunter2hunter2',
+  };
+
+  it('clears both cookies and answers 204 on success - the API revoked every token server-side', async () => {
+    callApi.mockResolvedValue({ kind: 'ok', status: 204, json: null });
+
+    const response = await resetPasswordHandler(post('/api/auth/reset-password', resetBody));
+
+    expect(response.status).toBe(204);
+    const cookies = response.headers.getSetCookie();
+    expect(cookies).toHaveLength(2);
+    expect(cookies.every((c) => c.includes('Max-Age=0'))).toBe(true);
+  });
+
+  it('forwards a 422 with its envelope INTACT, so errors.token carries the server sentence verbatim', async () => {
+    const sentence = 'This password reset link is no longer valid. Request a new one.';
+    callApi.mockResolvedValue({
+      kind: 'error',
+      status: 422,
+      envelope: { message: sentence, errors: { token: [sentence] } },
+      retryAfterSeconds: null,
+    });
+
+    const response = await resetPasswordHandler(post('/api/auth/reset-password', resetBody));
+
+    expect(response.status).toBe(422);
+    expect(response.headers.getSetCookie()).toEqual([]);
+    expect(await response.json()).toEqual({ message: sentence, errors: { token: [sentence] } });
+  });
+
+  it('rejects a malformed body (token not 64 characters) before calling the API', async () => {
+    const response = await resetPasswordHandler(
+      post('/api/auth/reset-password', { ...resetBody, token: 'short' }),
+    );
+    expect(response.status).toBe(422);
+    expect(callApi).not.toHaveBeenCalled();
+  });
+
+  it('refuses a cross-origin POST without calling the API', async () => {
+    const response = await resetPasswordHandler(
+      post('/api/auth/reset-password', resetBody, { origin: 'https://evil.test' }),
+    );
+    expect(response.status).toBe(403);
+    expect(callApi).not.toHaveBeenCalled();
+    expect(response.headers.getSetCookie()).toEqual([]);
+  });
+});
+
+describe('CSRF guards every mutating handler, not just loginHandler', () => {
+  // The LIVENESS half: this is the complete set of mutating handlers handlers.ts exports
+  // right now, read off the module rather than retyped from memory, so a ninth handler added
+  // later without a row below fails this assertion instead of silently going unchecked.
+  const EXPECTED_MUTATING_HANDLERS = [
+    'loginHandler',
+    'registerHandler',
+    'refreshHandler',
+    'logoutHandler',
+    'forgotPasswordHandler',
+    'resetPasswordHandler',
+    'verifyEmailHandler',
+  ].sort();
+
+  it('is the complete set this module exports, aside from the one GET (sessionHandler)', () => {
+    const exportedHandlerNames = Object.keys(handlersModule).filter((name) =>
+      name.endsWith('Handler'),
+    );
+    const mutatingHandlerNames = exportedHandlerNames
+      .filter((name) => name !== 'sessionHandler')
+      .sort();
+    expect(mutatingHandlerNames).toEqual(EXPECTED_MUTATING_HANDLERS);
+  });
+
+  const requestFor: Record<string, () => Request> = {
+    loginHandler: () =>
+      post(
+        '/api/auth/login',
+        { email: 'ada@example.test', password: 'hunter2hunter2' },
+        {
+          origin: 'https://evil.test',
+        },
+      ),
+    registerHandler: () =>
+      post(
+        '/api/auth/register',
+        {
+          email: 'ada@example.test',
+          password: 'hunter2hunter2',
+          display_name: 'Ada',
+          timezone: 'Africa/Nairobi',
+        },
+        { origin: 'https://evil.test' },
+      ),
+    refreshHandler: () =>
+      new Request('https://tandem.test/api/auth/refresh', {
+        method: 'POST',
+        headers: headers({
+          origin: 'https://evil.test',
+          cookie: `${REFRESH_COOKIE}=${'f'.repeat(64)}`,
+        }),
+      }),
+    logoutHandler: () =>
+      new Request('https://tandem.test/api/auth/logout', {
+        method: 'POST',
+        headers: headers({
+          origin: 'https://evil.test',
+          cookie: `${ACCESS_COOKIE}=uuid%7Cabc; ${REFRESH_COOKIE}=${'f'.repeat(64)}`,
+        }),
+      }),
+    forgotPasswordHandler: () =>
+      post(
+        '/api/auth/forgot-password',
+        { email: 'ada@example.test' },
+        { origin: 'https://evil.test' },
+      ),
+    resetPasswordHandler: () =>
+      post(
+        '/api/auth/reset-password',
+        { token: 'a'.repeat(64), email: 'ada@example.test', password: 'hunter2hunter2' },
+        { origin: 'https://evil.test' },
+      ),
+    verifyEmailHandler: () =>
+      new Request('https://tandem.test/api/auth/verify-email?id=x', {
+        method: 'POST',
+        headers: headers({ origin: 'https://evil.test' }),
+      }),
+  };
+
+  it.each(EXPECTED_MUTATING_HANDLERS)(
+    '%s refuses a cross-origin POST without calling the API',
+    async (name) => {
+      const handler = handlersModule[name as keyof typeof handlersModule];
+      const buildRequest = requestFor[name];
+      if (buildRequest === undefined)
+        throw new Error(`no cross-origin request fixture for ${name}`);
+
+      const response = await handler(buildRequest());
+
+      expect(response.status).toBe(403);
+      expect(callApi).not.toHaveBeenCalled();
+      expect(response.headers.getSetCookie()).toEqual([]);
+    },
+  );
+});
