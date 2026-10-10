@@ -31,8 +31,17 @@ export function maxAgeFromExpiry(expiresAtIso: string, nowMs: number): number {
 function serialize(name: string, value: string, path: string, maxAge: number): string {
   // `Secure` with no environment carve-out, as ADR 0004 requires. Playwright runs against
   // http://localhost:3100 and Chromium treats localhost as a secure context, so Secure
-  // cookies are accepted there; e2e/live/auth.spec.ts asserts the cookie is actually SET
-  // rather than assuming that exemption holds.
+  // cookies are accepted there.
+  //
+  // FIX ROUND 1, MINOR (seventh brief defect): this comment named `e2e/live/auth.spec.ts`
+  // as asserting the cookie is actually set - that file does not exist. `e2e/` holds only
+  // `smoke.spec.ts` and `invite.spec.ts`, and no e2e test in this repo touches any BFF
+  // route; `sessionSetCookies`'s own unit tests (cookies.test.ts) are what currently prove
+  // `Secure` is present. The brief supplied the line this replaced verbatim; it cited a test
+  // that was never written rather than the one that exists. Writing the cited test itself is
+  // out of scope here - it needs either a live API or a mocked one behind Playwright's
+  // webServer, neither of which this task's file list includes - so the citation is
+  // corrected rather than the test manufactured.
   return [
     `${name}=${encodeURIComponent(value)}`,
     `Path=${path}`,
@@ -70,6 +79,27 @@ export function clearedSetCookies(): [string, string] {
   ];
 }
 
+/**
+ * FIX ROUND 1, IMPORTANT 6: `decodeURIComponent` throws a raw `URIError` on a malformed
+ * percent-encoding (`decodeURIComponent('%')`, measured). Unguarded, that turned a single bad
+ * cookie into a Next 500 across the ENTIRE auth surface - `sessionHandler`, `logoutHandler`
+ * and `refreshHandler` all call `readSessionCookies` with nothing to catch it, and
+ * `src/server/session.ts`'s `getSession()` does too. Because `logoutHandler` also threw, the
+ * app had no way to clear the bad cookie itself - recovery needed the browser's own cookie
+ * settings. A cookie value is attacker-influenceable in several ways that do not require
+ * `HttpOnly` to be absent (a sibling subdomain setting a `Domain` cookie of the same name, or
+ * corruption in transit), so this is treated as untrusted input, not a can't-happen value.
+ * One malformed value is swallowed to "absent" rather than failing the whole header; it does
+ * not poison a well-formed cookie sitting next to it in the same header.
+ */
+function decodeCookieValue(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
+
 export function readSessionCookies(cookieHeader: string | null): {
   access: string | null;
   refresh: string | null;
@@ -78,7 +108,9 @@ export function readSessionCookies(cookieHeader: string | null): {
   for (const part of (cookieHeader ?? '').split(';')) {
     const index = part.indexOf('=');
     if (index === -1) continue;
-    jar.set(part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim()));
+    const decoded = decodeCookieValue(part.slice(index + 1).trim());
+    if (decoded === null) continue;
+    jar.set(part.slice(0, index).trim(), decoded);
   }
   return { access: jar.get(ACCESS_COOKIE) ?? null, refresh: jar.get(REFRESH_COOKIE) ?? null };
 }

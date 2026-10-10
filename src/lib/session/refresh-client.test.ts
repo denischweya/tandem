@@ -178,6 +178,54 @@ describe('refreshSession - two tabs', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('recovers when the leading tab vanishes without ever posting a result (fix round 1, Minor)', async () => {
+    // The original docblock named this residual and declined to fix it: "if the LEADING
+    // tab is closed ... before it posts its result message, a follower ... is left
+    // waiting on a promise that never settles - there is no timeout fallback." PROVEN
+    // worse than that sentence says: it is not just THIS wait that never settles - because
+    // run() returns that never-settling promise as `localInFlight`, the follower tab can
+    // NEVER refresh again for the life of the page. A SECOND call to refreshSession() in
+    // the same tab returns the SAME stuck promise (it is still non-null), and fetch is
+    // never called a second time - confirmed by timing this test out at 2s before the fix
+    // existed, with the assertions below never reached.
+    vi.useFakeTimers();
+    try {
+      const neverResolves = new Promise<Response>(() => {
+        // The leading tab's fetch that never comes back - standing in for a leader tab
+        // that was closed (not just slow) before `postRefresh` returned.
+      });
+      const fetchMock = vi
+        .fn()
+        .mockReturnValueOnce(neverResolves)
+        .mockResolvedValueOnce(new Response(null, { status: 200 }))
+        .mockResolvedValue(new Response(null, { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const tabA = await import('./refresh-client');
+      vi.resetModules();
+      const tabB = await import('./refresh-client');
+
+      void tabA.refreshSession(); // the leader; never settles, by construction above.
+      const resultB = tabB.refreshSession(); // the follower.
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      await expect(resultB).resolves.toBe(true);
+      // Two calls: the leader's original attempt, plus the follower's own recovery
+      // attempt once it gave up waiting - not a third, so recovery does not retry forever
+      // either.
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      // The follower tab's OWN slot must also have reset, not just this one call's
+      // promise - otherwise the fix would only cover the single call under test here.
+      const resultBAgain = tabB.refreshSession();
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(resultBAgain).resolves.toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 2000);
 });
 
 describe('refreshSession - no BroadcastChannel', () => {

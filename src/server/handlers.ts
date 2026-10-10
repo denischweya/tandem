@@ -13,7 +13,7 @@ import {
 import { callApi, type ApiCallResult } from './apiFetch';
 import { clearedSetCookies, readSessionCookies, sessionSetCookies } from './cookies';
 import { assertSameOrigin } from './csrf';
-import { HOUSE_SERVER_MESSAGE, userMessageFor } from './errors';
+import { fieldErrorsFor, HOUSE_SERVER_MESSAGE, userMessageFor } from './errors';
 
 /**
  * Eight route handlers, each `(request: Request) => Promise<Response>` and NONE of them
@@ -144,19 +144,31 @@ function relayFailure(result: ApiCallResult): Response {
   }
   const headers: Record<string, string> = {};
   if (result.retryAfterSeconds !== null) headers['retry-after'] = String(result.retryAfterSeconds);
-  const body: { message: string; errors?: Record<string, string[]> } = {
+  const body: { message: string; errors?: Record<string, string> } = {
     message: userMessageFor(result.status, result.envelope),
   };
-  if (result.envelope?.errors !== undefined) body.errors = result.envelope.errors;
+  const fieldErrors = fieldErrorsFor(result.envelope);
+  if (fieldErrors !== null) body.errors = fieldErrors;
   return jsonResponse(result.status, body, headers);
 }
 
 /**
- * Validates with `LoginSchema`, sends `{...body, platform: 'web'}` with deliberately NO
- * `install_id` (ADR 0003: "the web BFF has no install_id concept to bind to" - see
+ * Validates with `LoginSchema`, sends `{email, password, platform: 'web'}` with deliberately
+ * NO `install_id` (ADR 0003: "the web BFF has no install_id concept to bind to" - see
  * `handlers.test.ts`'s own test name for why `platform` is sent anyway while being inert
  * today), parses the response with `SessionSchema`, sets both cookies, and returns `{user}`
  * with no token in the body - the mechanical form of blueprint §91.
+ *
+ * FIX ROUND 1, IMPORTANT 2: the body is built EXPLICITLY, field by field, rather than spread
+ * from `validated.data` - `{...validated.data, platform: 'web'}` relayed a client-supplied
+ * `install_id` straight through, because `LoginSchema` carries it as optional and a same-
+ * origin request can set any body field it likes. MEASURED in tandem-api's
+ * `Login::rememberDevice`: an `updateOrCreate` on `(user_id, install_id)` that writes
+ * `platform`/`last_seen_at` onto whatever device row that `install_id` belongs to - so this
+ * silently rebound a real device's row to `platform: 'web'` and bound the web refresh chain
+ * to it, a thing ADR 0003 says the web BFF has no concept of. `registerHandler`'s login
+ * follow-up already built its body this same explicit way; this brings `loginHandler` into
+ * line with it rather than the other way around.
  */
 export async function loginHandler(request: Request): Promise<Response> {
   const csrfFailure = csrfGuard(request);
@@ -167,7 +179,7 @@ export async function loginHandler(request: Request): Promise<Response> {
 
   const result = await callApi('/auth/login', {
     method: 'POST',
-    body: { ...validated.data, platform: 'web' },
+    body: { email: validated.data.email, password: validated.data.password, platform: 'web' },
   });
 
   if (result.kind !== 'ok') return relayFailure(result);
@@ -225,11 +237,19 @@ export async function registerHandler(request: Request): Promise<Response> {
  * (§9.1.1 - a sliding window, no absolute cap in Cycle 1); re-setting only the access cookie
  * would silently cap the session at the first refresh token's 30 days.
  *
- * A 401 - the API's one identical answer for unknown, expired, revoked AND replayed - is
- * terminal: both credentials are discarded and the body is `{signedIn: false}` with nothing
- * that could read as an accusation. A `transportFailure` is NOT treated the same way: a
- * network blip to the API is never evidence the credential is bad, so cookies are left
- * untouched and the browser's caller can simply try again later.
+ * A 401 - and ONLY a 401, the API's one identical answer for unknown, expired, revoked AND
+ * replayed - is terminal: both credentials are discarded and the body is `{signedIn: false}`
+ * with nothing that could read as an accusation.
+ *
+ * FIX ROUND 1, IMPORTANT 3: every OTHER non-ok outcome (a non-401 error status such as a 500,
+ * 503 or 429, or a `transportFailure`) is treated identically to each other and NOT as
+ * terminal - no cookie write at all. The original code cleared both cookies on ANY non-ok
+ * result except `transportFailure`, which contradicted this very docblock's own reasoning
+ * ("a transportFailure is never evidence the credential is bad") for every status code that
+ * is not 401 but also is not a network failure: a 503 is the identical "the API didn't
+ * actually evaluate the token" situation and was getting the opposite treatment. Left
+ * untouched, cookies let the browser's caller retry once the outage clears, rather than
+ * discarding a refresh token that was never examined and forcing a password re-entry.
  */
 export async function refreshHandler(request: Request): Promise<Response> {
   const csrfFailure = csrfGuard(request);
@@ -249,11 +269,12 @@ export async function refreshHandler(request: Request): Promise<Response> {
     return withSetCookies(jsonResponse(200, { signedIn: true }), session, Date.now());
   }
 
-  if (result.kind === 'transportFailure') {
-    return jsonResponse(502, { message: HOUSE_SERVER_MESSAGE });
+  if (result.kind === 'error' && result.status === 401) {
+    return withClearedCookies(jsonResponse(401, { signedIn: false }));
   }
 
-  return withClearedCookies(jsonResponse(result.status, { signedIn: false }));
+  const status = result.kind === 'transportFailure' ? 502 : result.status;
+  return jsonResponse(status, { signedIn: false });
 }
 
 /**
@@ -302,12 +323,21 @@ export async function forgotPasswordHandler(request: Request): Promise<Response>
  * revoked every token the user held server-side, so the BFF's own idea of the session must
  * agree) and returns 204.
  *
- * A 422 is forwarded with its envelope INTACT - deliberately NOT run through
- * `userMessageFor`/`fieldErrorsFor` the way every other handler's failure is. An invalid
+ * A 422 - and ONLY a 422 - is forwarded with its envelope INTACT, deliberately NOT run
+ * through `userMessageFor`/`fieldErrorsFor` the way every other failure here is. An invalid
  * reset token's `errors.token` carries the same sentence as `message`, and the page renders
  * it as a form-level message with a "Request a new link" action, never against the hidden
  * token input; reshaping the envelope here would be one more place that sentence has to stay
  * byte-for-byte in sync with the one the API actually sent.
+ *
+ * FIX ROUND 1, IMPORTANT 1: every other status (500, 503, …) goes through `relayFailure`
+ * instead, exactly like every other handler. The original code forwarded `result.envelope`
+ * intact at EVERY error status, which is a raw-backend-text leak (blueprint §135) for anything
+ * that is not a 422 - `ErrorEnvelopeSchema` is a non-strict `z.object`, so a Laravel
+ * debug-mode 500 carrying `{message: 'SQLSTATE[23000]: …'}` parsed as a valid envelope and
+ * relayed verbatim. 422 is safe to forward intact only because it is already on
+ * `userMessageFor`'s authored-status allowlist, so the two paths agree for every value the
+ * API actually sends at that one status - that agreement does not extend to any other status.
  */
 export async function resetPasswordHandler(request: Request): Promise<Response> {
   const csrfFailure = csrfGuard(request);
@@ -321,13 +351,12 @@ export async function resetPasswordHandler(request: Request): Promise<Response> 
   if (result.kind === 'ok') {
     return withClearedCookies(noBodyResponse(204));
   }
-  if (result.kind === 'transportFailure') {
-    return jsonResponse(502, { message: HOUSE_SERVER_MESSAGE });
+
+  if (result.kind === 'error' && result.status === 422) {
+    return jsonResponse(422, result.envelope ?? { message: HOUSE_SERVER_MESSAGE });
   }
 
-  const headers: Record<string, string> = {};
-  if (result.retryAfterSeconds !== null) headers['retry-after'] = String(result.retryAfterSeconds);
-  return jsonResponse(result.status, result.envelope ?? { message: HOUSE_SERVER_MESSAGE }, headers);
+  return relayFailure(result);
 }
 
 /**
@@ -362,9 +391,23 @@ export async function verifyEmailHandler(request: Request): Promise<Response> {
  * The only GET, and therefore the only handler that skips `assertSameOrigin` - it reads
  * nothing cross-origin tooling can forge into a mutation. `signedOut` with no API call when
  * there is no access cookie at all; otherwise `GET /me` with the bearer, mapping 200 to
- * `signedIn` and anything else to `expired`. `expired` is NOT `signedOut` - that distinction
- * is what lets the browser's caller attempt one refresh instead of showing a sign-in page to
- * someone who, as far as they know, is still signed in.
+ * `signedIn` and a 401 - and ONLY a 401 - to `expired`. `expired` is NOT `signedOut` - that
+ * distinction is what lets the browser's caller attempt one refresh instead of showing a
+ * sign-in page to someone who, as far as they know, is still signed in.
+ *
+ * FIX ROUND 1, IMPORTANT 3: a non-401 error status or a `transportFailure` is NEITHER
+ * `signedIn` NOR `expired` NOR `signedOut` - there is no fourth state in this handler's
+ * contract (`useSession.ts`'s `SessionResultSchema` is a strict three-member discriminated
+ * union), so these now fall through to `relayFailure`, which answers with a non-2xx status
+ * and a body that has no `status` field at all. `useSession.ts`'s `fetchSession` throws on a
+ * non-2xx before it ever reaches `SessionResultSchema.parse`, so this surfaces as a THROWN
+ * query error that react-query retries a bounded number of times - it is never read as
+ * `expired` and never triggers `refreshSession()`. Before this fix, EVERY non-ok result
+ * (including a 500 that never looked at the access token, and a transport failure that never
+ * reached the API at all) mapped to `expired`, so a brief API outage walked every open web
+ * session through expired -> refresh -> (the API still down) -> refreshHandler's own
+ * over-eager clearing -> both credentials discarded -> signed out, forcing a password
+ * re-entry for a refresh token that was never invalid.
  */
 export async function sessionHandler(request: Request): Promise<Response> {
   const { access } = readSessionCookies(request.headers.get('cookie'));
@@ -378,5 +421,9 @@ export async function sessionHandler(request: Request): Promise<Response> {
     return jsonResponse(200, { status: 'signedIn', user });
   }
 
-  return jsonResponse(200, { status: 'expired' });
+  if (result.kind === 'error' && result.status === 401) {
+    return jsonResponse(200, { status: 'expired' });
+  }
+
+  return relayFailure(result);
 }

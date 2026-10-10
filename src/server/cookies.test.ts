@@ -132,4 +132,27 @@ describe('readSessionCookies', () => {
   it('ignores an unrelated cookie', () => {
     expect(readSessionCookies('other=1')).toEqual({ access: null, refresh: null });
   });
+
+  it('does not throw on a malformed percent-encoding, treating that value as absent (fix round 1, Important 6)', () => {
+    // decodeURIComponent('%') throws a RAW URIError, unguarded. MEASURED: before this fix,
+    // readSessionCookies(`${ACCESS_COOKIE}=%`) threw instead of returning, which crashed
+    // every handler that reads a cookie - sessionHandler, logoutHandler and refreshHandler by
+    // the suites below, and src/server/session.ts's getSession() by inspection (same
+    // function, same unguarded call) - turning a malformed cookie into a Next 500 across the
+    // entire auth surface. Because logoutHandler also throws, the app has no way to clear the
+    // bad cookie itself; recovery needs the browser's own cookie settings. Reachable from
+    // same-origin JS wherever no HttpOnly cookie of that name already exists, from a sibling
+    // subdomain setting a Domain cookie, or from corruption in transit.
+    expect(() => readSessionCookies(`${ACCESS_COOKIE}=%`)).not.toThrow();
+    expect(readSessionCookies(`${ACCESS_COOKIE}=%`)).toEqual({ access: null, refresh: null });
+  });
+
+  it('does not throw when ONE cookie is malformed and the other is well-formed', () => {
+    // The malformed value must not poison the well-formed one sitting next to it in the same
+    // header.
+    expect(readSessionCookies(`${ACCESS_COOKIE}=%; ${REFRESH_COOKIE}=${'f'.repeat(64)}`)).toEqual({
+      access: null,
+      refresh: 'f'.repeat(64),
+    });
+  });
 });

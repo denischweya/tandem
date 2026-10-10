@@ -24,9 +24,22 @@ import 'server-only';
  * NOTE THE SHAPE DIFFERENCE, which is deliberate and is the one place the two clients'
  * `apiBaseUrl` are not mirrors: mobile exports a `const` (it reads `Constants.expoConfig`,
  * available synchronously at module load, and the value cannot change for the life of the
- * bundle), web exports a FUNCTION (reading `process.env` at module scope in Next captures the
- * build-time value, and a server deployment must be able to be reconfigured without a
- * rebuild). Task 11 states the call-site consequence.
+ * bundle), web exports a FUNCTION so that a call site which actually runs per request -
+ * `apiFetch.ts`'s `callApi` and, through it, all eight route handlers, every one listed
+ * `ƒ (Dynamic)` by `next build` - re-reads `process.env` on each call rather than capturing a
+ * value frozen at build time.
+ *
+ * FIX ROUND 1, MINOR: an earlier version of this paragraph claimed that rationale held at
+ * THIS MODULE'S OWN one call site too ("a server deployment must be able to be reconfigured
+ * without a rebuild"). MEASURED, and it does not: `src/app/page.tsx`'s `{apiBaseUrl()}` is
+ * the one call site Task 10 actually added, and `/` is `○ (Static)` in this very build - the
+ * page is prerendered once at build time, so that particular call's result is frozen into
+ * the generated HTML exactly like a captured `const` would be, and reconfiguring
+ * `API_BASE_URL` after a build changes nothing on that page without a rebuild regardless of
+ * `apiBaseUrl` being a function. The function shape is still the right choice - it is correct
+ * for every call site that is NOT statically prerendered, which is most of them, and it costs
+ * this one call site nothing - but the docblock should not claim a property this specific
+ * usage does not have. Task 11 states the call-site consequence for its own forms.
  */
 export function apiBaseUrl(): string {
   const fromEnv = process.env.API_BASE_URL;

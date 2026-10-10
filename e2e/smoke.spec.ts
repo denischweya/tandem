@@ -14,3 +14,17 @@ test('the shared package is bundled and executed during the server render', asyn
   await page.goto('/');
   await expect(page.getByTestId('nairobi-time')).toHaveText(/^\d{2}:\d{2}$/);
 });
+
+// Fix round 1, Important 5: review finding m4 was reported closed by rendering
+// data-testid="nairobi-fixed", but nothing asserted it — rendering a value nothing checks
+// closes nothing. /^\d{2}:\d{2}$/ above passes for UTC, the wrong day, or "00:00"; it does
+// not test the time zone, which is toZonedParts's entire purpose. This fixes the exact
+// instant page.tsx fixes (2026-10-10T16:30:00.000Z) and asserts the one Africa/Nairobi-local
+// value it must produce (UTC+3, no DST): 19:30. A regression to UTC (16:30) or to a wrong
+// offset now fails here.
+test('the fixed-instant clock proves Africa/Nairobi is actually applied, not just a time-shaped string', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByTestId('nairobi-fixed')).toHaveText('19:30');
+});

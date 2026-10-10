@@ -29,8 +29,24 @@ export type SessionResult = z.infer<typeof SessionResultSchema>;
 
 export const SESSION_QUERY_KEY = ['session'] as const;
 
+/**
+ * Fix round 1, Important 3's client-side half: `sessionHandler` now answers a non-401 error
+ * or a transport failure with a non-2xx status and a body that has no `status` field at all
+ * (there is no fourth state in `SessionResultSchema`'s three-member discriminated union) -
+ * deliberately, so this never gets read as `expired` and never triggers `refreshSession()`.
+ * Thrown with a `status` property so `queryClient.ts`'s duck-typed `isAuthFailure` can tell a
+ * 401/403 (give up immediately) from a 500/503 (worth `createQueryClient`'s normal retry).
+ */
+export class SessionFetchError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`);
+    this.name = 'SessionFetchError';
+  }
+}
+
 async function fetchSession(): Promise<SessionResult> {
   const response = await fetch('/api/auth/session');
+  if (!response.ok) throw new SessionFetchError(response.status);
   const json: unknown = await response.json();
   return SessionResultSchema.parse(json);
 }
@@ -48,8 +64,11 @@ export function SessionProvider({ children }: { children: ReactNode }): ReactNod
 }
 
 /**
- * Reads `GET /api/auth/session`, which never throws on a dead credential - it answers 200
- * with `{status: 'expired'}` - so there is no error branch to handle here for that case.
+ * Reads `GET /api/auth/session`, which never throws for a dead ACCESS TOKEN specifically -
+ * a 401 from `/me` answers 200 with `{status: 'expired'}` - so there is no error branch to
+ * handle here for that one case. A non-401 error or a transport failure DOES throw
+ * (`SessionFetchError`, from `fetchSession` above) and is left to react-query's own retry and
+ * error state; this hook does not catch it and does not call `refreshSession()` for it.
  *
  * On `{status: 'expired'}` this calls `refreshSession()` EXACTLY ONCE (the effect's own
  * dependency array keys off `query.data?.status`, so a second render with the same status

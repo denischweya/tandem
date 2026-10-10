@@ -10,11 +10,11 @@ cookies and browser JavaScript never handles a token.
 > handlers' logic (`handlers.ts`), the cookie policy (`cookies.ts`), the Origin-based CSRF
 > check (`csrf.ts`), the error vocabulary (`errors.ts`), the single outbound caller
 > (`apiFetch.ts`) and the server-only `API_BASE_URL` read (`env.ts`, which replaces the
-> deleted `src/lib/env.ts`). `src/app/api/auth/*` wires each handler to a route. `src/lib/
-env.ts` is gone; the one place `API_BASE_URL` is read is `src/server/env.ts`, and it is no
-> longer a `NEXT_PUBLIC_*` variable - the browser never calls the API directly under ADR 0004,
-> so nothing needs that value inlined into the client bundle. `vitest.config.mts`'s comments,
-> written in anticipation of this, now describe the real thing.
+> deleted `src/lib/env.ts`). `src/app/api/auth/*` wires each handler to a route.
+> `src/lib/env.ts` is gone; the one place `API_BASE_URL` is read is `src/server/env.ts`, and
+> it is no longer a `NEXT_PUBLIC_*` variable - the browser never calls the API directly under
+> ADR 0004, so nothing needs that value inlined into the client bundle. `vitest.config.mts`'s
+> comments, written in anticipation of this, now describe the real thing.
 
 ---
 

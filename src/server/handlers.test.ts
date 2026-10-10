@@ -115,6 +115,32 @@ describe('loginHandler', () => {
     expect(sent?.body).not.toHaveProperty('install_id');
   });
 
+  it('strips a client-supplied install_id rather than relaying it (fix round 1, Important 2)', async () => {
+    // The test above only ever sends a body that never HAD install_id, so it proves nothing
+    // about stripping one that IS present. MEASURED in tandem-api's Login::rememberDevice
+    // (app/Application/Auth/Login.php:98): an updateOrCreate on (user_id, install_id) that
+    // writes platform and last_seen_at onto WHATEVER ROW THAT INSTALL_ID BELONGS TO - so a
+    // same-origin web login carrying a real device's install_id overwrites that device's
+    // row to platform: 'web', bumps its last_seen_at, and binds the web refresh chain to the
+    // phone's device row, which ADR 0003 says the web BFF has no concept of.
+    callApi.mockResolvedValue({ kind: 'ok', status: 200, json: { data: SESSION } });
+    await loginHandler(
+      post('/api/auth/login', {
+        email: 'ada@example.test',
+        password: 'hunter2hunter2',
+        install_id: 'attacker-chosen-device',
+      }),
+    );
+
+    const sent = callApi.mock.calls[0]?.[1];
+    expect(sent?.body).toEqual({
+      email: 'ada@example.test',
+      password: 'hunter2hunter2',
+      platform: 'web',
+    });
+    expect(sent?.body).not.toHaveProperty('install_id');
+  });
+
   it('passes a 401 through with its own message and sets no cookie', async () => {
     callApi.mockResolvedValue({
       kind: 'error',
@@ -324,6 +350,59 @@ describe('refreshHandler', () => {
     expect(callApi).not.toHaveBeenCalled();
     expect(response.headers.getSetCookie()).toHaveLength(2);
   });
+
+  it.each([500, 503, 429])(
+    'does NOT clear cookies on a non-401 error status (%i) - only 401 is terminal (fix round 1, Important 3)',
+    async (status) => {
+      // The handler's own docblock argues a transportFailure "is never evidence the
+      // credential is bad, so cookies are left untouched" - a 500/503/429 from the API is the
+      // IDENTICAL situation (the refresh token itself was never examined) and, before this
+      // fix, got the opposite treatment: EVERY non-ok result cleared both cookies.
+      callApi.mockResolvedValue({
+        kind: 'error',
+        status,
+        envelope: { message: 'Service Unavailable' },
+        retryAfterSeconds: null,
+      });
+
+      const response = await refreshHandler(
+        new Request('https://tandem.test/api/auth/refresh', {
+          method: 'POST',
+          headers: headers({ cookie: `${REFRESH_COOKIE}=${'f'.repeat(64)}` }),
+        }),
+      );
+
+      expect(response.headers.getSetCookie()).toEqual([]);
+    },
+  );
+
+  it('does NOT clear cookies on a transport failure either', async () => {
+    callApi.mockResolvedValue({ kind: 'transportFailure', error: new Error('ECONNREFUSED') });
+
+    const response = await refreshHandler(
+      new Request('https://tandem.test/api/auth/refresh', {
+        method: 'POST',
+        headers: headers({ cookie: `${REFRESH_COOKIE}=${'f'.repeat(64)}` }),
+      }),
+    );
+
+    expect(response.headers.getSetCookie()).toEqual([]);
+  });
+
+  it('does not throw and answers 401 without calling the API on a malformed refresh cookie (fix round 1, Important 6)', async () => {
+    // Entry point 3. A malformed refresh cookie decodes to null, which is indistinguishable
+    // from "absent" here - same short-circuit as the "no cookie at all" / "wrong length"
+    // cases above, and for the same reason: no value that could ever succeed upstream.
+    const response = await refreshHandler(
+      new Request('https://tandem.test/api/auth/refresh', {
+        method: 'POST',
+        headers: headers({ cookie: `${REFRESH_COOKIE}=%` }),
+      }),
+    );
+    expect(response.status).toBe(401);
+    expect(callApi).not.toHaveBeenCalled();
+    expect(response.headers.getSetCookie()).toHaveLength(2);
+  });
 });
 
 describe('logoutHandler', () => {
@@ -380,6 +459,21 @@ describe('logoutHandler', () => {
     );
     expect(callApi).toHaveBeenCalledTimes(1);
     expect(callApi.mock.calls[0]?.[0]).toBe('/auth/logout');
+  });
+
+  it('does not throw and still clears both cookies on a malformed access cookie (fix round 1, Important 6)', async () => {
+    // Entry point 2. This is the one the reviewer called out specifically: because logout
+    // itself threw before this fix, the app had NO WAY to clear a malformed cookie - a user
+    // stuck with one needed to clear it through their browser's own settings.
+    const response = await logoutHandler(
+      new Request('https://tandem.test/api/auth/logout', {
+        method: 'POST',
+        headers: headers({ cookie: `${ACCESS_COOKIE}=%; ${REFRESH_COOKIE}=${'f'.repeat(64)}` }),
+      }),
+    );
+    expect(response.status).toBe(204);
+    expect(response.headers.getSetCookie()).toHaveLength(2);
+    expect(callApi).not.toHaveBeenCalled();
   });
 });
 
@@ -465,6 +559,58 @@ describe('sessionHandler', () => {
     const response = await sessionHandler(new Request('https://tandem.test/api/auth/session'));
     expect(await response.json()).toEqual({ status: 'signedOut' });
     expect(callApi).not.toHaveBeenCalled();
+  });
+
+  it('does not throw and reports signedOut on a malformed access cookie (fix round 1, Important 6)', async () => {
+    // Entry point 1 of the three this handler-level sweep covers (see cookies.test.ts for
+    // the root-cause fix in readSessionCookies itself).
+    const response = await sessionHandler(
+      new Request('https://tandem.test/api/auth/session', {
+        headers: { cookie: `${ACCESS_COOKIE}=%` },
+      }),
+    );
+    expect(await response.json()).toEqual({ status: 'signedOut' });
+    expect(callApi).not.toHaveBeenCalled();
+  });
+
+  it.each([500, 503, 429])(
+    'does NOT report expired for a non-401 error status (%i) - fix round 1, Important 3',
+    async (status) => {
+      // `expired` is the one signal useSession.ts acts on by calling refreshSession(). Before
+      // this fix, ANY non-ok result (including a 5xx that has nothing to do with the access
+      // token) mapped to `expired`, so a brief API outage walked every open web session
+      // through expired -> refresh -> (the API still down) -> refreshHandler's OWN
+      // over-eager clearing -> both credentials discarded -> signed out, forcing a password
+      // re-entry for a refresh token that was never invalid.
+      callApi.mockResolvedValue({
+        kind: 'error',
+        status,
+        envelope: { message: 'Service Unavailable' },
+        retryAfterSeconds: null,
+      });
+
+      const response = await sessionHandler(
+        new Request('https://tandem.test/api/auth/session', {
+          headers: { cookie: `${ACCESS_COOKIE}=uuid%7Cabc` },
+        }),
+      );
+
+      const body: unknown = await response.json();
+      expect(body).not.toEqual({ status: 'expired' });
+    },
+  );
+
+  it('does NOT report expired on a transport failure either', async () => {
+    callApi.mockResolvedValue({ kind: 'transportFailure', error: new Error('ECONNREFUSED') });
+
+    const response = await sessionHandler(
+      new Request('https://tandem.test/api/auth/session', {
+        headers: { cookie: `${ACCESS_COOKIE}=uuid%7Cabc` },
+      }),
+    );
+
+    const body: unknown = await response.json();
+    expect(body).not.toEqual({ status: 'expired' });
   });
 });
 
@@ -582,33 +728,90 @@ describe('resetPasswordHandler', () => {
     expect(callApi).not.toHaveBeenCalled();
     expect(response.headers.getSetCookie()).toEqual([]);
   });
+
+  it('substitutes house copy for a 500 rather than relaying the raw backend message (§135)', async () => {
+    // Fix round 1, Important 1: `result.envelope ?? …` forwarded the envelope INTACT at every
+    // status, not just 422. ErrorEnvelopeSchema is a non-strict z.object, so a Laravel
+    // debug-mode 500 carrying exception text parses as a valid envelope and relayed verbatim.
+    const rawExceptionText =
+      'SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry for key ' +
+      '"users_email_unique"';
+    callApi.mockResolvedValue({
+      kind: 'error',
+      status: 500,
+      envelope: { message: rawExceptionText },
+      retryAfterSeconds: null,
+    });
+
+    const response = await resetPasswordHandler(post('/api/auth/reset-password', resetBody));
+
+    const body = await response.json();
+    expect(JSON.stringify(body)).not.toContain('SQLSTATE');
+    expect(JSON.stringify(body)).not.toContain(rawExceptionText);
+  });
 });
+
+// Shared by both sweeps below (CSRF liveness and the §91 token-leak liveness). Every handler
+// this file knows about, by NAME for building per-handler fixtures and by REFERENCE for the
+// completeness checks that must not be fooled by what a function happens to be called.
+const ALL_HANDLER_NAMES = [
+  'loginHandler',
+  'registerHandler',
+  'refreshHandler',
+  'logoutHandler',
+  'forgotPasswordHandler',
+  'resetPasswordHandler',
+  'verifyEmailHandler',
+  'sessionHandler',
+] as const;
+
+const MUTATING_HANDLER_NAMES = ALL_HANDLER_NAMES.filter((name) => name !== 'sessionHandler');
+
+const HANDLERS_BY_NAME: Record<(typeof ALL_HANDLER_NAMES)[number], unknown> = {
+  loginHandler,
+  registerHandler,
+  refreshHandler,
+  logoutHandler,
+  forgotPasswordHandler,
+  resetPasswordHandler,
+  verifyEmailHandler,
+  sessionHandler,
+};
+
+/**
+ * FIX ROUND 1, MINOR ("naming-convention hole"): this used to filter
+ * `Object.keys(handlersModule)` by a `name.endsWith('Handler')` string test, in the CSRF
+ * sweep only. PROVEN: a ninth exported handler named `deleteAccount` (no CSRF guard at all)
+ * left the whole suite 38/38 green, because the name-suffix filter never saw it - it decided
+ * what counts as "a handler" by spelling, which a later contributor can opt out of by
+ * accident. This collects every function-valued export BY REFERENCE instead, with no name
+ * test anywhere, so it is immune to what a new handler happens to be called. Used by both
+ * sweeps below, so the fix does not have to be made (or missed) twice.
+ */
+function assertExportsAreExactly(expected: ReadonlySet<unknown>): void {
+  const exportedFunctions = new Set(
+    Object.values(handlersModule).filter((value) => typeof value === 'function'),
+  );
+  expect(exportedFunctions).toEqual(expected);
+}
 
 describe('CSRF guards every mutating handler, not just loginHandler', () => {
   // The LIVENESS half: this is the complete set of mutating handlers handlers.ts exports
   // right now, read off the module rather than retyped from memory, so a ninth handler added
   // later without a row below fails this assertion instead of silently going unchecked.
-  const EXPECTED_MUTATING_HANDLERS = [
-    'loginHandler',
-    'registerHandler',
-    'refreshHandler',
-    'logoutHandler',
-    'forgotPasswordHandler',
-    'resetPasswordHandler',
-    'verifyEmailHandler',
-  ].sort();
-
   it('is the complete set this module exports, aside from the one GET (sessionHandler)', () => {
-    const exportedHandlerNames = Object.keys(handlersModule).filter((name) =>
-      name.endsWith('Handler'),
-    );
-    const mutatingHandlerNames = exportedHandlerNames
-      .filter((name) => name !== 'sessionHandler')
-      .sort();
-    expect(mutatingHandlerNames).toEqual(EXPECTED_MUTATING_HANDLERS);
+    assertExportsAreExactly(new Set(ALL_HANDLER_NAMES.map((name) => HANDLERS_BY_NAME[name])));
   });
 
-  const requestFor: Record<string, () => Request> = {
+  // FIX ROUND 1: swept for a THIRD instance of the same shape after closing the CSRF and
+  // §91 completeness checks above, per the reviewer's own warning that this pattern recurred
+  // eight times in one task. Found one: this was `Record<string, () => Request>`, a loose
+  // string-keyed type that gives no COMPILE-TIME guarantee a new mutating handler's name
+  // gets an entry here - only the runtime `if (buildRequest === undefined) throw` below
+  // caught it, and only once the suite actually ran. Typed against the literal union instead
+  // (matching `successScenarioFor` below, which already had this for free from its own
+  // declaration), a missing entry is now a build-time error, not a runtime one.
+  const requestFor: Record<(typeof MUTATING_HANDLER_NAMES)[number], () => Request> = {
     loginHandler: () =>
       post(
         '/api/auth/login',
@@ -663,7 +866,7 @@ describe('CSRF guards every mutating handler, not just loginHandler', () => {
       }),
   };
 
-  it.each(EXPECTED_MUTATING_HANDLERS)(
+  it.each(MUTATING_HANDLER_NAMES)(
     '%s refuses a cross-origin POST without calling the API',
     async (name) => {
       const handler = handlersModule[name as keyof typeof handlersModule];
@@ -678,4 +881,106 @@ describe('CSRF guards every mutating handler, not just loginHandler', () => {
       expect(response.headers.getSetCookie()).toEqual([]);
     },
   );
+});
+
+/**
+ * FIX ROUND 1, IMPORTANT 4: the §91 token-leak guard
+ * ("sets both cookies and returns the user with NO token in the body") previously covered
+ * loginHandler alone. PROVEN: planting `access_token` in registerHandler's 201 body AND
+ * `refresh_token` in refreshHandler's 200 body left the suite at 7 files / 91 passed - the
+ * exact one-of-N shape this file already diagnosed and fixed for CSRF (Important/Minor
+ * above), left standing on the single invariant this whole task exists to deliver.
+ *
+ * Closed the same way: an export-driven sweep over EVERY handler (sessionHandler included -
+ * this is the one sweep in this file with no GET exemption, since a GET's body can leak a
+ * token exactly as easily as a POST's), each driven to its own success path, each checked
+ * for either token in its response text.
+ */
+describe('no handler ever puts a token in a success body (§91), not just loginHandler', () => {
+  it('is the complete set this module exports - no handler is exempt from this one', () => {
+    assertExportsAreExactly(new Set(ALL_HANDLER_NAMES.map((name) => HANDLERS_BY_NAME[name])));
+  });
+
+  const successScenarioFor: Record<
+    (typeof ALL_HANDLER_NAMES)[number],
+    { mock: () => void; request: () => Request }
+  > = {
+    loginHandler: {
+      mock: () => callApi.mockResolvedValue({ kind: 'ok', status: 200, json: { data: SESSION } }),
+      request: () =>
+        post('/api/auth/login', { email: 'ada@example.test', password: 'hunter2hunter2' }),
+    },
+    registerHandler: {
+      mock: () =>
+        callApi
+          .mockResolvedValueOnce({ kind: 'ok', status: 201, json: { data: SESSION.user } })
+          .mockResolvedValueOnce({ kind: 'ok', status: 200, json: { data: SESSION } }),
+      request: () =>
+        post('/api/auth/register', {
+          email: 'ada@example.test',
+          password: 'hunter2hunter2',
+          display_name: 'Ada Lovelace',
+          timezone: 'Africa/Nairobi',
+        }),
+    },
+    refreshHandler: {
+      mock: () => callApi.mockResolvedValue({ kind: 'ok', status: 200, json: { data: SESSION } }),
+      request: () =>
+        new Request('https://tandem.test/api/auth/refresh', {
+          method: 'POST',
+          headers: headers({ cookie: `${REFRESH_COOKIE}=${'f'.repeat(64)}` }),
+        }),
+    },
+    logoutHandler: {
+      mock: () => callApi.mockResolvedValue({ kind: 'ok', status: 204, json: null }),
+      request: () =>
+        new Request('https://tandem.test/api/auth/logout', {
+          method: 'POST',
+          headers: headers({
+            cookie: `${ACCESS_COOKIE}=uuid%7Cabc; ${REFRESH_COOKIE}=${'f'.repeat(64)}`,
+          }),
+        }),
+    },
+    forgotPasswordHandler: {
+      mock: () => callApi.mockResolvedValue({ kind: 'ok', status: 202, json: null }),
+      request: () => post('/api/auth/forgot-password', { email: 'ada@example.test' }),
+    },
+    resetPasswordHandler: {
+      mock: () => callApi.mockResolvedValue({ kind: 'ok', status: 204, json: null }),
+      request: () =>
+        post('/api/auth/reset-password', {
+          token: 'a'.repeat(64),
+          email: 'ada@example.test',
+          password: 'hunter2hunter2',
+        }),
+    },
+    verifyEmailHandler: {
+      mock: () =>
+        callApi.mockResolvedValue({ kind: 'ok', status: 200, json: { data: SESSION.user } }),
+      request: () =>
+        new Request('https://tandem.test/api/auth/verify-email?id=x', {
+          method: 'POST',
+          headers: headers(),
+        }),
+    },
+    sessionHandler: {
+      mock: () =>
+        callApi.mockResolvedValue({ kind: 'ok', status: 200, json: { data: SESSION.user } }),
+      request: () =>
+        new Request('https://tandem.test/api/auth/session', {
+          headers: { cookie: `${ACCESS_COOKIE}=uuid%7Cabc` },
+        }),
+    },
+  };
+
+  it.each(ALL_HANDLER_NAMES)('%s never puts a token in its success body', async (name) => {
+    const handler = handlersModule[name as keyof typeof handlersModule];
+    successScenarioFor[name].mock();
+
+    const response = await handler(successScenarioFor[name].request());
+    const text = await response.text();
+
+    expect(text).not.toContain(SESSION.access_token);
+    expect(text).not.toContain(SESSION.refresh_token);
+  });
 });
