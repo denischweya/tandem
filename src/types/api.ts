@@ -125,6 +125,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /**
+         * Confirm an email address from a signed verification link
+         * @description Relay all four query parameters verbatim from the link in the verification email, including `expires` and `signature`. They are signed as a unit: altering, re-encoding or recomputing any of them invalidates the signature and the request is refused with 403. There is no request body.
+         */
         post: operations["auth.verify-email"];
         delete?: never;
         options?: never;
@@ -160,6 +164,7 @@ export interface components {
             email: string;
             password: string;
             display_name: string;
+            /** @description An IANA time zone identifier, such as "Europe/London" or "America/New_York". */
             timezone: string;
             locale?: string;
         };
@@ -173,8 +178,10 @@ export interface components {
         /** SessionResource */
         SessionResource: {
             access_token: string;
+            /** Format: date-time */
             access_token_expires_at: string;
             refresh_token: string;
+            /** Format: date-time */
             refresh_token_expires_at: string;
             user: components["schemas"]["UserResource"];
         };
@@ -263,6 +270,17 @@ export interface operations {
                 content?: never;
             };
             422: components["responses"]["ValidationException"];
+            /** @description Too many reset requests for this address: 3 per hour per email address. Carries Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
         };
     };
     "auth.login": {
@@ -289,7 +307,29 @@ export interface operations {
                     };
                 };
             };
+            /** @description The email and password do not match an account. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
             422: components["responses"]["ValidationException"];
+            /** @description Too many failed sign-in attempts: 10 per 15 minutes per IP address, 5 per 15 minutes per email address. Only failed attempts are counted, so a successful sign-in costs nothing. Carries Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
         };
     };
     "auth.logout": {
@@ -410,6 +450,17 @@ export interface operations {
                     };
                 };
             };
+            /** @description The refresh token is unknown, expired, revoked or has already been rotated. Sign in again. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
             422: components["responses"]["ValidationException"];
         };
     };
@@ -438,6 +489,17 @@ export interface operations {
                 };
             };
             422: components["responses"]["ValidationException"];
+            /** @description Too many registrations from this IP address: 5 per hour. Carries Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
         };
     };
     "auth.reset-password": {

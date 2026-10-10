@@ -11,6 +11,11 @@
             "description": "local"
         }
     ],
+    "security": [
+        {
+            "http": []
+        }
+    ],
     "paths": {
         "/auth/forgot-password": {
             "post": {
@@ -34,8 +39,27 @@
                     },
                     "422": {
                         "$ref": "#/components/responses/ValidationException"
+                    },
+                    "429": {
+                        "description": "Too many reset requests for this address: 3 per hour per email address. Carries Retry-After.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
                     }
-                }
+                },
+                "security": []
             }
         },
         "/auth/login": {
@@ -75,8 +99,45 @@
                     },
                     "422": {
                         "$ref": "#/components/responses/ValidationException"
+                    },
+                    "401": {
+                        "description": "The email and password do not match an account.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Too many failed sign-in attempts: 10 per 15 minutes per IP address, 5 per 15 minutes per email address. Only failed attempts are counted, so a successful sign-in costs nothing. Carries Retry-After.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
                     }
-                }
+                },
+                "security": []
             }
         },
         "/auth/logout": {
@@ -231,8 +292,27 @@
                     },
                     "422": {
                         "$ref": "#/components/responses/ValidationException"
+                    },
+                    "401": {
+                        "description": "The refresh token is unknown, expired, revoked or has already been rotated. Sign in again.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
                     }
-                }
+                },
+                "security": []
             }
         },
         "/auth/register": {
@@ -272,8 +352,27 @@
                     },
                     "422": {
                         "$ref": "#/components/responses/ValidationException"
+                    },
+                    "429": {
+                        "description": "Too many registrations from this IP address: 5 per hour. Carries Retry-After.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
                     }
-                }
+                },
+                "security": []
             }
         },
         "/auth/reset-password": {
@@ -299,12 +398,15 @@
                     "422": {
                         "$ref": "#/components/responses/ValidationException"
                     }
-                }
+                },
+                "security": []
             }
         },
         "/auth/verify-email": {
             "post": {
                 "operationId": "auth.verify-email",
+                "description": "Relay all four query parameters verbatim from the link in the verification email, including `expires` and `signature`. They are signed as a unit: altering, re-encoding or recomputing any of them invalidates the signature and the request is refused with 403. There is no request body.",
+                "summary": "Confirm an email address from a signed verification link",
                 "tags": [
                     "VerifyEmail"
                 ],
@@ -368,11 +470,18 @@
                     "422": {
                         "$ref": "#/components/responses/ValidationException"
                     }
-                }
+                },
+                "security": []
             }
         }
     },
     "components": {
+        "securitySchemes": {
+            "http": {
+                "type": "http",
+                "scheme": "bearer"
+            }
+        },
         "schemas": {
             "ForgotPasswordRequest": {
                 "type": "object",
@@ -449,7 +558,8 @@
                         "maxLength": 80
                     },
                     "timezone": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "An IANA time zone identifier, such as \"Europe/London\" or \"America/New_York\"."
                     },
                     "locale": {
                         "type": "string",
@@ -496,13 +606,15 @@
                         "type": "string"
                     },
                     "access_token_expires_at": {
-                        "type": "string"
+                        "type": "string",
+                        "format": "date-time"
                     },
                     "refresh_token": {
                         "type": "string"
                     },
                     "refresh_token_expires_at": {
-                        "type": "string"
+                        "type": "string",
+                        "format": "date-time"
                     },
                     "user": {
                         "$ref": "#/components/schemas/UserResource"
