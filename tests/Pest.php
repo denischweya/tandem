@@ -255,10 +255,17 @@ function authenticatedUser(): array
     return [$user, $access];
 }
 
-/** An active plan_members row, with an explicit joined_at so "longest-standing" is deterministic. */
+/**
+ * An active plan_members row, with an explicit joined_at so "longest-standing" is deterministic.
+ *
+ * Through the factory rather than PlanMember::create(): nothing is mass-assignable on that
+ * model (see Plan's docblock), and Illuminate's Factory wraps instantiation in
+ * Model::unguarded(), so a factory is the one array-shaped way to seed a row. A direct
+ * ::create() now throws MassAssignmentException, which is the behaviour being bought.
+ */
 function member(Plan $plan, User $user, MemberRole $role, string $joinedAt): PlanMember
 {
-    return PlanMember::create([
+    return PlanMember::factory()->create([
         'plan_id' => $plan->id,
         'user_id' => $user->id,
         'role' => $role->value,

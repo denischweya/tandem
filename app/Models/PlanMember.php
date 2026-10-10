@@ -15,6 +15,9 @@ use Illuminate\Support\Carbon;
  * $joined_at is nullable because an invited member has not joined yet - which is exactly why
  * §9.3 step 2 picks a successor from `active` rows only. See DeleteAccount::successorFor().
  *
+ * Nothing is mass-assignable here, `role` least of all. See Plan's docblock for the whole
+ * argument, including why an empty #[Fillable] allowlist does not do this.
+ *
  * @property string $id
  * @property string $plan_id
  * @property string $user_id
@@ -30,8 +33,12 @@ final class PlanMember extends Model
     /** @use HasFactory<PlanMemberFactory> */
     use HasFactory, HasUuids;
 
-    /** @var list<string> */
-    protected $guarded = [];
+    /**
+     * Nothing is mass-assignable. ['*'], not [] - see the class docblock on Plan.
+     *
+     * @var list<string>
+     */
+    protected $guarded = ['*'];
 
     /** @return array<string, string> */
     protected function casts(): array

@@ -123,7 +123,7 @@ it('skips members who are not active when choosing a successor', function (): vo
 
     $plan = Plan::factory()->create(['owner_id' => $owner->id]);
     member($plan, $owner, MemberRole::Owner, '2026-01-01 00:00:00');
-    PlanMember::create([
+    PlanMember::factory()->create([
         'plan_id' => $plan->id, 'user_id' => $invited->id,
         'role' => MemberRole::Admin->value, 'status' => MemberStatus::Invited->value, 'joined_at' => null,
     ]);

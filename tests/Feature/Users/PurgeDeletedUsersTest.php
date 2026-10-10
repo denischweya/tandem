@@ -49,7 +49,7 @@ it('never touches a live user', function (): void {
 it('hard-deletes the archived plan the departing user still solely owned', function (): void {
     $user = softDeletedDaysAgo(31);
     $plan = Plan::factory()->create(['owner_id' => $user->id, 'status' => 'archived', 'archived_at' => now()->subDays(31)]);
-    PlanMember::create([
+    PlanMember::factory()->create([
         'plan_id' => $plan->id, 'user_id' => $user->id,
         'role' => MemberRole::Owner->value, 'status' => MemberStatus::Left->value, 'joined_at' => now()->subDays(60),
     ]);
@@ -76,7 +76,7 @@ it('leaves a plan whose ownership was transferred away untouched', function (): 
     $survivor = User::factory()->hasProfile()->create();
 
     $plan = Plan::factory()->create(['owner_id' => $survivor->id]);
-    PlanMember::create([
+    PlanMember::factory()->create([
         'plan_id' => $plan->id, 'user_id' => $survivor->id,
         'role' => MemberRole::Owner->value, 'status' => MemberStatus::Active->value, 'joined_at' => now()->subDays(10),
     ]);
@@ -248,7 +248,7 @@ it('refuses to hard-delete a live multi-member plan the overdue user still owns'
     $survivor = User::factory()->hasProfile()->create();
 
     $plan = Plan::factory()->create(['owner_id' => $departing->id]);
-    PlanMember::create([
+    PlanMember::factory()->create([
         'plan_id' => $plan->id, 'user_id' => $survivor->id,
         'role' => MemberRole::Admin->value, 'status' => MemberStatus::Active->value,
         'joined_at' => now()->subDays(10),
