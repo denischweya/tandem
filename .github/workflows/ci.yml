@@ -1,6 +1,6 @@
 name: CI
 on:
-  push: { branches: [main, wave-0-foundation] }
+  push: { branches: [main, wave-0-foundation, feature/guest-invite] }
   pull_request:
 
 jobs:
