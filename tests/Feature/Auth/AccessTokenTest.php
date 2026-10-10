@@ -8,6 +8,8 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
+use function Pest\Laravel\actingAs;
+use function Pest\Laravel\getJson;
 use function Pest\Laravel\withToken;
 
 uses(RefreshDatabase::class);
@@ -71,4 +73,23 @@ it('stores only a hash of the token, never the plaintext', function (): void {
 
     expect($token->accessToken->token)->toBe(hash('sha256', $plain));
     expect($token->accessToken->token)->not->toContain($plain);
+});
+
+it('refuses a session-authenticated caller with no bearer token', function (): void {
+    // Spec §9.2 / ADR 0004: the API speaks only bearer tokens, and no second authentication
+    // path exists. That was a claim about intent until now. Sanctum's Guard iterates
+    // config('sanctum.guard') BEFORE looking at the bearer token, and the vendor default is
+    // ['web'] - so acting as a user on the session guard and calling an auth:sanctum route
+    // with NO Authorization header returned 200. Measured, then closed in config/sanctum.php.
+    //
+    // It was inert in production only because the `api` middleware group has no StartSession,
+    // which is an accident one middleware edit away from being false, and which nothing
+    // asserted. This asserts the thing the spec actually claims instead.
+    $user = User::factory()->hasProfile()->create();
+
+    expect(config('sanctum.guard'))->toBe([]);
+
+    actingAs($user, 'web');
+
+    getJson('/api/v1/me')->assertUnauthorized();
 });
