@@ -152,15 +152,12 @@ it('records nothing for a refusal that is not a replay', function (): void {
     postJson('/api/v1/auth/refresh', ['refresh_token' => $refresh])->assertUnauthorized();
     postJson('/api/v1/auth/refresh', ['refresh_token' => bin2hex(random_bytes(32))])->assertUnauthorized();
 
-    // Filtered to the `security.` prefix, not asserted empty: Laravel's exception handler
-    // reports every InvalidRefreshToken through the same channel at ERROR level, even though
-    // withExceptions() renders it as a 401. That is pre-existing noise with no token material
-    // in it; what must be absent here is a SECURITY event, because nothing security-relevant
-    // happened.
-    $security = array_values(array_filter(
-        capturedLogRecords($logs),
-        fn (array $record): bool => str_starts_with($record['message'], 'security.'),
-    ));
-
-    expect($security)->toBe([]);
+    // Asserted empty outright, not filtered to the `security.` prefix: that filter existed
+    // because Laravel's exception handler used to report every InvalidRefreshToken through
+    // this same channel at ERROR level regardless of withExceptions() rendering it as a 401
+    // - pre-existing noise with no token material in it, but noise all the same. Now that
+    // bootstrap/app.php calls dontReport() for InvalidRefreshToken (see
+    // ExceptionReportingTest), the two refusals above write nothing at all, so the plain
+    // assertion is both simpler and stricter.
+    expect(capturedLogRecords($logs))->toBe([]);
 });

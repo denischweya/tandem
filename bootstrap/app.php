@@ -42,6 +42,21 @@ return Application::configure(basePath: dirname(__DIR__))
             fn (Request $request) => $request->is('api/*') || $request->expectsJson(),
         );
 
+        // Expected control flow on a public auth surface, not application errors: a wrong
+        // password, a stale refresh token and a dead password-reset link all happen at a
+        // rate that scales with traffic, not with bugs. Left reportable, every one of them
+        // was logged at ERROR level on the same channel this wave's Log::warning() security
+        // lines (replay detection, exhausted chain walks, ...) now use - burying the signal
+        // under noise that outscales it. tests/Feature/Auth/RefreshChainTest.php had to
+        // filter captured logs down to the `security.` prefix to work around exactly this.
+        // The render() handlers below are untouched: dontReport() only stops the log write,
+        // never the HTTP response.
+        $exceptions->dontReport([
+            InvalidCredentials::class,
+            InvalidRefreshToken::class,
+            InvalidPasswordResetToken::class,
+        ]);
+
         $exceptions->render(fn (InvalidCredentials $e) => new JsonResponse(
             ['message' => 'These credentials do not match our records.'],
             401,
