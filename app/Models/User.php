@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Application\Auth\VerifyEmail;
 use App\Infrastructure\Outbox\OutboxWriter;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
@@ -114,22 +115,61 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
-     * Implemented directly rather than by using Illuminate's MustVerifyEmail trait. The trait
-     * supplies sendEmailVerificationNotification() backed by the notification system, which
-     * would bypass the outbox - the one path every email in this application takes (§85).
-     * Writing it out keeps that single path and makes the bypass impossible to take by
-     * accident.
+     * The four MustVerifyEmail methods, implemented directly rather than by using Illuminate's
+     * MustVerifyEmail trait. The trait supplies sendEmailVerificationNotification() backed by
+     * the notification system, which would bypass the outbox - the one path every email in
+     * this application takes (§85). Writing it out keeps that single path and makes the bypass
+     * impossible to take by accident.
+     *
+     * The interface itself is load-bearing and cannot be dropped to be rid of the two
+     * unreachable methods below: Illuminate\Auth\Middleware\EnsureEmailIsVerified gates on
+     * `$request->user() instanceof MustVerifyEmail && ! $request->user()->hasVerifiedEmail()`,
+     * so removing it would silently turn the `verified` middleware into a no-op. PHP then
+     * requires all four methods, whether or not anything calls them.
      */
     public function hasVerifiedEmail(): bool
     {
         return $this->email_verified_at !== null;
     }
 
+    /**
+     * Delegates, where it used to be a second implementation of the same write.
+     *
+     * It had no caller and no test, and it diverged from the one that does: it stamped
+     * $this->freshTimestamp() while VerifyEmail::execute() uses the injected Clock that every
+     * other timestamp in this application goes through - so a frozen clock in a test moved one
+     * and not the other. Delegating removes the divergence rather than copying the Clock down
+     * here, and it inherits the idempotence VerifyEmail::execute() already has.
+     *
+     * Resolved from the container rather than injected, because a model's constructor belongs
+     * to Eloquent. The same reasoning, and the same `app()` call, as
+     * sendEmailVerificationNotification() below.
+     *
+     * Returns true unconditionally: the contract's return value is "did this succeed", and the
+     * only failure mode VerifyEmail::execute() has is a throw.
+     */
     public function markEmailAsVerified(): bool
     {
-        return $this->forceFill(['email_verified_at' => $this->freshTimestamp()])->save();
+        app(VerifyEmail::class)->execute($this);
+
+        return true;
     }
 
+    /**
+     * CANNOT delegate, and the reason is that there is nothing to delegate to.
+     *
+     * This is the only "ask for a verification email" entry point in the codebase. Register
+     * writes the same event, but from inside its own transaction and as part of creating the
+     * account - §85's point being that the event and the row commit together - so it is not a
+     * seam this method could call. A "resend verification email" endpoint is the obvious future
+     * caller, and this is where it would land.
+     *
+     * So what is left is one line duplicated with Register::execute(), and the risk is that the
+     * two stop agreeing on the event type or the payload - at which point the dispatcher would
+     * report "No handler registered" for one of them for ever. That is pinned by
+     * tests/Feature/Models/UserTest.php's "writes the same user.registered event Register
+     * does", which compares the two rows rather than restating either.
+     */
     public function sendEmailVerificationNotification(): void
     {
         app(OutboxWriter::class)->write('User', $this->id, 'user.registered', ['user_id' => $this->id]);
