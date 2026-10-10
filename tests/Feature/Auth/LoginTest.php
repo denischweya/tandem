@@ -12,6 +12,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 
 use function Pest\Laravel\postJson;
+use function Pest\Laravel\withToken;
 
 uses(RefreshDatabase::class);
 
@@ -61,10 +62,25 @@ it('issues an access token that actually authenticates', function (): void {
         'password' => 'correct horse battery staple',
     ])->json('data.access_token');
 
-    // /me arrives in Task 7; until then the token's validity is asserted through the guard
-    // itself, which is what Task 1's probe route established.
-    expect($token)->toBeString()->toContain('|');
+    // Through the guard, not by shape. toContain('|') plus a row count was all this asserted,
+    // and neither is the claim its name makes: appending one character to the issued token
+    // fails 25 tests across five other files and NONE in this one. RefreshTest's equivalent
+    // case was upgraded when /me shipped and this one was not.
+    expect($token)->toBeString();
     expect(PersonalAccessToken::count())->toBe(1);
+
+    withToken(is_string($token) ? $token : '')
+        ->getJson('/api/v1/me')
+        ->assertOk()
+        ->assertJsonPath('data.id', $user->id);
+
+    // And a token that is one character different does not, so the 200 above is the guard
+    // accepting THIS token rather than accepting anything at all.
+    forgetAuthenticatedUser();
+
+    withToken((is_string($token) ? $token : '').'x')
+        ->getJson('/api/v1/me')
+        ->assertUnauthorized();
 });
 
 it('stores the refresh token only as a sha256 hash', function (): void {

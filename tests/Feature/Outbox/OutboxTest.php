@@ -99,7 +99,16 @@ it('leaves an event with no registered handler pending and records why', functio
     // Deliberately not "publish it anyway": an event type nobody handles is a deployment
     // mistake, and silently marking it published destroys the only evidence of it.
     expect($summary->failed)->toBe(1);
-    expect(OutboxEvent::sole()->last_error)->toContain('No handler registered');
+
+    $event = OutboxEvent::sole();
+
+    expect($event->last_error)->toContain('No handler registered');
+    // The half this test's NAME claims and never checked: probe-marking the row published
+    // left the whole suite green, so "leaves ... pending" was prose. The attempt count is
+    // asserted too, because it is what OutboxDispatcher::MAX_ATTEMPTS later reads to decide
+    // the row has stopped being worth claiming.
+    expect($event->published_at)->toBeNull();
+    expect($event->attempts)->toBe(1);
 });
 
 it('dispatches oldest-first and respects the limit', function (): void {

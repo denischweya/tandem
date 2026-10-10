@@ -2,6 +2,10 @@
 
 declare(strict_types=1);
 
+use App\Domain\Plans\MemberRole;
+use App\Domain\Plans\MemberStatus;
+use App\Domain\Plans\PlanStatus;
+use App\Domain\Plans\Visibility;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -304,4 +308,59 @@ it('stores every timestamptz column at precision 6, not the framework default of
         'These timestamptz columns are not at precision 6: '
         .$wrongPrecision->map(fn ($c) => "{$c->table_name}.{$c->column_name} (precision {$c->datetime_precision})")->implode(', ')
     );
+});
+
+it('sets every column default from the enum that owns the column', function (): void {
+    // Moved here from tests/Unit/Domain/Plans/EnumTest.php, where the same case asserted four
+    // enum values against four literals and so read no migration and no column at all -
+    // probe-changing both plans.status and plan_members.status defaults in the migration left
+    // the whole suite green. Read off Postgres rather than off the migration's source text:
+    // the migration is frozen for Cycle 1, the database is what the application actually
+    // meets, and `information_schema` is the only account of the two that cannot be stale.
+    //
+    // The pairing is what matters. These four columns have no CHECK constraint and no Eloquent
+    // enum cast (Plan's docblock records why the cast is deferred to whichever plan owns the
+    // write endpoints), so a default that drifts from its enum produces rows carrying a value
+    // no domain type recognises, found at read time rather than at write time.
+    $expected = [
+        ['plans', 'status', PlanStatus::Active->value],
+        ['plans', 'visibility', Visibility::InviteOnly->value],
+        ['plan_members', 'role', MemberRole::Member->value],
+        ['plan_members', 'status', MemberStatus::Invited->value],
+        // plan_invites, not group_members: group_members has no role column at all (joining a
+        // Group is not a two-step invitation, see GroupMember's docblock). Written the other
+        // way round first, and this test is what said so.
+        ['plan_invites', 'role', MemberRole::Member->value],
+    ];
+
+    foreach ($expected as [$table, $column, $enumValue]) {
+        $default = DB::scalar(
+            'select column_default from information_schema.columns where table_name = ? and column_name = ?',
+            [$table, $column],
+        );
+
+        expect($default)->toBeString("{$table}.{$column} must have a column default");
+        // Postgres reports a string default as 'member'::character varying, so the comparison
+        // is on the quoted literal rather than on the whole expression - the cast is the
+        // column's type and not part of the value.
+        expect($default)->toStartWith(
+            "'{$enumValue}'::",
+            "{$table}.{$column}'s default must be the enum value, not a literal that happens to match today",
+        );
+    }
+});
+
+it('leaves those columns unconstrained, which is why the defaults have to agree', function (): void {
+    // The other half of the case above, and the reason it is worth having: if these columns
+    // carried a CHECK, a drifted default would fail loudly at insert time and the pairing would
+    // be belt and braces. They do not, so it is the only guard there is. Asserted rather than
+    // assumed, because adding a CHECK later is a reasonable thing for a Wave 2 migration window
+    // to do - at which point this test is the thing that says so.
+    $checks = DB::scalar(
+        "select count(*) from information_schema.table_constraints tc
+         join information_schema.constraint_column_usage ccu on ccu.constraint_name = tc.constraint_name
+         where tc.constraint_type = 'CHECK' and ccu.table_name = 'plans' and ccu.column_name = 'status'",
+    );
+
+    expect((int) $checks)->toBe(0);
 });

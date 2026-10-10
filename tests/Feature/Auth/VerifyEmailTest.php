@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Domain\Shared\Clock;
+use App\Domain\Shared\FrozenClock;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\URL;
@@ -21,14 +23,37 @@ it('verifies a user presenting a valid signed payload', function (): void {
     expect($user->refresh()->email_verified_at)->not->toBeNull();
 });
 
-it('is idempotent for an already verified user', function (): void {
-    $user = User::factory()->hasProfile()->create();
+it('is idempotent, and does not re-stamp an already verified address', function (): void {
+    // Two things this test could not see before. Its user came from the plain factory, which
+    // is already verified, so the FIRST call never exercised the unverified -> verified
+    // transition; and ->not->toBeNull() cannot tell a preserved timestamp from a fresh one, so
+    // deleting VerifyEmail::execute()'s early return changed nothing observable.
+    //
+    // A frozen clock, moved between the two calls, is what makes the re-stamp visible: the
+    // second call runs a day later, and email_verified_at must still read the first instant.
+    //
+    // Frozen at the real instant rather than a fixed date, because EmailVerificationLink also
+    // reads this Clock for the link's 24-hour expiry, while signatureHasNotExpired() compares
+    // against Carbon's real now(). A clock set to a fixed past date therefore mints a link
+    // that is already expired and the first request 403s - measured, which is why this is a
+    // relative freeze.
+    $first = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    app()->instance(Clock::class, new FrozenClock($first));
+
+    $user = User::factory()->unverified()->hasProfile()->create();
     $query = signedVerificationQuery($user);
 
-    postJson('/api/v1/auth/verify-email?'.$query)->assertOk();
-    postJson('/api/v1/auth/verify-email?'.$query)->assertOk();
+    postJson('/api/v1/auth/verify-email?'.$query)->assertOk()->assertJsonPath('data.email_verified', true);
 
-    expect($user->refresh()->email_verified_at)->not->toBeNull();
+    expect($user->refresh()->email_verified_at?->toDateTimeImmutable()->format('Y-m-d H:i:s'))
+        ->toBe($first->format('Y-m-d H:i:s'));
+
+    app()->instance(Clock::class, new FrozenClock($first->modify('+1 day')));
+
+    postJson('/api/v1/auth/verify-email?'.$query)->assertOk()->assertJsonPath('data.email_verified', true);
+
+    expect($user->refresh()->email_verified_at?->toDateTimeImmutable()->format('Y-m-d H:i:s'))
+        ->toBe($first->format('Y-m-d H:i:s'));
 });
 
 it('rejects a tampered signature', function (): void {

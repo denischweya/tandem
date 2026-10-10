@@ -29,9 +29,12 @@ it('matches blueprint section 8 visibility exactly, with no public option', func
         ->toBe(['private', 'invite_only']);
 });
 
-it('agrees with the column defaults the migrations set', function (): void {
-    expect(MemberRole::Member->value)->toBe('member');
-    expect(MemberStatus::Invited->value)->toBe('invited');
-    expect(PlanStatus::Active->value)->toBe('active');
-    expect(Visibility::InviteOnly->value)->toBe('invite_only');
-});
+// The case that used to sit here - "agrees with the column defaults the migrations set" -
+// read no migration and no column. It asserted four enum values against four literals, which
+// is a restatement of the enum, not a comparison with anything: probe-changing both
+// plans.status and plan_members.status defaults in the migration left the whole suite green.
+//
+// It has moved to tests/Feature/Schema/ConstraintTest.php, where it can read the defaults
+// Postgres actually holds. That needs a database, and this file deliberately has none - spec
+// §12 puts the domain enums in the unit suite precisely so they can be reasoned about without
+// one, and tests/Pest.php binds TestCase to Feature only, so this file runs on plain PHPUnit.
