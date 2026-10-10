@@ -13,14 +13,7 @@ use App\Models\PlanMember;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Testing\PendingCommand;
 
-// No `use RuntimeException;` here: this file has no namespace, and RuntimeException is
-// already global, so importing it triggers PHP's "The use statement with non-compound
-// name 'RuntimeException' has no effect" warning - a real PHPUnit-counted warning, not a
-// cosmetic one. Reference it unqualified below instead.
-
-use function Pest\Laravel\artisan;
 use function Pest\Laravel\assertDatabaseCount;
 use function Pest\Laravel\assertDatabaseHas;
 use function Pest\Laravel\assertModelMissing;
@@ -28,36 +21,6 @@ use function Pest\Laravel\assertNotSoftDeleted;
 use function Pest\Laravel\assertSoftDeleted;
 
 uses(RefreshDatabase::class);
-
-function softDeletedDaysAgo(int $days): User
-{
-    $user = User::factory()->hasProfile()->create();
-    $user->delete();
-    DB::table('users')->where('id', $user->id)->update(['deleted_at' => now()->subDays($days)]);
-
-    return $user;
-}
-
-/**
- * Pest\Laravel\artisan() is typed `PendingCommand|int` because the real method it
- * delegates to - Illuminate\Foundation\Testing\Concerns\InteractsWithConsole::artisan() -
- * genuinely returns `int` when $mockConsoleOutput is false. This suite never disables
- * console mocking (nothing here calls withoutMockingConsoleOutput()), so the
- * PendingCommand branch is the only one ever taken; this narrows the union with a real,
- * checked instanceof rather than an inline @var overriding PHPStan's inferred type.
- *
- * @param  array<string, mixed>  $parameters
- */
-function runArtisan(string $command, array $parameters = []): PendingCommand
-{
-    $pending = artisan($command, $parameters);
-
-    if (! $pending instanceof PendingCommand) {
-        throw new RuntimeException('Expected artisan() to return a PendingCommand - console output mocking must be disabled.');
-    }
-
-    return $pending;
-}
 
 it('leaves a user inside the grace window alone', function (): void {
     $user = softDeletedDaysAgo(29);

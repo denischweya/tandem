@@ -11,17 +11,6 @@ use function Pest\Laravel\withToken;
 
 uses(RefreshDatabase::class);
 
-/** @return array{User, string} */
-function authenticatedUser(): array
-{
-    $user = User::factory()->hasProfile(['display_name' => 'Before', 'timezone' => 'UTC', 'locale' => 'en'])
-        ->create(['password_hash' => Hash::make('correct horse battery staple')]);
-
-    [, , $access] = signIn($user);
-
-    return [$user, $access];
-}
-
 it('updates the display name and the timezone', function (): void {
     [$user, $access] = authenticatedUser();
 

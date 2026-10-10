@@ -26,18 +26,6 @@ use function Pest\Laravel\withToken;
 
 uses(RefreshDatabase::class);
 
-/** A member row, created with an explicit joined_at so "longest-standing" is deterministic. */
-function member(Plan $plan, User $user, MemberRole $role, string $joinedAt): PlanMember
-{
-    return PlanMember::create([
-        'plan_id' => $plan->id,
-        'user_id' => $user->id,
-        'role' => $role->value,
-        'status' => MemberStatus::Active->value,
-        'joined_at' => $joinedAt,
-    ]);
-}
-
 it('soft-deletes the account and ends every session', function (): void {
     // An install_id, so the login really creates a devices row - signIn()'s default sends
     // none (the web BFF has no install_id: ADR 0004), and without one the "no device

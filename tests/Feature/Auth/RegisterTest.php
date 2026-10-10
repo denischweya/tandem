@@ -24,21 +24,6 @@ beforeEach(function (): void {
     RateLimiter::clear('auth-register');
 });
 
-/**
- * @param  array<string, mixed>  $overrides
- * @return array<string, mixed>
- */
-function validRegistration(array $overrides = []): array
-{
-    return array_merge([
-        'email' => 'ada@example.test',
-        'password' => 'correct horse battery staple',
-        'display_name' => 'Ada Lovelace',
-        'timezone' => 'Europe/London',
-        'locale' => 'en',
-    ], $overrides);
-}
-
 it('creates a user and a profile and returns the public shape', function (): void {
     postJson('/api/v1/auth/register', validRegistration())
         ->assertCreated()

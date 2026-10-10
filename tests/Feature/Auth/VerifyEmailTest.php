@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use App\Infrastructure\Auth\EmailVerificationLink;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\URL;
@@ -11,14 +10,6 @@ use Illuminate\Support\Str;
 use function Pest\Laravel\postJson;
 
 uses(RefreshDatabase::class);
-
-/** Returns the query string the web app relays back to this API. */
-function signedVerificationQuery(User $user): string
-{
-    $link = app(EmailVerificationLink::class)->for($user);
-
-    return (string) parse_url($link, PHP_URL_QUERY);
-}
 
 it('verifies a user presenting a valid signed payload', function (): void {
     $user = User::factory()->unverified()->hasProfile()->create();

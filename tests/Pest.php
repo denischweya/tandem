@@ -1,18 +1,45 @@
 <?php
 
 declare(strict_types=1);
+use App\Domain\Plans\MemberRole;
+use App\Domain\Plans\MemberStatus;
+use App\Infrastructure\Auth\EmailVerificationLink;
+use App\Infrastructure\Notifications\Mail\ResetPasswordMail;
+use App\Infrastructure\Outbox\OutboxDispatcher;
+use App\Models\Plan;
+use App\Models\PlanMember;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Testing\PendingCommand;
 use Monolog\Handler\TestHandler;
 use Monolog\Logger;
 use Monolog\LogRecord;
 use Tests\TestCase;
 
+use function Pest\Laravel\artisan;
 use function Pest\Laravel\postJson;
 
 uses(TestCase::class)->in('Feature');
+
+/**
+ * EVERY SHARED TEST HELPER LIVES IN THIS FILE, and the rule has no exceptions worth the
+ * trouble of making. Pest loads each test file into the global namespace, so a function
+ * declared at a test file's scope is process-global: the second file that wants it can only
+ * get it by depending on another file's load order, and a file that wants its OWN helper of
+ * the same name gets a fatal "Cannot redeclare". That is not hypothetical - `member()` is a
+ * four-character, entirely generic name, declared in DeleteAccountTest.php, that the first
+ * Wave 2 Plan test to want a member row would have collided with. tests/Pest.php is the one
+ * place Pest loads exactly once, for every suite, so it is the only safe home.
+ *
+ * Collected here from six test files, each of which had grown its own: validRegistration
+ * (RegisterTest), signedVerificationQuery (VerifyEmailTest), requestReset
+ * (PasswordResetTest), authenticatedUser (UpdateProfileTest), member (DeleteAccountTest),
+ * softDeletedDaysAgo and runArtisan (PurgeDeletedUsersTest).
+ */
 
 /**
  * A user who can sign in: a password-bearing account that also has a profile.
@@ -23,12 +50,6 @@ uses(TestCase::class)->in('Feature');
  * a database-level invariant, not a maybe. Any test that renders a session without
  * ->hasProfile() therefore fails on a null relation instead of on the behaviour it meant
  * to check.
- *
- * This lived at file scope in LoginTest.php until signIn() below needed the same thing.
- * A file-scope function in a Pest test file is process-global and cannot be redeclared, so
- * the second file that wants it must either rely on another test file's load order or
- * restate the logic. tests/Pest.php is the one place Pest loads exactly once, for every
- * suite, which makes it the durable home for both.
  *
  * @param  array<string, mixed>  $attributes
  */
@@ -53,8 +74,7 @@ function userWithPassword(string $password = 'correct horse battery staple', arr
  * row included - which is what a test asserting that account deletion removes devices needs
  * in order to be asserting anything.
  *
- * A parameter here rather than a second helper at a test file's scope, for the reason
- * userWithPassword() above records: this file is the one place Pest loads exactly once, and a
+ * A parameter here rather than a second helper, for the reason the file header records: a
  * file-scope copy would be a second process-global function restating this one almost
  * character for character.
  *
@@ -171,4 +191,109 @@ function capturedLogRecords(TestHandler $handler): array
 function forgetAuthenticatedUser(): void
 {
     Auth::forgetGuards();
+}
+
+/**
+ * A registration body the API accepts, with any field overridden.
+ *
+ * @param  array<string, mixed>  $overrides
+ * @return array<string, mixed>
+ */
+function validRegistration(array $overrides = []): array
+{
+    return array_merge([
+        'email' => 'ada@example.test',
+        'password' => 'correct horse battery staple',
+        'display_name' => 'Ada Lovelace',
+        'timezone' => 'Europe/London',
+        'locale' => 'en',
+    ], $overrides);
+}
+
+/** Returns the query string the web app relays back to this API from a verification link. */
+function signedVerificationQuery(User $user): string
+{
+    $link = app(EmailVerificationLink::class)->for($user);
+
+    return (string) parse_url($link, PHP_URL_QUERY);
+}
+
+/**
+ * Requests a password reset and returns the plaintext token the email carries.
+ *
+ * The caller must have called Mail::fake() first - the token exists nowhere else, since
+ * password_reset_tokens stores only a sha256 hash and the outbox payload is encrypted.
+ */
+function requestReset(User $user): string
+{
+    postJson('/api/v1/auth/forgot-password', ['email' => $user->email])->assertAccepted();
+
+    app(OutboxDispatcher::class)->dispatchPending();
+
+    $captured = null;
+    Mail::assertSent(ResetPasswordMail::class, function (ResetPasswordMail $mail) use (&$captured): bool {
+        $captured = $mail->token;
+
+        return true;
+    });
+
+    return (string) $captured;
+}
+
+/**
+ * A signed-in user with a profile whose fields are known, for the /me endpoints.
+ *
+ * @return array{User, string}
+ */
+function authenticatedUser(): array
+{
+    $user = User::factory()->hasProfile(['display_name' => 'Before', 'timezone' => 'UTC', 'locale' => 'en'])
+        ->create(['password_hash' => Hash::make('correct horse battery staple')]);
+
+    [, , $access] = signIn($user);
+
+    return [$user, $access];
+}
+
+/** An active plan_members row, with an explicit joined_at so "longest-standing" is deterministic. */
+function member(Plan $plan, User $user, MemberRole $role, string $joinedAt): PlanMember
+{
+    return PlanMember::create([
+        'plan_id' => $plan->id,
+        'user_id' => $user->id,
+        'role' => $role->value,
+        'status' => MemberStatus::Active->value,
+        'joined_at' => $joinedAt,
+    ]);
+}
+
+/** A user soft-deleted $days ago, which is what the day-30 purge selects on. */
+function softDeletedDaysAgo(int $days): User
+{
+    $user = User::factory()->hasProfile()->create();
+    $user->delete();
+    DB::table('users')->where('id', $user->id)->update(['deleted_at' => now()->subDays($days)]);
+
+    return $user;
+}
+
+/**
+ * Pest\Laravel\artisan() is typed `PendingCommand|int` because the real method it delegates
+ * to - Illuminate\Foundation\Testing\Concerns\InteractsWithConsole::artisan() - genuinely
+ * returns `int` when $mockConsoleOutput is false. This suite never disables console mocking
+ * (nothing calls withoutMockingConsoleOutput()), so the PendingCommand branch is the only one
+ * ever taken; this narrows the union with a real, checked instanceof rather than with an
+ * inline type override, which this project's level-8 constraint forbids.
+ *
+ * @param  array<string, mixed>  $parameters
+ */
+function runArtisan(string $command, array $parameters = []): PendingCommand
+{
+    $pending = artisan($command, $parameters);
+
+    if (! $pending instanceof PendingCommand) {
+        throw new RuntimeException('Expected artisan() to return a PendingCommand - console output mocking must be disabled.');
+    }
+
+    return $pending;
 }

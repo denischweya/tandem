@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use App\Infrastructure\Notifications\Mail\ResetPasswordMail;
 use App\Infrastructure\Outbox\OutboxDispatcher;
 use App\Models\OutboxEvent;
 use App\Models\PasswordResetToken;
@@ -28,23 +27,6 @@ uses(RefreshDatabase::class);
 beforeEach(function (): void {
     Mail::fake();
 });
-
-/** Requests a reset and returns the plaintext token the email carries. */
-function requestReset(User $user): string
-{
-    postJson('/api/v1/auth/forgot-password', ['email' => $user->email])->assertAccepted();
-
-    app(OutboxDispatcher::class)->dispatchPending();
-
-    $captured = null;
-    Mail::assertSent(ResetPasswordMail::class, function (ResetPasswordMail $mail) use (&$captured): bool {
-        $captured = $mail->token;
-
-        return true;
-    });
-
-    return (string) $captured;
-}
 
 it('accepts a reset request for a known address and queues one email', function (): void {
     $user = User::factory()->hasProfile()->create();
