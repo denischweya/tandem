@@ -222,3 +222,40 @@ it('rejects a reset-password address email:rfc accepts but the domain value obje
         'password' => 'a brand new password',
     ])->assertStatus(422)->assertJsonValidationErrorFor('email');
 });
+
+it('keys the forgot-password limit on the email and not on the IP', function (): void {
+    // §8.2's row is 3 per hour per EMAIL. Re-keying AppServiceProvider's limiter closure to
+    // ->by('ip:'.$request->ip()) left all 188 tests green, because the only existing test here
+    // sends one address from one address: with one email and one IP the two keys are
+    // indistinguishable. This is LoginTest's discriminating shape - "ten different emails, so
+    // the 5-per-email limit cannot be what fires" - run the other way round.
+    $first = User::factory()->hasProfile()->create(['email' => 'first@example.test']);
+    $second = User::factory()->hasProfile()->create(['email' => 'second@example.test']);
+
+    foreach (range(1, 3) as $ignored) {
+        postJson('/api/v1/auth/forgot-password', ['email' => $first->email])->assertAccepted();
+    }
+
+    postJson('/api/v1/auth/forgot-password', ['email' => $first->email])->assertStatus(429);
+
+    // Same IP, different address, inside the same window: the second account's own budget is
+    // untouched. Under IP keying this is a 429, and one person asking for a reset link three
+    // times locks out everyone behind their NAT.
+    postJson('/api/v1/auth/forgot-password', ['email' => $second->email])->assertAccepted();
+});
+
+it('does not let a different casing or stray whitespace buy a fresh forgot-password budget', function (): void {
+    // The limiter key goes through EmailInput::normalize(), the same call
+    // ForgotPasswordRequest's NormalizesEmailInput trait makes - which is the only reason the
+    // 3-per-hour-per-email limit is un-bypassable. Dropping the normalize() and keying on the
+    // raw input also left all 188 tests green, because no test had ever sent the same address
+    // twice in two different spellings.
+    $user = User::factory()->hasProfile()->create(['email' => 'ada@example.test']);
+
+    foreach (range(1, 3) as $ignored) {
+        postJson('/api/v1/auth/forgot-password', ['email' => $user->email])->assertAccepted();
+    }
+
+    postJson('/api/v1/auth/forgot-password', ['email' => 'ADA@Example.TEST'])->assertStatus(429);
+    postJson('/api/v1/auth/forgot-password', ['email' => '  ada@example.test  '])->assertStatus(429);
+});
