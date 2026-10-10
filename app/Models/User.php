@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
-use App\Application\Auth\VerifyEmail;
+use App\Domain\Shared\Clock;
 use App\Infrastructure\Outbox\OutboxWriter;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
@@ -133,24 +133,38 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
-     * Delegates, where it used to be a second implementation of the same write.
+     * Shares its instant source with VerifyEmail::execute(), where it used to be a second
+     * implementation of the same write.
      *
      * It had no caller and no test, and it diverged from the one that does: it stamped
      * $this->freshTimestamp() while VerifyEmail::execute() uses the injected Clock that every
      * other timestamp in this application goes through - so a frozen clock in a test moved one
-     * and not the other. Delegating removes the divergence rather than copying the Clock down
-     * here, and it inherits the idempotence VerifyEmail::execute() already has.
+     * and not the other. The first fix called app(VerifyEmail::class)->execute($this) instead,
+     * which removed the divergence but opened a worse hole: a model reaching into App\Application
+     * is a dependency inversion (and, since VerifyEmail::execute() takes a User, a class-level
+     * cycle) that nothing in tests/Architecture/DomainPurityTest.php caught, because its rules
+     * constrain App\Domain and App\Http\Controllers and say nothing about App\Models. That gap is
+     * closed below by a sixth rule.
+     *
+     * Resolving Clock - a Domain contract - is the fix that keeps the single-source-of-truth
+     * benefit without the inversion: a model depending on App\Domain is the sane direction this
+     * codebase already takes everywhere else, and it is the same Clock instance
+     * VerifyEmail::execute() resolves, so the two still cannot write different instants. The
+     * idempotence check is copied rather than shared, because the fix this replaces is the thing
+     * being removed, not something to route back through.
      *
      * Resolved from the container rather than injected, because a model's constructor belongs
      * to Eloquent. The same reasoning, and the same `app()` call, as
      * sendEmailVerificationNotification() below.
      *
-     * Returns true unconditionally: the contract's return value is "did this succeed", and the
-     * only failure mode VerifyEmail::execute() has is a throw.
+     * Returns true unconditionally: the contract's return value is "did this succeed", and this
+     * method has no failure mode.
      */
     public function markEmailAsVerified(): bool
     {
-        app(VerifyEmail::class)->execute($this);
+        if ($this->email_verified_at === null) {
+            $this->forceFill(['email_verified_at' => app(Clock::class)->now()])->save();
+        }
 
         return true;
     }

@@ -77,6 +77,20 @@ arch('controllers touch no Eloquent and no persistence')
     ->expect('App\Http\Controllers')
     ->not->toUse(['Illuminate\Database\Eloquent', 'App\Models', 'App\Infrastructure']);
 
+// Added after the fact, for a direction none of the rules above happened to cover:
+// User::markEmailAsVerified() imported App\Application\Auth\VerifyEmail and called
+// app(VerifyEmail::class)->execute($this), a model reaching UP into the use-case layer that
+// orchestrates it - and since VerifyEmail::execute() takes a User, that is also a
+// class-level cycle, not just a layering inversion. Application legitimately depends on
+// Models everywhere (ADR 0001) - the violation is only the reverse edge. Verified: a probe
+// model under App\Models importing App\Application\Auth\VerifyEmail fails this rule with
+// "not to use 'App\Application'"; reverting the fix and running this file alone reproduces
+// that failure against the real User model, confirming the rule - not a coincidence of the
+// probe - is what catches it.
+arch('models do not reach into the application layer')
+    ->expect('App\Models')
+    ->not->toUse('App\Application');
+
 // ->classes() already excludes interfaces and enums (verified: a non-final
 // ZzProbeRepository interface does not fail this rule), so Clock needed no ->ignoring() -
 // that call was dead code removed here. An abstract class already fails toBeFinal() on its

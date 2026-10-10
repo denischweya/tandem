@@ -73,12 +73,17 @@ it('is soft-deleted, not hard-deleted', function (): void {
     expect(DB::table('users')->where('id', $user->id)->exists())->toBeTrue();
 });
 
-it('marks the email verified through the same use case the endpoint uses', function (): void {
+it('marks the email verified using the same Clock instant VerifyEmail::execute() uses', function (): void {
     // markEmailAsVerified() had no caller and no test, and stamped $this->freshTimestamp()
     // while VerifyEmail::execute() uses the injected Clock - so the two wrote different
     // instants and a frozen clock moved only one of them. It cannot be deleted (the
-    // MustVerifyEmail interface is what makes the `verified` middleware work at all), so it
-    // delegates. This is what pins that.
+    // MustVerifyEmail interface is what makes the `verified` middleware work at all). The
+    // first fix delegated to app(VerifyEmail::class)->execute($this), which fixed the
+    // divergence but made a model depend on App\Application - caught, after the fact, by
+    // tests/Architecture/DomainPurityTest.php's "models do not reach into the application
+    // layer" rule. It now resolves Clock directly instead - the same Domain contract
+    // VerifyEmail::execute() resolves, so this pins the same single-instant-source property
+    // without the inversion.
     $instant = new DateTimeImmutable('2026-03-04 05:06:07', new DateTimeZone('UTC'));
     app()->instance(Clock::class, new FrozenClock($instant));
 
@@ -92,8 +97,9 @@ it('marks the email verified through the same use case the endpoint uses', funct
 
 it('is idempotent, and leaves the original verification instant alone on a second call', function (): void {
     // The half the endpoint test could not see, because its factory user starts verified: a
-    // second call must not re-stamp. VerifyEmail::execute() returns early, and delegating is
-    // what gives this method that behaviour instead of a second forceFill.
+    // second call must not re-stamp. VerifyEmail::execute() returns early on an
+    // already-verified user, and markEmailAsVerified() repeats that same check directly
+    // rather than a second unconditional forceFill.
     $first = new DateTimeImmutable('2026-03-04 05:06:07', new DateTimeZone('UTC'));
     app()->instance(Clock::class, new FrozenClock($first));
 
