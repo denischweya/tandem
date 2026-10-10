@@ -31,9 +31,10 @@ final readonly class AccessTokenRevoker
      *
      * void, not a count. Eloquent\Builder::delete() is declared mixed, so an int return type
      * here would be a claim PHPStan cannot check at level 8, narrowable only with a cast or an
-     * is_int() dance - and nothing would read it. RefreshTokenRotator::revokeChainFrom()'s own
-     * unused int return is already on the Task 5 report as dead weight; adding a second is not
-     * the way to be consistent with it.
+     * is_int() dance - and no caller wants it. (RefreshTokenRotator::revokeChainFrom() does
+     * return a count, and that is not an inconsistency: RefreshSession reads it for its
+     * replay log line, where "the chain was revoked" is worth a number. Nothing wants one
+     * here, because the answer is always "all of them".)
      */
     public function revokeAllFor(string $userId): void
     {

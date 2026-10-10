@@ -24,9 +24,10 @@ final readonly class ResetPassword
     /**
      * Every throw below happens before the first write in this closure - the lookup, the
      * owner check and the state check are all reads. DB::transaction() rolls back on any
-     * Throwable, so a throw positioned after a write would undo it; Task 5's brief shipped
-     * exactly that bug for refresh-chain revocation. There is no write to undo here because
-     * none has happened yet by the time any throw statement below can run.
+     * Throwable, so a throw positioned after a write would undo it - which is exactly how
+     * RefreshSession's chain revocation first shipped, and why that method returns null from
+     * its closure and throws afterwards instead. There is no write to undo here, because none
+     * has happened by the time any throw statement below can run.
      */
     public function execute(string $plainToken, Email $email, string $newPassword): void
     {

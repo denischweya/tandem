@@ -11,6 +11,7 @@ use App\Infrastructure\Auth\RefreshTokenRotator;
 use App\Infrastructure\Auth\TokenIssuer;
 use App\Models\RefreshToken;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 final readonly class RefreshSession
 {
@@ -37,7 +38,13 @@ final readonly class RefreshSession
      */
     public function execute(string $plainRefreshToken): Session
     {
-        $session = DB::transaction(function () use ($plainRefreshToken): ?Session {
+        // Captured by reference and logged AFTER the commit, for the same reason the throw is:
+        // a log line written inside the transaction asserts a revocation that a rollback could
+        // still take away, and "we signed this user out of everything" is not a claim to make
+        // about something that did not happen.
+        $detectedReplay = null;
+
+        $session = DB::transaction(function () use ($plainRefreshToken, &$detectedReplay): ?Session {
             // lockForUpdate, because two concurrent refreshes with the same token are exactly
             // the race this design must resolve deterministically: one rotates, the other
             // sees Rotated and revokes the chain. Without the lock both could rotate, and the
@@ -54,7 +61,7 @@ final readonly class RefreshSession
             $outcome = RotationPolicy::decide($this->rotator->stateOf($token));
 
             if ($outcome === RotationOutcome::RevokeChain) {
-                $this->rotator->revokeChainFrom($token);
+                $revokedRefreshTokens = $this->rotator->revokeChainFrom($token);
 
                 // Spec §9.1.1: the refresh lineage alone is not the whole credential. Every
                 // access token already minted from this chain keeps working until it expires -
@@ -71,6 +78,13 @@ final readonly class RefreshSession
                 // a soft-deleted account turns into a null, and this delete must not be
                 // skipped for one.
                 $this->accessTokenRevoker->revokeAllFor($token->user_id);
+
+                $detectedReplay = [
+                    'event' => 'security.refresh_token.replay_detected',
+                    'user_id' => $token->user_id,
+                    'replayed_refresh_token_id' => $token->id,
+                    'revoked_refresh_tokens' => $revokedRefreshTokens,
+                ];
 
                 // Returned, never thrown: a throw here rolls this transaction back and with it
                 // both the rows just revoked and the tokens just deleted. See the method
@@ -105,6 +119,24 @@ final readonly class RefreshSession
                 $user,
             );
         });
+
+        if ($detectedReplay !== null) {
+            // The loudest consequence in this API and, until this line, the quietest evidence:
+            // one unauthenticated request signs a user out of every device and deletes every
+            // access token they hold, and nothing recorded that it had happened. A structured
+            // line with a stable `event` key, the user id, the row id of the token that was
+            // replayed, and the number of refresh tokens revoked - and no token material: the
+            // plaintext exists only in the caller's hands, and token_hash is the lookup key
+            // for a credential, which is not something to write to a log.
+            //
+            // A log line rather than audit_logs or the outbox, decided at wave level: the
+            // audit_logs table has no model, no writer, no retention decision and no index on
+            // actor_id (the Cycle 1 migration freeze closes that off), and the outbox is
+            // at-least-once DELIVERY with retries, while a security record must be written
+            // even when every handler is broken, must not be retried, and must outlive its
+            // subject - who this very request's account deletion may be about to remove.
+            Log::warning('security.refresh_token.replay_detected', $detectedReplay);
+        }
 
         if (! $session instanceof Session) {
             throw new InvalidRefreshToken;
