@@ -259,3 +259,88 @@ it('does not let a different casing or stray whitespace buy a fresh forgot-passw
     postJson('/api/v1/auth/forgot-password', ['email' => 'ADA@Example.TEST'])->assertStatus(429);
     postJson('/api/v1/auth/forgot-password', ['email' => '  ada@example.test  '])->assertStatus(429);
 });
+
+it('kills the previous reset link when a second one is requested', function (): void {
+    // PasswordResetTokens::issue() marks every outstanding token used before writing the new
+    // one. Deleting that block left all 188 tests green while every link ever mailed stayed
+    // live for its full sixty minutes - so an attacker who got hold of an old email, or an old
+    // link still sitting in a mailbox, keeps a working password reset for the whole window. No
+    // test requested a reset twice, which is the only way to see it.
+    $user = User::factory()->hasProfile()->create(['password_hash' => Hash::make('the old password here')]);
+
+    $first = requestReset($user);
+    $second = requestReset($user);
+
+    expect($second)->not->toBe($first);
+
+    postJson('/api/v1/auth/reset-password', [
+        'token' => $first,
+        'email' => $user->email,
+        'password' => 'a brand new password',
+    ])->assertStatus(422);
+
+    // And the superseding token is the one that works, so this cannot pass by both being dead.
+    postJson('/api/v1/auth/reset-password', [
+        'token' => $second,
+        'email' => $user->email,
+        'password' => 'a brand new password',
+    ])->assertNoContent();
+
+    expect(PasswordResetToken::whereNull('used_at')->count())->toBe(0);
+});
+
+it('answers 422, not 500, for an unknown token paired with a real address', function (): void {
+    // Token guessing is the primary attack on this endpoint and had zero coverage. The one
+    // test that sent an unknown token paired it with ada@localhost, so ValidEmail refused the
+    // request before ResetPasswordController ever ran - which means it never reached
+    // ResetPassword::execute() at all. Removing the `if ($token === null)` guard there leaves
+    // $token->user as a property read on null: a reachable 500 on an unauthenticated endpoint,
+    // and all 188 tests still green.
+    $user = User::factory()->hasProfile()->create();
+
+    postJson('/api/v1/auth/reset-password', [
+        'token' => bin2hex(random_bytes(32)),
+        'email' => $user->email,
+        'password' => 'a brand new password',
+    ])->assertStatus(422)->assertJsonValidationErrorFor('token');
+});
+
+it('gives an unknown token the same answer as a used, expired or mismatched one', function (): void {
+    // The one-message rule for this endpoint, which InvalidPasswordResetToken's single render
+    // exists to provide. An attacker guessing tokens must not learn that a guess found a row.
+    $user = User::factory()->hasProfile()->create();
+    $used = requestReset($user);
+
+    $payload = fn (string $token): array => [
+        'token' => $token,
+        'email' => $user->email,
+        'password' => 'a brand new password',
+    ];
+
+    postJson('/api/v1/auth/reset-password', $payload($used))->assertNoContent();
+
+    $alreadyUsed = postJson('/api/v1/auth/reset-password', $payload($used));
+    $unknown = postJson('/api/v1/auth/reset-password', $payload(bin2hex(random_bytes(32))));
+
+    $alreadyUsed->assertStatus(422);
+    $unknown->assertStatus(422);
+    expect($unknown->content())->toBe($alreadyUsed->content());
+});
+
+it('sends no reset link to a suspended account', function (): void {
+    // RequestPasswordReset returns early for a suspended user, and the early return had no
+    // test: removing the suspended_at check left all 188 green while a suspended account could
+    // mail itself a working password reset - the one credential change that would let it back
+    // in if suspension is ever lifted by the same flow, and in any case a link the operator
+    // did not intend to exist.
+    $user = User::factory()->hasProfile()->create(['suspended_at' => now()]);
+
+    // Indistinguishable from an unknown address, which is the same oracle rule the rest of
+    // this endpoint follows: the 202 says nothing about whether the account exists or is
+    // usable.
+    postJson('/api/v1/auth/forgot-password', ['email' => $user->email])->assertAccepted();
+
+    expect(PasswordResetToken::count())->toBe(0);
+    expect(OutboxEvent::count())->toBe(0);
+    Mail::assertNothingSent();
+});
