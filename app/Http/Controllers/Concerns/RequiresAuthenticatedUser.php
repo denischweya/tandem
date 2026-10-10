@@ -21,7 +21,7 @@ use RuntimeException;
  * NO `use App\Models\User` ANYWHERE IN THIS FILE, and the absence is load-bearing. Spec §6
  * forbids a controller touching Eloquent or App\Models, and
  * tests/Architecture/DomainPurityTest.php's "controllers touch no Eloquent and no
- * persistence" rule fails on the bare import alone - measured, by probe, in Task 7's review.
+ * persistence" rule fails on the bare import alone - measured by probe, not inferred.
  *
  * The @template is what lets the type survive that constraint. larastan already resolves
  * Request::user() to App\Models\User|null from config('auth.providers.users.model') without
