@@ -15,6 +15,7 @@ use App\Models\PlanMember;
 use App\Models\RefreshToken;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 
 use function Pest\Laravel\assertDatabaseCount;
 use function Pest\Laravel\assertDatabaseEmpty;
@@ -310,4 +311,113 @@ it('does nothing at all if any step fails', function (): void {
     // revoked, user row intact - is the worst outcome available.
     assertNotSoftDeleted('users', ['id' => $user->id]);
     expect(RefreshToken::whereNull('revoked_at')->count())->toBe(1);
+});
+
+it('does not hand a plan to a soft-deleted member', function (): void {
+    // Two members of one Plan both calling DELETE /api/v1/me is not hypothetical: it is one
+    // user deleting their account while the other does the same, and the Plan branch here
+    // reads plan_members with no regard for whether the candidate's account still exists. The
+    // result committed a live, `active`, multi-member Plan whose owner_id names a soft-deleted
+    // row - which the day-30 purge then had to deal with, and used to deal with by destroying
+    // the Plan (see PurgeDeletedUsersCommand's status predicate).
+    [$owner, , $access] = signIn();
+    $departed = User::factory()->hasProfile()->create();
+
+    $plan = Plan::factory()->create(['owner_id' => $owner->id]);
+    member($plan, $owner, MemberRole::Owner, '2026-01-01 00:00:00');
+    member($plan, $departed, MemberRole::Admin, '2026-02-01 00:00:00');
+
+    // The other member has already deleted their account. Their plan_members row says
+    // active - DeleteAccount marks it `left` for its OWN user, which this one is not.
+    $departed->delete();
+
+    withToken($access)->deleteJson('/api/v1/me')->assertNoContent();
+
+    // No eligible successor, so branch 3 applies: archive, and leave owner_id where the
+    // RESTRICT needs it.
+    expect($plan->refresh()->owner_id)->toBe($owner->id);
+    expect($plan->refresh()->status)->toBe(PlanStatus::Archived->value);
+});
+
+it('does not hand a plan to a suspended member', function (): void {
+    // A suspended account cannot sign in at all (Login::execute() refuses it), so a Plan
+    // transferred to one has an owner who can never administer it - the same defect as handing
+    // it to an invited member, which this branch already guards against.
+    [$owner, , $access] = signIn();
+    $suspended = User::factory()->hasProfile()->create(['suspended_at' => now()]);
+    $usable = User::factory()->hasProfile()->create();
+
+    $plan = Plan::factory()->create(['owner_id' => $owner->id]);
+    member($plan, $owner, MemberRole::Owner, '2026-01-01 00:00:00');
+    member($plan, $suspended, MemberRole::Admin, '2026-02-01 00:00:00');
+    member($plan, $usable, MemberRole::Member, '2026-05-01 00:00:00');
+
+    withToken($access)->deleteJson('/api/v1/me')->assertNoContent();
+
+    // The suspended admin would otherwise win on both counts - admin, and longer-standing.
+    expect($plan->refresh()->owner_id)->toBe($usable->id);
+});
+
+it('does not hand a group to a soft-deleted member', function (): void {
+    // Worse here than for Plans, because groups.owner_id has no archive branch to fall back
+    // on: a Group left pointing at a soft-deleted user makes that user's day-30 forceDelete()
+    // hit RESTRICT every night for ever, with the purge reporting a failure it cannot resolve.
+    [$owner, , $access] = signIn();
+    $departed = User::factory()->hasProfile()->create();
+
+    $group = Group::factory()->create(['owner_id' => $owner->id]);
+    GroupMember::create(['group_id' => $group->id, 'user_id' => $owner->id, 'created_at' => '2026-01-01 00:00:00']);
+    GroupMember::create(['group_id' => $group->id, 'user_id' => $departed->id, 'created_at' => '2026-02-01 00:00:00']);
+
+    $departed->delete();
+
+    withToken($access)->deleteJson('/api/v1/me')->assertNoContent();
+
+    // No eligible member left, so the sole-member branch applies and the Group goes. Safe
+    // because plans.group_id is nullable with SET NULL.
+    expect(Group::query()->whereKey($group->id)->exists())->toBeFalse();
+});
+
+it('does not hand a group to a suspended member', function (): void {
+    [$owner, , $access] = signIn();
+    $suspended = User::factory()->hasProfile()->create(['suspended_at' => now()]);
+    $usable = User::factory()->hasProfile()->create();
+
+    $group = Group::factory()->create(['owner_id' => $owner->id]);
+    GroupMember::create(['group_id' => $group->id, 'user_id' => $owner->id, 'created_at' => '2026-01-01 00:00:00']);
+    GroupMember::create(['group_id' => $group->id, 'user_id' => $suspended->id, 'created_at' => '2026-02-01 00:00:00']);
+    GroupMember::create(['group_id' => $group->id, 'user_id' => $usable->id, 'created_at' => '2026-05-01 00:00:00']);
+
+    withToken($access)->deleteJson('/api/v1/me')->assertNoContent();
+
+    expect($group->refresh()->owner_id)->toBe($usable->id);
+});
+
+it('leaves no purgeable user owning a plan or a group, which is what makes the purge quiet', function (): void {
+    // The end-to-end statement of the two branches above, through the command that pays for
+    // getting them wrong. Both candidates are unusable, so both resources resolve without a
+    // transfer, and thirty days later the purge finds nothing it has to refuse.
+    [$owner, , $access] = signIn();
+    $departed = User::factory()->hasProfile()->create();
+    $departed->delete();
+
+    $plan = Plan::factory()->create(['owner_id' => $owner->id]);
+    member($plan, $owner, MemberRole::Owner, '2026-01-01 00:00:00');
+    member($plan, $departed, MemberRole::Admin, '2026-02-01 00:00:00');
+
+    $group = Group::factory()->create(['owner_id' => $owner->id]);
+    GroupMember::create(['group_id' => $group->id, 'user_id' => $owner->id, 'created_at' => '2026-01-01 00:00:00']);
+    GroupMember::create(['group_id' => $group->id, 'user_id' => $departed->id, 'created_at' => '2026-02-01 00:00:00']);
+
+    withToken($access)->deleteJson('/api/v1/me')->assertNoContent();
+
+    DB::table('users')->where('id', $owner->id)->update(['deleted_at' => now()->subDays(31)]);
+
+    runArtisan('users:purge-deleted')
+        ->expectsOutputToContain('"failed":0')
+        ->assertSuccessful();
+
+    expect(User::withTrashed()->whereKey($owner->id)->exists())->toBeFalse();
+    expect(Plan::query()->whereKey($plan->id)->exists())->toBeFalse();
+    expect(Group::query()->whereKey($group->id)->exists())->toBeFalse();
 });

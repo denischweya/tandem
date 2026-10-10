@@ -17,6 +17,7 @@ use App\Models\PlanActivity;
 use App\Models\PlanMember;
 use App\Models\User;
 use DateTimeImmutable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -40,27 +41,37 @@ final readonly class DeleteAccount
      * someone locked out of an account they did not finish deleting, which is the worst
      * outcome available here.
      *
-     * Note that the rollback is wanted here, which is the opposite of Task 5's situation: a
-     * throw inside that transaction wrongly undid a chain revocation that had to persist.
-     * The difference is that nothing in this method is a security action that must survive
-     * the failure of a later one - revoking the sessions is only correct if the account
-     * really is being deleted.
+     * Note that the rollback is wanted here, which is the opposite of
+     * RefreshSession::execute(), where a throw inside the transaction wrongly undid a chain
+     * revocation that had to persist (see that method's docblock). The difference is that
+     * nothing here is a security action that must survive the failure of a later one -
+     * revoking the sessions is only correct if the account really is being deleted.
      */
     public function execute(User $user): void
     {
         DB::transaction(function () use ($user): void {
             $now = $this->clock->now();
 
-            // Step 4 first: anonymise before anything else touches the feed, so an ownership
-            // transfer that writes activity later cannot be anonymised by accident.
+            // Step 4. Nothing in this method writes plan_activity, so no ordering against
+            // the two ownership branches is at stake today - it is first only so that it
+            // stays first if a later cycle makes an ownership transfer write an activity row,
+            // which must not then be anonymised by this same call.
             PlanActivity::query()->where('actor_id', $user->id)->update(['actor_id' => null]);
 
-            // Step 3. Before Plans, because groups.owner_id is NOT NULL with RESTRICT and a
-            // Group deletion sets plans.group_id to NULL - which must happen before the Plan
-            // branch reads those Plans.
+            // Steps 3 and 2, in that order, and the order between THESE TWO IS IMMATERIAL -
+            // recorded because an earlier version of this comment claimed otherwise and would
+            // have had someone preserve a dependency that does not exist. Deleting a Group
+            // does set plans.group_id to NULL (SET NULL in the migration), but
+            // resolvePlanOwnership() loads its Plans with a fresh query that runs after this
+            // line, so those rows already carry whatever the SET NULL left - and it never
+            // reads group_id in any case, writing only owner_id, status and archived_at
+            // through forceFill()->save(), which sends dirty attributes only.
+            //
+            // What IS load-bearing is that both run before step 5: plans.owner_id and
+            // groups.owner_id are NOT NULL with RESTRICT, and step 5's soft delete is what
+            // keeps that RESTRICT from ever being asked here - the day-30 hard delete is
+            // where it finally is.
             $this->resolveGroupOwnership($user);
-
-            // Step 2.
             $this->resolvePlanOwnership($user, $now);
 
             // The role is demoted along with the status, in the one update that was already
@@ -77,15 +88,18 @@ final readonly class DeleteAccount
                 ]);
 
             // Step 1. Every refresh token and every Sanctum access token the account holds.
-            // revokeAllFor() rather than a third copy of $user->tokens()->delete(): it is
-            // keyed on the id, not on a loaded model, so it cannot be silently skipped by
-            // User's SoftDeletes scope - and Task 6 reused it for the same reason.
+            // revokeAllFor() rather than a third copy of $user->tokens()->delete(), simply so
+            // that "delete every access token this user holds" has one implementation - the
+            // same one RefreshSession's replay branch and ResetPassword call. The soft-delete
+            // reasoning in AccessTokenRevoker's docblock is about ITS other callers, not this
+            // one: step 5 has not run yet here, so $user is still a live row.
             $user->refreshTokens()->whereNull('revoked_at')->update(['revoked_at' => $now]);
             $this->accessTokens->revokeAllFor($user->id);
             $user->devices()->delete();
 
-            // Step 5. A soft delete: users.deleted_at exists so the day-30 purge (Task 9) has
-            // something to find, and so plans.owner_id's RESTRICT is never asked to fire here.
+            // Step 5. A soft delete: users.deleted_at exists so the day-30 purge
+            // (App\Console\Commands\PurgeDeletedUsersCommand) has something to find, and so
+            // plans.owner_id's RESTRICT is never asked to fire here.
             $user->delete();
 
             $this->outbox->write('User', $user->id, 'user.deleted', [
@@ -108,6 +122,13 @@ final readonly class DeleteAccount
             $successor = GroupMember::query()
                 ->where('group_id', $group->id)
                 ->where('user_id', '!=', $user->id)
+                // The candidate's ACCOUNT has to be usable, not just their membership row -
+                // see successorFor() below for the full account of why, which applies here
+                // with one extra consequence: groups.owner_id has no archive branch to fall
+                // back on, so a Group left pointing at a soft-deleted user makes that user's
+                // day-30 forceDelete() hit RESTRICT every night for ever, with the purge
+                // recording a failure nothing can resolve.
+                ->whereHas('user', fn (Builder $candidate) => $candidate->whereNull('suspended_at'))
                 // created_at is "longest-standing" for a Group: group_members has no
                 // joined_at, because joining a Group is not a two-step invitation.
                 ->orderBy('created_at')
@@ -170,7 +191,31 @@ final readonly class DeleteAccount
             ->where('user_id', '!=', $departing->id)
             // Active only: handing a Plan to someone who was invited and never accepted gives
             // it an owner who cannot see it.
-            ->where('status', MemberStatus::Active->value);
+            ->where('status', MemberStatus::Active->value)
+            // ...and the row saying `active` is not the same thing as the ACCOUNT being
+            // usable. This method filtered only plan_members.status, which left two ways to
+            // hand a Plan to someone who can never administer it:
+            //
+            // A SOFT-DELETED member. This method marks the DEPARTING user's rows `left`, not
+            // anyone else's, so a member who already deleted their own account still has an
+            // `active` row here. Two members of one Plan both calling DELETE /api/v1/me is
+            // not an exotic race - it is the ordinary case of two people leaving - and it
+            // committed a live, `active`, multi-member Plan whose owner_id names a
+            // soft-deleted row. That Plan then reaches the day-30 purge, where it is either
+            // destroyed (what PurgeDeletedUsersCommand used to do) or a permanent RESTRICT
+            // failure. whereHas('user', ...) is what closes it: the relation respects User's
+            // SoftDeletes global scope, so a deleted account has no matching row at all.
+            //
+            // A SUSPENDED member. Login::execute() refuses a suspended account outright, so
+            // the new owner cannot sign in to administer the Plan they were just handed -
+            // exactly the defect the `active` filter above exists to prevent, by a different
+            // route. suspended_at is a live concept, not a future one.
+            //
+            // whereHas rather than a join, because the SoftDeletes scope is what does half
+            // the work here and a manual join would have to restate `deleted_at IS NULL`
+            // alongside this `suspended_at IS NULL` - two copies of one rule, free to
+            // disagree, in the method where disagreeing is most expensive.
+            ->whereHas('user', fn (Builder $candidate) => $candidate->whereNull('suspended_at'));
 
         if ($role !== null) {
             $candidates->where('role', $role->value);
