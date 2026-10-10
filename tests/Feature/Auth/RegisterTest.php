@@ -177,3 +177,34 @@ it('turns a unique-constraint race at the database into a 422, not a 500', funct
     // outbox write, inside the same transaction.
     expect(User::count())->toBe(1);
 });
+
+it('refuses an empty or whitespace-only locale, which the rule now says as well as does', function (): void {
+    // The rule was ['sometimes', 'string', 'max:10'], which READS as "an empty string is
+    // fine" and never was: Laravel's global middleware reaches the value before any rule does,
+    // TrimStrings turns '   ' into '', ConvertEmptyStringsToNull turns '' into null, and null
+    // fails `string`. So this is a 422 and always was - adding `required` alongside
+    // `sometimes` (matching UpdateProfileRequest) changes the rule's description of itself,
+    // not its behaviour.
+    //
+    // That difference mattered outside this repo: tandem-shared's RegisterSchema mirrored the
+    // written rule and accepted '', so a locale no client could successfully send was one the
+    // client-side validator said was fine. Asserted here so the two cannot drift apart again
+    // in whichever direction someone edits next.
+    foreach (['', '   '] as $locale) {
+        postJson('/api/v1/auth/register', validRegistration(['locale' => $locale]))
+            ->assertStatus(422)
+            ->assertJsonValidationErrorFor('locale');
+    }
+});
+
+it('still treats locale as optional, and defaults it when omitted', function (): void {
+    // `sometimes` is the half that must survive adding `required`: omitting the key entirely
+    // is valid, and RegisterController supplies 'en'. Without this, the two rules together
+    // could be read as making the field mandatory.
+    $payload = validRegistration();
+    unset($payload['locale']);
+
+    postJson('/api/v1/auth/register', $payload)
+        ->assertCreated()
+        ->assertJsonPath('data.locale', 'en');
+});
