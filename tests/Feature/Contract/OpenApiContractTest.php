@@ -122,12 +122,14 @@ it('publishes the password minimum length that the rule actually enforces', func
             $minimum,
             'openapi.json must publish the minimum length the Password rule enforces. Scramble '
             .'understands the string rule min:12 but ships nothing that reads a Password rule '
-            .'object, so this is emitted by App\Infrastructure\OpenApi\PasswordRuleTransformer - '
-            .'which bails out silently if $previous is not a StringType (it runs after the default '
-            .'transformers, so it depends on the string rule preceding Password::min() in the rules '
-            .'array) and would equally stop working on a rename of getRule(), is() or '
-            .'appliedRules(). Every one of those leaves a valid document that simply omits the '
-            .'constraint, which the byte gate cannot see.',
+            .'object, so this is emitted by App\Infrastructure\OpenApi\PasswordRuleTransformer, '
+            .'which stops working on a rename of getRule(), is() or appliedRules() upstream - '
+            .'each of which leaves a valid document that simply omits the constraint, which the '
+            .'byte gate cannot see. (This message used to add that the transformer depends on '
+            .'the string rule preceding Password::min() in the rules array. It does not: '
+            .'RuleSetToSchemaTransformer sorts every rule OBJECT last regardless of declared '
+            .'order, and declaring Password::min(12) first produces a byte-identical document. '
+            .'See the transformer.)',
         );
 });
 

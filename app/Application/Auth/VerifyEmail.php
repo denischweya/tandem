@@ -22,9 +22,19 @@ final readonly class VerifyEmail
      * controller holds the returned instance without ever naming the class.
      *
      * One answer for "no such user" and "hash does not match": both mean the link is not
-     * valid. Distinguishing them would make this endpoint an account-existence oracle, and
-     * the signature does not prevent that - it covers the id, so anyone holding one valid
-     * link can mint queries for arbitrary ids.
+     * valid, and a caller who can tell them apart learns which ids exist.
+     *
+     * The reason is NOT the one this docblock used to give. It claimed the signature "covers
+     * the id, so anyone holding one valid link can mint queries for arbitrary ids", which is
+     * backwards: UrlGenerator::hasCorrectSignature() HMACs the full query string with only
+     * `signature` removed, so changing `id` invalidates the link. Measured - taking a valid
+     * link and substituting another user's id and hash returns 403, while the original
+     * returns 200. The stated hazard does not exist.
+     *
+     * The behaviour is still right, for a narrower reason that survives: the holder of a
+     * valid link can distinguish the two cases FOR THEIR OWN ID - which tells them nothing -
+     * and anyone with the APP_KEY can mint links for any id anyway, at which point an oracle
+     * is the least of it. One answer costs nothing and removes the question.
      *
      * @throws AuthorizationException
      */

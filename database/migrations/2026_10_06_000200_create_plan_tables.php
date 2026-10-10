@@ -135,8 +135,8 @@ return new class extends Migration
             $table->timestampTz('created_at', 6);
 
             $table->index(['plan_id', 'created_at']);
-            // Spec §9.3 step 3 anonymises plan_activity with an UPDATE ... WHERE actor_id = ?
-            // that runs inside the single transaction DELETE /api/v1/me uses for steps 1-4.
+            // Spec §9.3 step 4 anonymises plan_activity with an UPDATE ... WHERE actor_id = ?
+            // that runs inside the single transaction DELETE /api/v1/me uses for steps 1-5.
             // Without this index that UPDATE seq-scans the highest-volume table in the schema
             // from inside a user-facing request. Single-column: actor_id alone is the only
             // predicate that UPDATE filters on.

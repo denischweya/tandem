@@ -77,9 +77,11 @@ it('returns 403 and not 404 for an unknown user id, leaking nothing about which 
     );
 
     // A signed link for a nonexistent user is indistinguishable from one whose hash does not
-    // match: both are "this link is not valid". Returning 404 here would turn the endpoint
-    // into an account-existence oracle for anyone who can mint a link - which, since the
-    // signature covers the id, means anyone holding any valid link.
+    // match: both are "this link is not valid". Returning 404 here would make the endpoint an
+    // account-existence oracle for anyone able to mint a link for an id of their choosing -
+    // which means anyone holding the APP_KEY, and NOT, as this comment used to say, anyone
+    // holding any valid link: the signature covers the id, so substituting another id
+    // invalidates it. See VerifyEmail::forSignedPayload() for the measurement.
     postJson('/api/v1/auth/verify-email?'.parse_url($signed, PHP_URL_QUERY))
         ->assertForbidden();
 });

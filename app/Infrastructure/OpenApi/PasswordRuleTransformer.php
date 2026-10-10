@@ -36,6 +36,19 @@ use Illuminate\Validation\Rules\Password;
  *
  * max is carried too, for when a max is ever set; the rest of appliedRules() (composition
  * flags, uncompromised, customRules) has no OpenAPI equivalent and is deliberately ignored.
+ *
+ * THE DECLARED ORDER OF THE RULES DOES NOT MATTER, and an earlier version of this class said
+ * it did. RuleSetToSchemaTransformer::normalizeAndPrioritizeRules() ends with
+ * ->sortByDesc(rulesSorter()), and rulesSorter() returns -2 for every non-string rule, -1 for
+ * an unprioritised string and a positive score for one in RULES_PRIORITY (which includes
+ * 'string'). A rule object therefore always sorts last and always reduces last, whatever the
+ * array says. Measured rather than read: declaring Password::min(12) FIRST, ahead of
+ * 'required' and 'string', produces a BYTE-IDENTICAL document.
+ *
+ * What would genuinely stop this working is a rename of getRule(), is() or appliedRules()
+ * upstream, each of which leaves a valid document that simply omits minLength - which the
+ * byte gate cannot see, and which tests/Feature/Contract/OpenApiContractTest.php's
+ * password-minimum case is there to catch.
  */
 final class PasswordRuleTransformer implements RuleTransformer
 {
@@ -48,9 +61,18 @@ final class PasswordRuleTransformer implements RuleTransformer
     {
         $password = $rule->getRule();
 
-        // The 'string' rule alongside it is what makes $previous a StringType; if a future
-        // rule list drops that, there is no minLength to set and the schema is left alone
-        // rather than being coerced into a shape the rules do not describe.
+        // The $previous instanceof StringType guard is a type narrowing for PHPStan and
+        // NOTHING ELSE, which is the opposite of what this comment used to claim. It said that
+        // dropping the 'string' rule would leave the schema alone; measured, it does not.
+        // Dedoc\Scramble\Support\Generator\Types\UnknownType EXTENDS StringType, so the
+        // guard passes for the untyped case too and setMin() is applied to an UnknownType.
+        // Probed: removing 'string' from RegisterRequest's password rule still produced
+        // {"type": "string", "minLength": 12} - the generator exited non-zero only because
+        // --fail-on-unknown refused to export an UnknownType. The real safety is that flag, in
+        // bin/generate-openapi.sh, not this line.
+        //
+        // The $password instanceof Password half is load-bearing: NormalizedRule::getRule()
+        // is declared mixed, and appliedRules() below exists only on Password.
         if (! $password instanceof Password || ! $previous instanceof StringType) {
             return $previous;
         }
