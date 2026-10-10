@@ -1,4 +1,5 @@
 import { readFile, readdir } from 'node:fs/promises';
+import { sep } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
@@ -45,7 +46,7 @@ describe('RegisterSchema', () => {
     ).toBe(false);
   });
 
-  it('rejects a malformed address but accepts anything the server would', () => {
+  it('rejects a malformed address but accepts, and trims, anything the server would', () => {
     // The email rule is a shape check, not z.email(), because the server's gate is
     // filter_var(FILTER_VALIDATE_EMAIL) and a client must not be stricter than it. See
     // apiEmail in auth.ts. These two are the cases that fix the boundary in place.
@@ -71,6 +72,19 @@ describe('RegisterSchema', () => {
     expect(RegisterSchema.safeParse({ ...validRegistration, email: 'ada@example' }).success).toBe(
       true,
     );
+
+    // Whitespace is the case that made the old title ("accepts anything the server would")
+    // false: TrimStrings normalises before any rule runs, so the API registers this address,
+    // while `[^\s@]` refused it here and one trailing space off a paste made an address
+    // unregisterable through either client.
+    const padded = RegisterSchema.safeParse({
+      ...validRegistration,
+      email: '  Ada@Example.test  ',
+    });
+    expect(padded.success).toBe(true);
+    // The trimmed value is what the client would send. Case is deliberately left alone - the
+    // server lowercases server-side and accepts either, so altering it here would buy nothing.
+    expect(padded.success && padded.data.email).toBe('Ada@Example.test');
   });
 
   it('rejects a password of 11 characters and accepts 12', () => {
@@ -116,13 +130,58 @@ describe('RegisterSchema', () => {
     ).toBe(false);
   });
 
-  it('treats locale as optional, capped at 10, and permits the empty string the API permits', () => {
+  it('treats locale as optional and capped at 10, and rejects it present but empty', () => {
     expect(RegisterSchema.safeParse(validRegistration).success).toBe(true);
     expect(RegisterSchema.safeParse({ ...validRegistration, locale: 'en-GB' }).success).toBe(true);
-    expect(RegisterSchema.safeParse({ ...validRegistration, locale: '' }).success).toBe(true);
+
+    // This case used to assert that '' is ACCEPTED, on the strength of RegisterRequest's rule
+    // carrying no `required`. The rule never got the chance to matter: ConvertEmptyStringsToNull
+    // turns '' into null before validation, and null fails `string`, so the API has always
+    // answered 422 here - the same answer UpdateProfileSchema.locale already gave.
+    expect(RegisterSchema.safeParse({ ...validRegistration, locale: '' }).success).toBe(false);
+    // Whitespace-only, which `.min(1)` on its own counted as three characters and accepted.
+    expect(RegisterSchema.safeParse({ ...validRegistration, locale: '   ' }).success).toBe(false);
+
     expect(RegisterSchema.safeParse({ ...validRegistration, locale: 'a'.repeat(11) }).success).toBe(
       false,
     );
+    // The cap measures the trimmed value, as `max:10` does upstream: 14 characters in, 10 out.
+    const padded = RegisterSchema.safeParse({
+      ...validRegistration,
+      locale: `  ${'a'.repeat(10)}  `,
+    });
+    expect(padded.success && padded.data.locale).toBe('a'.repeat(10));
+  });
+
+  it('rejects a whitespace-only timezone, and trims the one it keeps', () => {
+    // TrimStrings and `required` both reject '   ' upstream - `required` applies PHP's trim
+    // itself - while Zod's `.min(1)` counts characters. This is the case that gap allowed.
+    expect(RegisterSchema.safeParse({ ...validRegistration, timezone: '   ' }).success).toBe(false);
+    expect(RegisterSchema.safeParse({ ...validRegistration, timezone: '' }).success).toBe(false);
+
+    const padded = RegisterSchema.safeParse({
+      ...validRegistration,
+      timezone: ' Europe/London ',
+    });
+    expect(padded.success && padded.data.timezone).toBe('Europe/London');
+  });
+
+  it('leaves the password exactly as submitted, because TrimStrings excepts it', () => {
+    // TrimStrings::$except is ['current_password', 'password', 'password_confirmation'], so the
+    // server hashes what was sent, padding and all. A `.trim()` here would register one
+    // credential and sign in with another, which is why password is the one untrimmed field.
+    const padded = RegisterSchema.parse({ ...validRegistration, password: '  hunter2two  ' });
+    expect(padded.password).toBe('  hunter2two  ');
+  });
+
+  it('accepts a whitespace-only password the API would 422, which is a recorded divergence', () => {
+    // Pinned rather than fixed. `required` runs PHP's trim() before calling a value empty, so
+    // twelve spaces is a 422 upstream and is accepted here. Closing it needs a value-PRESERVING
+    // check, not a `.trim()` - see the MIDDLEWARE note in auth.ts. If this starts failing,
+    // someone has closed it and that note must be rewritten rather than this line deleted.
+    expect(
+      RegisterSchema.safeParse({ ...validRegistration, password: ' '.repeat(12) }).success,
+    ).toBe(true);
   });
 
   it('strips an unknown field rather than rejecting it', () => {
@@ -137,13 +196,17 @@ describe('RegisterSchema', () => {
 });
 
 describe('LoginSchema', () => {
-  it('mirrors `required` on the password and imposes no length beyond it', () => {
+  it('rejects an empty password and imposes no length beyond that', () => {
     // LoginRequest deliberately omits Password::min(12): a rule on the submitted password
     // would refuse a legacy credential before checking it. So one character is accepted...
     expect(LoginSchema.safeParse({ email: 'ada@example.test', password: 'x' }).success).toBe(true);
-    // ...and the empty string is not, which is all `required` means. Without this case the
-    // schema could silently lose its .min(1) and nothing would notice.
+    // ...and the empty string is not, which is most of what `required` means. Without this
+    // case the schema could silently lose its .min(1) and nothing would notice.
     expect(LoginSchema.safeParse({ email: 'ada@example.test', password: '' }).success).toBe(false);
+    // The rest of what `required` means is the whitespace-only case, and it is the same
+    // recorded divergence as at registration: a 422 upstream, accepted here, and untrimmable
+    // without changing the credential the client sends.
+    expect(LoginSchema.safeParse({ email: 'ada@example.test', password: '  ' }).success).toBe(true);
   });
 
   it('rejects a platform outside the enum and accepts each member', () => {
@@ -162,8 +225,13 @@ describe('LoginSchema', () => {
     const base = { email: 'ada@example.test', password: 'x' };
     expect(LoginSchema.safeParse(base).success).toBe(true);
     expect(LoginSchema.safeParse({ ...base, install_id: '' }).success).toBe(false);
+    // Whitespace-only is the same 422 upstream as the empty string, by `required`'s own trim.
+    expect(LoginSchema.safeParse({ ...base, install_id: '   ' }).success).toBe(false);
     expect(LoginSchema.safeParse({ ...base, install_id: 'a'.repeat(255) }).success).toBe(true);
     expect(LoginSchema.safeParse({ ...base, install_id: 'a'.repeat(256) }).success).toBe(false);
+    // And the 255 cap measures the trimmed value, as `max:255` does behind TrimStrings.
+    const padded = LoginSchema.safeParse({ ...base, install_id: `  ${'a'.repeat(255)}  ` });
+    expect(padded.success && padded.data.install_id).toBe('a'.repeat(255));
   });
 });
 
@@ -181,6 +249,15 @@ describe('RefreshSchema and LogoutSchema', () => {
     expect(LogoutSchema.safeParse(token(64)).success).toBe(true);
     expect(LogoutSchema.safeParse(token(65)).success).toBe(false);
   });
+
+  it('measures the 64 characters after trimming, as `size:64` does behind TrimStrings', () => {
+    // A padded token is one the API accepts and this used to refuse. The exact-length rule is
+    // the one place `.trim()` could have changed behaviour for the worse, so both ends are
+    // pinned: the padding comes off, and a padded SHORT token is still refused.
+    const padded = RefreshSchema.safeParse({ refresh_token: ` ${'f'.repeat(64)} ` });
+    expect(padded.success && padded.data.refresh_token).toBe('f'.repeat(64));
+    expect(RefreshSchema.safeParse({ refresh_token: ` ${'f'.repeat(63)} ` }).success).toBe(false);
+  });
 });
 
 describe('ForgotPasswordSchema', () => {
@@ -197,10 +274,14 @@ describe('ResetPasswordSchema', () => {
     password: 'correct horse battery',
   };
 
-  it('requires a 64-character token', () => {
+  it('requires a 64-character token, measured after trimming', () => {
     expect(ResetPasswordSchema.safeParse(valid).success).toBe(true);
     expect(ResetPasswordSchema.safeParse({ ...valid, token: 'f'.repeat(63) }).success).toBe(false);
     expect(ResetPasswordSchema.safeParse({ ...valid, token: 'f'.repeat(65) }).success).toBe(false);
+    // This is the endpoint where the trim earns its place: the token is pasted out of an
+    // email, and the API trims before `size:64` sees it.
+    const padded = ResetPasswordSchema.safeParse({ ...valid, token: `\n${'f'.repeat(64)} ` });
+    expect(padded.success && padded.data.token).toBe('f'.repeat(64));
   });
 
   it('enforces the 12-character minimum the register endpoint enforces', () => {
@@ -256,6 +337,19 @@ describe('UpdateProfileSchema', () => {
     expect(UpdateProfileSchema.safeParse({ display_name: '   ' }).success).toBe(false);
     expect(UpdateProfileSchema.safeParse({ timezone: '' }).success).toBe(false);
     expect(UpdateProfileSchema.safeParse({ locale: '' }).success).toBe(false);
+    // And whitespace-only, which only display_name used to catch, since it was the one field
+    // here carrying a `.trim()`.
+    expect(UpdateProfileSchema.safeParse({ timezone: '   ' }).success).toBe(false);
+    expect(UpdateProfileSchema.safeParse({ locale: '   ' }).success).toBe(false);
+  });
+
+  it('trims every field before measuring it, as the middleware does upstream', () => {
+    expect(UpdateProfileSchema.parse({ timezone: ' Europe/London ' })).toEqual({
+      timezone: 'Europe/London',
+    });
+    expect(UpdateProfileSchema.parse({ locale: `  ${'a'.repeat(10)}  ` })).toEqual({
+      locale: 'a'.repeat(10),
+    });
   });
 
   it('applies the same 80 and 10 character caps as registration', () => {
@@ -392,6 +486,14 @@ describe("the contract's own constraints", () => {
     ['ResetPasswordRequest', 'password', { minLength: 12 }],
     ['UpdateProfileRequest', 'display_name', { maxLength: 80 }],
     ['UpdateProfileRequest', 'locale', { maxLength: 10 }],
+    // The response side of the same chain. SessionSchema parses both expiries with
+    // z.iso.datetime({ offset: true }), and the document stated them as bare `string` until
+    // upstream annotated them - so a generated client typed them as strings and the reason for
+    // returning them at all (scheduling a refresh ahead of expiry, setting a cookie's Max-Age)
+    // was left to each client to rediscover. openapi-typescript erases the format into a
+    // comment, so this table is the only place in this repo that can hold upstream to it.
+    ['SessionResource', 'access_token_expires_at', { format: 'date-time' }],
+    ['SessionResource', 'refresh_token_expires_at', { format: 'date-time' }],
   ];
 
   const loadConstraints = async (): Promise<z.infer<typeof ConstraintDocument>> => {
@@ -428,41 +530,94 @@ describe('the assertion harness itself', () => {
    * green, so nothing makes an assertion mandatory and a schema can be added with no proof at
    * all. This test is what turns that silent omission into a failing one.
    *
-   * It pairs assertions to schemas BY NAME. The first version counted them with `>=`, which
-   * left four assertions of slack in session.ts - two schemas there carry six assertions, one
-   * per enveloped response, so an unproven schema added to that file would have left 6 >= 3
-   * and every gate green. The slack survived because this test's own proof only ever sampled
-   * files whose counts are tight (users.ts, and a scratch devices.ts). A verification that
-   * samples only the passing case is worth less than no verification, because it is believed.
+   * THE CONVENTION ENFORCED: a schema is proven by an `export type _Name = Expect<...>;` whose
+   * Expect<...> body NAMES it. The body is the text that does the proving, so it is the text
+   * the gate reads.
    *
-   * The convention enforced: an assertion proves the schema whose name prefixes its own, so
-   * `_RegisterMatchesApi` proves `RegisterSchema` and `_SessionAcceptsLoginResponse` proves
-   * `SessionSchema`. Each assertion is credited to the LONGEST schema name it starts with, so
-   * a `_RefreshTokenMatchesApi` could never stand in as proof for a separate `RefreshSchema`.
+   * Two earlier versions of this test are worth recording, because each was believed.
    *
-   * What this still does not catch, stated rather than implied: deleting one of several
-   * assertions that prove the SAME schema. Any one of session.ts's four UserResource envelope
-   * proofs satisfies the pairing on its own. The guarantee is that no schema is unproven, not
-   * that a particular set of proofs is present - an exact per-file count would catch the
-   * second as well, at the cost of failing on every legitimate addition, and that trade was
-   * made deliberately.
+   * The first counted assertions against schemas with `>=`, which left four assertions of
+   * slack in session.ts - two schemas there carry six assertions, one per enveloped response,
+   * so an unproven schema added to that file would have left 6 >= 3 and every gate green. The
+   * slack survived because this test's own proof only ever sampled files whose counts are
+   * tight (users.ts, and a scratch devices.ts). A verification that samples only the passing
+   * case is worth less than no verification, because it is believed.
+   *
+   * The second credited an assertion to the schema whose name its OWN name began with, longest
+   * match winning. That is a proxy for proof rather than proof, and three things walked
+   * through it. Each was constructed, run, and watched to fail before being written down here:
+   *
+   *   - `export type _FooMatchesApi = Expect<true>;` satisfied the gate for FooSchema while
+   *     proving nothing at all.
+   *   - An assertion copy-pasted between schemas credited the wrong one. `_LoginMatchesApi =
+   *     Expect<WireEquivalent<z.infer<typeof RegisterSchema>, LoginBody>>` was credited to
+   *     LoginSchema by its name, while the only schema it mentions is RegisterSchema - so
+   *     LoginSchema counted as proven by an assertion about something else.
+   *   - `DeviceSchemaV2` matched `/^export const (\w+)Schema\b/gm` ZERO times, because the `\b`
+   *     after `Schema` cannot match before `V`. Such a schema was neither required to carry a
+   *     proof nor counted toward the floor.
+   *
+   * Reading the body closes the first two: `Expect<true>` names no schema, and a copy-pasted
+   * assertion names the schema it was copied from rather than the one it sits under. Matching
+   * `\w*Schema\w*` and keeping the whole identifier closes the third, and makes the
+   * longest-prefix tie-break unnecessary rather than merely correct - `\b` around the
+   * identifier is what keeps `UserSchema` from being credited by a body that says
+   * `SessionUserSchema`, and `DeviceSchema` from being credited by one that says
+   * `DeviceSchemaV2`.
+   *
+   * WHAT THIS STILL DOES NOT CATCH, stated rather than implied:
+   *
+   *   - Deleting one of several assertions that prove the SAME schema. Any one of session.ts's
+   *     four UserResource envelope proofs satisfies the pairing on its own. The guarantee is
+   *     that no schema is unproven, not that a particular set of proofs is present - an exact
+   *     per-file count would catch this as well, at the cost of failing on every legitimate
+   *     addition, and that trade was made deliberately.
+   *   - A body that names two schemas credits both, so
+   *     `Expect<WireEquivalent<z.infer<typeof ASchema>, z.infer<typeof BSchema>>>` stands as
+   *     proof for A and for B while proving neither against the contract; a schema compared to
+   *     itself is the degenerate case and credits itself. Closing this means deciding whether
+   *     the OTHER side of the comparison came from `paths`, which is a question about resolved
+   *     types rather than about text - a typescript-aware pass over the AST, not a regex, and
+   *     the only thing in the repo that can really answer it is the compiler.
+   *   - A schema whose exported name does not contain `Schema`, or an assertion not named
+   *     `_...` and not written as `Expect<...>`. The naming IS the convention here, and
+   *     nothing can enforce a convention it cannot see.
+   *   - A declaration joined onto one line with another statement, which `^[ \t]*export const`
+   *     cannot see. Left open deliberately: `prettier --check` runs in the same `npm run
+   *     verify` and rejects that form. Measured, not assumed - `const a = 1; export const
+   *     JoinedSchema = …;` is reported by `prettier --check` and split onto two lines by
+   *     `prettier`, at which point the anchor sees it. Indentation, the other half of the same
+   *     hole, IS handled: the anchor allows leading spaces and tabs, while a docblock's ` * `
+   *     and a `//` comment still cannot match it.
+   *   - Anything outside src/validation/. The scan is recursive now, so src/validation/plans/
+   *     is covered, but this reads a directory tree rather than the module graph.
    */
-  const named = (pattern: RegExp, source: string): string[] => {
-    const names: string[] = [];
+  /**
+   * Capture group 1 of every match, in order. Named for what it returns rather than for what
+   * it returns it from, because the two patterns below capture different things: an exported
+   * schema's identifier, and the text of an assertion's Expect<...> body.
+   */
+  const captured = (pattern: RegExp, source: string): string[] => {
+    const matched: string[] = [];
 
     for (const match of source.matchAll(pattern)) {
-      const name = match[1];
-      if (name !== undefined) names.push(name);
+      const group = match[1];
+      if (group !== undefined) matched.push(group);
     }
 
-    return names;
+    return matched;
   };
 
   it('pairs an assignability assertion to every exported schema', async () => {
     const directory = new URL('.', import.meta.url);
-    const files = (await readdir(directory)).filter(
-      (name) => name.endsWith('.ts') && !name.endsWith('.test.ts'),
-    );
+
+    // Recursive, because Wave 1b adds src/validation/plans/index.ts and a non-recursive
+    // readdir would never look inside it - the schema would be unscanned rather than
+    // unproven, which is the failure mode this whole test exists to rule out. The separator
+    // swap is for the Windows spelling readdir returns; `new URL` wants forward slashes.
+    const files = (await readdir(directory, { recursive: true }))
+      .map((name) => name.split(sep).join('/'))
+      .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'));
 
     // Read the directory rather than a hard-coded list, so a schema file added later is
     // covered without anyone remembering to add it here. The guard below is what stops that
@@ -474,24 +629,18 @@ describe('the assertion harness itself', () => {
 
     for (const file of files) {
       const source = await readFile(new URL(file, directory), 'utf8');
-      const schemas = named(/^export const (\w+)Schema\b/gm, source);
-      const assertions = named(/^export type (_\w+) = Expect</gm, source);
+      const schemas = captured(/^[ \t]*export const (\w*Schema\w*)\b/gm, source);
+      // The body of each assertion, non-greedily up to the first `>;` - which is the end of
+      // the statement whether prettier kept it on one line or wrapped it over three.
+      const proofs = captured(/^[ \t]*export type _\w+ = Expect<([\s\S]*?)>;/gm, source);
 
-      const proven = new Set<string>();
+      const unproven = schemas.filter(
+        // Interpolation is safe because the capture group is `\w*Schema\w*`: no regex
+        // metacharacter can reach this line.
+        (schema) => !proofs.some((proof) => new RegExp(`\\b${schema}\\b`).test(proof)),
+      );
 
-      for (const assertion of assertions) {
-        const owner = schemas
-          .filter((schema) => assertion.startsWith(`_${schema}`))
-          .sort((a, b) => b.length - a.length)
-          .at(0);
-
-        if (owner !== undefined) proven.add(owner);
-      }
-
-      expect(
-        schemas.filter((schema) => !proven.has(schema)),
-        `${file}: exported schema(s) with no matching assignability assertion`,
-      ).toEqual([]);
+      expect(unproven, `${file}: exported schema(s) with no assertion naming them`).toEqual([]);
 
       schemaCount += schemas.length;
     }

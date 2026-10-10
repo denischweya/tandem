@@ -41,6 +41,51 @@ import type { Expect, WireEquivalent } from './assignability';
  * so that a body becoming optional upstream does not break the accessor itself - which would
  * report as a resolution error rather than as the field-level diff it is.
  *
+ * MIDDLEWARE, and why several rules below carry a `.trim()` that no rules() array mentions.
+ * TrimStrings and ConvertEmptyStringsToNull sit in Laravel's GLOBAL middleware stack - read
+ * off Illuminate\Foundation\Configuration\Middleware::getGlobalMiddleware() in
+ * laravel/framework v13.35.0, with tandem-api's bootstrap/app.php neither removing nor
+ * replacing either - so they transform every api/* request before any rule in any request
+ * class runs. A schema that mirrors rules() alone therefore diverges from the API, and did,
+ * in three ways measured against the real endpoints:
+ *
+ *   - '  Ada@Example.test  ' is ACCEPTED upstream - TrimStrings trims it, then
+ *     NormalizesEmailInput lowercases and trims it a second time via EmailInput::normalize's
+ *     strtolower(trim(...)) - and was refused here by the regex's `[^\s@]` classes.
+ *   - `locale: ""` is a 422 upstream (ConvertEmptyStringsToNull makes it null, and null fails
+ *     `string`) and was accepted here.
+ *   - '   ' satisfies Zod's `.min(1)`, which counts characters, while `required` upstream sees
+ *     the trimmed value and refuses it.
+ *
+ * `.trim()` ahead of the length and shape checks closes all three, and its POSITION is
+ * load-bearing: Zod applies string checks in declaration order, so - measured -
+ * `z.string().min(1).trim()` accepts '   ' and returns '', while `z.string().trim().min(1)`
+ * rejects it. Written first throughout, so every cap and shape check sees the value the
+ * server would see, and the parsed output is the value a client should send. Str::trim
+ * upstream also strips Unicode whitespace and invisible characters, where JavaScript's
+ * `.trim()` strips whitespace only - which leaves these schemas marginally LOOSER than the
+ * server on exotic input rather than stricter, the same direction apiEmail chooses and the
+ * only one that keeps the server authoritative.
+ *
+ * password is the one string field left untrimmed, and that too is measured rather than
+ * assumed: TrimStrings `$except` is ['current_password', 'password', 'password_confirmation']
+ * in that same framework version, and tandem-api neither extends it nor calls
+ * TrimStrings::except(), so the server hashes and compares a submitted password EXACTLY as
+ * sent, and `min`/`max` upstream count its padding. Trimming it here would BE the divergence
+ * rather than the fix: ' hunter2two ' is a different credential upstream from 'hunter2two',
+ * so a client that trimmed would register one password and then sign in with another.
+ *
+ * One password divergence is therefore left open, and is recorded here rather than implied.
+ * `required` does its own trim before deciding a value is empty - ValidatesAttributes::
+ * validateRequired returns false for `is_string($value) && trim($value) === ''`, which is
+ * PHP's native trim and runs whether or not TrimStrings touched the field - so a
+ * whitespace-only password long enough to clear the length rule is a 422 upstream and is
+ * accepted here. Closing it needs a value-PRESERVING check (at least one character outside
+ * PHP trim's charlist, " \t\n\r\0\x0B") and not a `.trim()`; note that charlist is narrower
+ * than JavaScript's `\s`, so the obvious `.regex(/\S/)` would make this schema stricter than
+ * the server for a password of non-breaking spaces. Left as a decision rather than guessed
+ * at, and pinned by a test in auth.test.ts so it cannot be closed without this note moving.
+ *
  * Response parsers live in session.ts, PATCH /me's body in users.ts.
  */
 
@@ -57,16 +102,29 @@ import type { Expect, WireEquivalent } from './assignability';
  * server.
  *
  * So this is a shape check for form UX plus the server's own length cap. The regex accepts a
- * strict superset of what filter_var does: every address filter_var accepts has exactly one
- * unquoted `@` and no whitespace (`"ada bob"@example.test` is rejected there, as
- * ValidEmail's docblock records). Nothing the API would accept is refused here, while an
- * obviously-mistyped address still fails before a round trip, and the server stays
- * authoritative and answers 422.
+ * superset of what filter_var does on the TRIMMED value: every address filter_var accepts has
+ * exactly one unquoted `@` and no whitespace (`"ada bob"@example.test` is rejected there, as
+ * ValidEmail's docblock records), so an obviously-mistyped address still fails before a round
+ * trip while the server stays authoritative and answers 422.
  *
- * `.max(254)` mirrors `'max:254'`, so even the cap is the server's rule and not an extra one.
+ * `.trim()` is a correction, not a nicety. This docblock used to claim that nothing the API
+ * would accept is refused here, and that claim was false for a whole class of input: any
+ * address with leading or trailing whitespace. TrimStrings (see the MIDDLEWARE note above)
+ * means '  Ada@Example.test  ' reaches ValidEmail as 'ada@example.test' and registers, while
+ * `[^\s@]` refused it here - so one trailing space off a paste or an autofill made an address
+ * unregisterable through either client. Measured both ways: without the trim that input is
+ * rejected, with it the schema parses and yields 'Ada@Example.test'.
+ *
+ * Trim, then cap, then shape, which is the order the server applies: `.max(254)` mirrors
+ * `'max:254'` and both it and the regex see the trimmed value, so even the cap is the server's
+ * rule and not an extra one. Lowercasing is NOT mirrored - NormalizesEmailInput lowercases
+ * server-side before `unique` and before the users_email_lowercase CHECK, and nothing a client
+ * sends is accepted or refused on the strength of its case, so a client-side `.toLowerCase()`
+ * would alter the value sent for no gain in agreement.
  */
 const apiEmail = z
   .string()
+  .trim()
   .max(254)
   .regex(/^[^\s@]+@[^\s@]+$/, 'must look like an email address');
 
@@ -88,24 +146,33 @@ type RegisterBody = NonNullable<
  * `required` and `max:80` see it - so '  ' is rejected and ' <80 chars> ' is accepted, in
  * both places.
  *
- * timezone is `.min(1)` and not an IANA check, deliberately. The API validates it against
- * the tz database via IanaTimeZone; the equivalent here would be a probe through
+ * timezone is `.trim().min(1)` and not an IANA check, deliberately. The API validates it
+ * against the tz database via IanaTimeZone; the equivalent here would be a probe through
  * Intl.DateTimeFormat, whose accepted zone set depends on the engine's ICU build - and these
  * schemas run on Hermes as well as on Node, where that set is not the same. A client-side
  * check that rejects a zone the server accepts is worse than no check: the server is
- * authoritative and returns 422.
+ * authoritative and returns 422. The trim is what makes `.min(1)` mean what `required` means
+ * upstream rather than merely "one character": '   ' is a 422 there and is refused here.
  *
- * `locale` is `.max(10)` with no `.min(1)` because its rule is ['sometimes', 'string',
- * 'max:10'] - no `required`, so the API accepts an empty string here. UpdateProfileRequest's
- * locale rule DOES carry `required`, and users.ts mirrors that difference rather than
- * smoothing it over.
+ * `locale` is the same shape users.ts gives UpdateProfileSchema.locale, and this paragraph
+ * used to explain why it was not. The explanation was wrong rather than out of date:
+ * RegisterRequest's rule reads ['sometimes', 'string', 'max:10'] with no `required`, which
+ * looks like it accepts the empty string, but ConvertEmptyStringsToNull reaches the value
+ * before any rule does and turns "" into null, which fails `string`. `locale: ""` is a 422 at
+ * BOTH endpoints and always was, so the asymmetry this schema mirrored existed only in the
+ * rules() arrays and never on the wire. Upstream is adding the missing `required` so the rule
+ * reads the way the stack already behaves; either way this is the shape that agrees with it.
+ *
+ * openapi.json does not move with that correction and no assertion or constraint-table row
+ * does either: `required` adds no `minLength`, so `locale` stays an optional string with
+ * `maxLength: 10` in the document.
  */
 export const RegisterSchema = z.object({
   email: apiEmail,
   password: z.string().min(12),
   display_name: z.string().trim().min(1).max(80),
-  timezone: z.string().min(1),
-  locale: z.string().max(10).optional(),
+  timezone: z.string().trim().min(1),
+  locale: z.string().trim().min(1).max(10).optional(),
 });
 
 // The schema's OUTPUT must describe the same wire format as the API's request body - not
@@ -122,19 +189,21 @@ type LoginBody = NonNullable<
 /**
  * Mirrors LoginRequest::rules().
  *
- * `password` is `.min(1)` and nothing more, which mirrors `required` exactly: the empty
- * string is rejected and no length is imposed beyond that. The API's LoginRequest
- * deliberately omits Password::min(12), because a length rule on a *submitted* password
- * would refuse a sign-in attempt for a legacy credential before checking it - so there is no
- * 12-character minimum here either.
+ * `password` is `.min(1)` and nothing more: the empty string is rejected and no length is
+ * imposed beyond that. The API's LoginRequest deliberately omits Password::min(12), because a
+ * length rule on a *submitted* password would refuse a sign-in attempt for a legacy credential
+ * before checking it - so there is no 12-character minimum here either. `.min(1)` is a near
+ * mirror of `required` rather than an exact one, and the gap is the whitespace-only case the
+ * MIDDLEWARE note records: the empty string agrees (422 both sides), '   ' does not.
  *
  * install_id and platform are ['sometimes', 'required', …], which is optional-but-not-empty -
- * hence `.min(1)` inside `.optional()`.
+ * hence `.min(1)` inside `.optional()`. install_id is trimmed ahead of both its length checks,
+ * since TrimStrings does reach it; password is not, for the reason the MIDDLEWARE note gives.
  */
 export const LoginSchema = z.object({
   email: apiEmail,
   password: z.string().min(1),
-  install_id: z.string().min(1).max(255).optional(),
+  install_id: z.string().trim().min(1).max(255).optional(),
   platform: z.enum(['ios', 'android', 'web']).optional(),
 });
 
@@ -148,9 +217,18 @@ type RefreshBody = NonNullable<
  * Mirrors RefreshTokenRequest::rules(). `size:64` is exactly 64 characters, matching
  * bin2hex(random_bytes(32)) - what RefreshTokenIssuer actually mints - so `.length(64)`
  * turns away malformed input before a round trip without revealing which tokens exist.
+ *
+ * `.trim()` goes ahead of `.length(64)` too, and the exact-length rule is the case where that
+ * needed thinking about rather than copying: a hex token has no interior whitespace to lose,
+ * TrimStrings runs before `size:64` upstream, and the trimmed 64 characters are therefore
+ * precisely the value the server validates and looks up. Without it a padded token is a
+ * client-side rejection of a token the API would accept. Measured:
+ * `z.string().trim().length(64)` accepts ' <64 hex> ' and still refuses ' <63 hex> '. It earns
+ * its place at reset-password, where a human pastes the token out of an email; a refresh token
+ * comes straight back out of a login response, where padding would be a bug upstream.
  */
 export const RefreshSchema = z.object({
-  refresh_token: z.string().length(64),
+  refresh_token: z.string().trim().length(64),
 });
 
 export type _RefreshMatchesApi = Expect<WireEquivalent<z.infer<typeof RefreshSchema>, RefreshBody>>;
@@ -189,9 +267,14 @@ type ResetPasswordBody = NonNullable<
   paths['/auth/reset-password']['post']['requestBody']
 >['content']['application/json'];
 
-/** Mirrors ResetPasswordRequest::rules(). `token` is `size:64`, like the refresh token. */
+/**
+ * Mirrors ResetPasswordRequest::rules(). `token` is `size:64`, like the refresh token, and
+ * trimmed ahead of it for the reason RefreshSchema records - this is the endpoint where that
+ * matters, because the token arrives by copy and paste. `password` stays untrimmed, like every
+ * other password field here.
+ */
 export const ResetPasswordSchema = z.object({
-  token: z.string().length(64),
+  token: z.string().trim().length(64),
   email: apiEmail,
   password: z.string().min(12),
 });
