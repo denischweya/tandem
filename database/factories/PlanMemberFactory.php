@@ -22,7 +22,8 @@ class PlanMemberFactory extends Factory
      * role and status default to the plan_members column defaults (member/invited) rather
      * than to the more convenient active member: a seeded row should look like a row the
      * application would really have written at the start of its lifecycle. Tests that need
-     * an accepted member say so - see the member() helper in DeleteAccountTest.
+     * an accepted member say so - see the member() helper in tests/Pest.php, where it moved
+     * from DeleteAccountTest once a second suite needed it too.
      *
      * @return array<string, mixed>
      */
