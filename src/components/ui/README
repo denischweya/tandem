@@ -1,0 +1,33 @@
+UI primitives, deliberately mirroring tandem-mobile's §10 subset
+==================================================================
+
+`Input`, `FormError`, `EmptyState`, `LoadingState`, `ErrorState` and `Button` here are the web
+equivalents of tandem-mobile's `src/components/{Input,ErrorState,EmptyState,LoadingState,
+Button}.tsx`.
+
+`@tandem/shared` ships no React and must not start shipping one: a shared component library
+would couple an Expo (React Native) renderer and a DOM renderer through one package, which is
+not something either platform's rendering primitives (`<View>`/`<Text>` vs `<div>`/`<p>`) can
+honestly share. The survey that opened this task found two parallel, independently-transcribed
+copies of the same handful of primitives growing across the two repos - not fixed by sharing
+code, so it is fixed the only way that is honestly shareable: the same NAMES, the same PROPS
+(adapted only where the platform forces it - `onPress` becomes `onClick`, `testID` becomes
+`data-testid`), and the same COPY (§134's empty-state sentences, §135's error sentences). A
+screen reader or a test author moving between the two codebases should recognise the shape
+immediately.
+
+Where this repo's Input differs from mobile's, it is because the platform forces it, not
+because of an independent design decision:
+
+- mobile's TextInput has no uncontrolled mode worth using, so Input there is `value`/
+  `onChangeText`/`onBlur` driven by a `Controller`. A DOM `<input>` supports `ref` natively,
+  so this Input is built with `forwardRef` and is meant to be spread from React Hook Form's
+  `register()` directly (`<Input {...register('email')} />`), which is the idiomatic way to
+  wire a web form and needs no `Controller` wrapper for a plain text/password field.
+- `revealable` toggles `type="password"`/`type="text"` here instead of RN's
+  `secureTextEntry`, and renders a `Show`/`Hide` toggle button rather than an icon tap target
+  - same capability, platform-appropriate control.
+
+Button's `pending`/`destructive` additions in this task are the same two decisions mobile's
+Button already made (see that file's own docblock on why `destructive` is an enum arm with no
+caller yet rather than an invented colour), carried over by name.

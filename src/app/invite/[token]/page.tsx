@@ -4,7 +4,6 @@ import { PlanSummary } from '@/components/invite/PlanSummary';
 import { RsvpResponse } from '@/components/invite/RsvpResponse';
 import { SignupPrompt } from '@/components/invite/SignupPrompt';
 import { getInviteByToken } from '@/lib/invite/fixture';
-import tokens from '@/components/invite/design-tokens.module.css';
 import styles from './page.module.css';
 
 export async function generateMetadata({
@@ -40,7 +39,7 @@ export default async function InvitePage({ params }: PageProps<'/invite/[token]'
 
   if (!invite) {
     return (
-      <main className={`${tokens.tokens} ${styles.page}`}>
+      <main className={styles.page}>
         <div className={styles.content}>
           <div className={styles.unavailable}>
             <h1 className={styles.unavailableTitle}>This invite link isn&apos;t available</h1>
@@ -57,7 +56,7 @@ export default async function InvitePage({ params }: PageProps<'/invite/[token]'
   const attendeeNames = invite.plan.attendees.map((person) => person.name);
 
   return (
-    <main className={`${tokens.tokens} ${styles.page}`}>
+    <main className={styles.page}>
       <div className={styles.content}>
         <InviteHeader inviterName={invite.inviter.name} />
         <PlanSummary

@@ -19,10 +19,18 @@ export type SessionReadResult =
  * `getSession`'s own docblock for why there is no fourth state to return instead): in Next's
  * App Router, an uncaught throw during a Server Component's render is caught by the nearest
  * `error.tsx` boundary ABOVE it in the route tree - the framework mechanism, not a claim
- * about this repo. `getSession()` has no production caller yet (noted in fix round 3) and no
- * `error.tsx` exists anywhere under `src/app` today, so nothing currently catches this -
- * Task 11, whichever task gives `getSession()` its first caller, is where that boundary (or a
- * caller-side try/catch) actually gets built, not here.
+ * about this repo.
+ *
+ * TASK 11 gave this its first production caller: `src/app/plans/page.tsx`. No `error.tsx`
+ * was added anywhere under `src/app` - that page handles this AT THE CALL SITE instead, with
+ * its own try/catch (`readSessionSafely`, narrowed through a discriminated result rather than
+ * a nullable-plus-flag pair) rendering `SessionErrorFallback`. A page-local catch was chosen
+ * over a route-tree `error.tsx` because a single Server Component is already the right
+ * granularity for "this one session read failed, offer to retry it" - a global boundary would
+ * also catch render errors from pages that have nothing to do with a session read at all.
+ * This docblock no longer names an absent boundary: either build the one named here, or
+ * handle it at your own call site and update this paragraph in the same change, the way this
+ * edit does.
  */
 export class SessionReadError extends Error {
   constructor(readonly status: number) {

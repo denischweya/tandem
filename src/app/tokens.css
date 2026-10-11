@@ -1,20 +1,23 @@
 /**
- * Design tokens transcribed from the guest-invite handoff (screen 3j).
+ * The screen-3j palette, promoted from src/components/invite/design-tokens.module.css to
+ * :root. It was scoped to a `.tokens` CLASS that each page applied by hand
+ * (`${tokens.tokens} ${styles.page}`), which meant the design system quietly stayed
+ * invite-only - and this wave adds six pages. Every value below is transcribed verbatim from
+ * that module; only the selector changed, from `.tokens` to `:root`.
  *
- * This is a self-contained palette for this feature only — the repo has no
- * site-wide design system yet, and `globals.css` already owns its own
- * light/dark tokens for the Wave 0 scaffold. These are plain CSS custom
- * properties, not module-scoped class names, so every child component below
- * `.tokens` in the DOM can reference `var(--color-accent-2)` etc. regardless
- * of which CSS module it was declared in.
+ * The handoff's device-frame chrome (height:100%, overflow:hidden) is still deliberately
+ * dropped: these are real scrollable pages.
  *
- * The original transcription also included device-frame chrome
- * (`height:100%; overflow:hidden; …`) for simulating a phone screen inside
- * the design tool. That's dropped here on purpose: this is a real,
- * scrollable web page a guest opens in an actual browser, not a picture of
- * one, so it must not clip content that doesn't fit a fixed viewport.
+ * NO DARK VARIANT. globals.css owned TWO prefers-color-scheme: dark blocks - one redefining
+ * --background/--foreground and one setting `html { color-scheme: dark }` - and these colours
+ * never participated in either, so the repo had one palette and two orphaned dark overrides.
+ * Both are deleted there. Resolving it honestly means either designing a dark palette (no
+ * design source exists for one - the handoff is not committed anywhere in the three repos) or
+ * committing to light. This wave commits to light, matching tandem-mobile's
+ * `userInterfaceStyle: "light"`, and deletes the orphaned dark block rather than leaving two
+ * systems half-wired. A dark palette is a design task, not a CSS task.
  */
-.tokens {
+:root {
   --color-bg: #ffffff;
   --color-surface: #faf5f7;
   --color-text: #2a1a26;

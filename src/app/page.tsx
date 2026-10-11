@@ -14,7 +14,13 @@ export default function Home() {
   const fixedHhmm = `${String(fixed.hour).padStart(2, '0')}:${String(fixed.minute).padStart(2, '0')}`;
 
   return (
-    <main style={{ padding: '3rem', fontFamily: 'system-ui, sans-serif' }}>
+    // Task 11: the inline `fontFamily: 'system-ui, sans-serif'` this element used to carry is
+    // gone - it was one of the four competing font stacks globals.css's own docblock now
+    // names, and dropping it is what lets `body`'s `var(--font-body)` (tokens.css) actually
+    // reach this page rather than being overridden by an inline style one level down. `/` is
+    // otherwise unchanged: same job, same two test ids (`api-base-url`, `nairobi-time`/
+    // `nairobi-fixed`), spec §11 still gives it no other role.
+    <main style={{ padding: '3rem' }}>
       <h1>Tandem</h1>
       <p data-testid="api-base-url">API: {apiBaseUrl()}</p>
       <p data-testid="nairobi-time">{hhmm}</p>

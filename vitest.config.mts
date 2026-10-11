@@ -12,11 +12,24 @@ export default defineConfig({
     // request-cookies.js:53 for the write path), which would make every handler test a
     // mock of the framework instead of a test of the handler.
     //
-    // Task 11's four form components will need a DOM, and this line is the thing to change
-    // then: neither jsdom nor happy-dom is installed, so a render test added under this
-    // config fails at `document is not defined` rather than being quietly skipped. Install
-    // one and set `environment: 'jsdom'` (or an `environmentMatchGlobs` entry) in the task
-    // that writes the first render test, not before.
+    // TASK 11: jsdom is now installed (devDependency) and every `.test.tsx` file gets it via
+    // the per-file `// @vitest-environment jsdom` docblock below, NOT by flipping this
+    // default. The default stays 'node' for every `.test.ts` handler/unit test, which is the
+    // thing the comment this replaced was protecting: `src/server/handlers.ts` takes and
+    // returns web-standard Request/Response and never imports next/headers, so giving those
+    // tests a DOM they do not need would be a silent behaviour change in the other direction.
+    //
+    // MEASURED: `environmentMatchGlobs` - the config-level glob-to-environment mapping this
+    // comment used to recommend - does not exist on Vitest 4.1.11's `InlineConfig` type (it
+    // was a Vitest 0.x/1.x option, removed before this version; grepping the installed
+    // package's own .d.ts files for the string turns up nothing). The per-file docblock
+    // comment is what Vitest 4 actually supports for a one-off environment override instead,
+    // and every `.test.tsx` component test this task adds (src/components/ui/*.test.tsx,
+    // src/components/auth/*.test.tsx) opens with `// @vitest-environment jsdom` and renders
+    // real DOM nodes with `@testing-library/react` - which only resolves `document` because
+    // of that comment. The task report records the break/restore proof that removing the
+    // comment makes the exact same file fail loudly (`ReferenceError: document is not
+    // defined`) rather than being silently skipped.
     environment: 'node',
     // `{ts,tsx}`, not `ts`. Task 11 writes four form components, and a LoginForm.test.tsx
     // under a `.test.ts`-only glob is not reported as skipped - it is never collected at
@@ -24,6 +37,10 @@ export default defineConfig({
     // tests are `.test.ts`, so deleting passWithNoTests does not cover this on its own.
     // src/architecture/runner.test.ts pins this glob so a narrowing fails loudly.
     include: ['src/**/*.test.{ts,tsx}'],
+    // Registers `@testing-library/jest-dom`'s matchers and an `afterEach(cleanup)` for every
+    // test file, regardless of environment - see src/test/setup.ts's own docblock for why
+    // that is safe for the node-environment handler tests too (both halves are no-ops there).
+    setupFiles: ['src/test/setup.ts'],
     // NO passWithNoTests. It was in this file for exactly as long as this repo had no test:
     // it makes `npm run test` - and therefore `npm run verify` - pass over zero assertions,
     // which is the failure mode the Global Constraints forbid, bounded only by a human
