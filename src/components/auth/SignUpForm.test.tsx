@@ -17,11 +17,21 @@ function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
+// See src/lib/auth/timezone.test.ts's identical helper for why this is a real instance with
+// one method shadowed (not a plain object cast through `unknown`) built from a NATIVE
+// constructor reference captured before any `vi.spyOn(Intl, 'DateTimeFormat')` runs.
+const NativeDateTimeFormat = Intl.DateTimeFormat;
+
+function fakeDateTimeFormat(timeZone: string): Intl.DateTimeFormat {
+  const real = new NativeDateTimeFormat();
+  const options = real.resolvedOptions();
+  real.resolvedOptions = () => ({ ...options, timeZone });
+  return real;
+}
+
 describe('SignUpForm', () => {
   beforeEach(() => {
-    vi.spyOn(Intl, 'DateTimeFormat').mockReturnValue({
-      resolvedOptions: () => ({ timeZone: 'Africa/Nairobi' }),
-    } as unknown as Intl.DateTimeFormat);
+    vi.spyOn(Intl, 'DateTimeFormat').mockReturnValue(fakeDateTimeFormat('Africa/Nairobi'));
   });
 
   afterEach(() => {
