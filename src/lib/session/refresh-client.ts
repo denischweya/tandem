@@ -3,7 +3,7 @@
 /**
  * THE ONLY refresh initiator in the web app. Nothing on the server refreshes - not
  * middleware, not a Server Component, not a data handler (`src/server/session.ts`'s
- * `getSession()` reports `{status: 'expired'}` and stops there).
+ * `getSession()` reports `{status: 'expired'}` on a 401 and stops there).
  *
  * Why: a page load fans out N server-side fetches (RSC renders plus route handlers), all
  * reading the same refresh cookie value. Against an expired access token they would all 401
@@ -31,51 +31,63 @@
  *     global sign-out, because the server-side chain revocation only fires on a token that
  *     was already rotated by THIS browser.
  *
- * FIX ROUND 1, MINOR (and FIX ROUND 2, IMPORTANT I-C, which reopened this): round 1 fixed a
- * follower that could hang FOREVER if the leading tab vanished before posting a `result`, by
- * giving up after `FOLLOWER_TIMEOUT_MS` and falling through to performing its OWN
- * `/auth/refresh` attempt - the same action the no-BroadcastChannel path takes.
+ * FIX ROUND 1 / ROUND 2 (Important I-C): a follower that gives up waiting for the leader's
+ * `result` broadcast does NOT perform its own `/auth/refresh` - it re-reads
+ * `GET /api/auth/session` and reports THAT instead, because a session read taken while a
+ * leader is still working is indistinguishable from one taken against a leader that already
+ * died; refreshing in either case risks presenting the SAME `tandem_rt` the (possibly still
+ * in-flight) leader is also presenting.
  *
- * MEASURED to reopen the exact disease this file exists to prevent: with a HEALTHY leader on
- * an 8-second round trip and the then-5-second timeout, the follower's own attempt fired at
- * 5.001s while the leader's was STILL in flight - two concurrent `POST /auth/refresh` calls
- * presenting the SAME `tandem_rt` value, which is precisely §9.1.1's Rotated/RevokeChain
- * case: one wins, the other is read as a replay and the API deletes every access token the
- * user holds. A follower cannot distinguish "the leader died" from "the leader is just slow"
- * from silence alone - no fixed deadline is immune to a leader slower than it, and a longer
- * deadline only narrows the window, it does not close it.
+ * FIX ROUND 3 (Important): round 2's docblock claimed a later fresh call "starts a clean
+ * round against a token nobody is mid-flight on" - MEASURED FALSE for the interval between
+ * the follower's own timeout and the leader's actual completion. The bug: a single flag
+ * (`anotherTabIsLeading`) was reset to `false` the moment a follower gave UP WAITING, which
+ * is a different event from the leader ACTUALLY FINISHING. A fresh `refreshSession()` call
+ * in that tab after the reset - a retried action, a navigation - read "nobody is leading"
+ * and became a leader itself, presenting `tandem_rt` concurrently with a leader that was
+ * simply slow, not dead:
  *
- * THE FIX: on timeout, the follower does NOT perform its own `/auth/refresh` at all. It
- * re-reads `GET /api/auth/session` instead and reports THAT as the final answer:
- *   - `signedIn` -> resolve `true`. The leader already succeeded (its cookies are live); no
- *     refresh is needed, and none is attempted.
- *   - anything else -> resolve `false`. Nothing is known to have changed, so nothing is
- *     assumed; `useSession` is left to react to `false` the way it already does (write
- *     `signedOut`). The refresh token itself is never touched by this tab in this round, so
- *     whatever the leader is doing with it - succeeding, failing, or still mid-flight -
- *     happens with no second presenter. A later, FRESH call to `refreshSession()` (the next
- *     page visit, the next retried action) starts a clean round against a token nobody is
- *     mid-flight on, which is what actually resolves a truly dead leader - not a guess made
- *     at the moment of this timeout.
+ *   after timeout:                           [POST /auth/refresh, GET /auth/session]
+ *   fresh call while leader still in flight:  [POST /auth/refresh, GET /auth/session,
+ *                                              POST /auth/refresh]   <- two concurrent POSTs
  *
- * This is a DELIBERATE narrowing of what round 1's fix claimed: "the follower can then
- * legitimately claim and refresh" is not implemented here, because it is exactly the action
- * that reopens the double-rotation path for any leader slower than the deadline - proven by
- * `refresh-client.test.ts`'s "a slow but healthy leader must produce no second refresh" case,
- * which a session-check-then-refresh-anyway design cannot pass (the session read, taken
- * while the access token is still the pre-refresh one, reports `expired` regardless of
- * whether the leader is dead or merely slow - there is no observable difference between the
- * two from this tab until the leader's OWN request settles). Settling for "the slot never
- * gets stuck" rather than "a dead leader's refresh is transparently completed by someone
- * else" is the trade this file now makes, and it is the one round 1's own test had backwards:
- * that test asserted the second fetch as the DESIRED outcome, which was the test agreeing
- * with the bug.
+ * THE FIX separates two questions a single flag was conflating:
+ *   - WHEN DO I STOP WAITING AND ANSWER? `FOLLOWER_TIMEOUT_MS`, unchanged. This gates a READ
+ *     only - it presents no token - so it stays short, and giving up here never by itself
+ *     allows a refresh.
+ *   - WHEN MAY THIS TAB CLAIM LEADERSHIP (PRESENT THE TOKEN) AGAIN? `CLAIM_BOUND_MS`, a much
+ *     larger ABSOLUTE bound measured from the moment a `claim` was last heard with no
+ *     `result` since - not from a follower's own wait giving up. `leaderClaimedAt` (a
+ *     timestamp, not a boolean) is what is now reset, and only once `CLAIM_BOUND_MS` has
+ *     elapsed since it was set - never merely because one follower stopped waiting.
+ *
+ * `CLAIM_BOUND_MS = 30_000`, argued rather than asserted: this is a single DB-backed POST to
+ * a token-rotation endpoint, not a long-running operation - even on a poor connection, under
+ * server load, or through a retrying lower layer, 30 seconds is far beyond the time such a
+ * request plausibly takes to either complete or definitively fail at the transport level
+ * (`fetch` surfaces a connection failure in well under that on every realistic network).
+ * It is also short enough that a genuinely abandoned leader (the tab was closed, not merely
+ * slow) does not block this tab from attempting its own refresh for an unreasonable span of
+ * real time. Unlike `FOLLOWER_TIMEOUT_MS` in round 2's now-deleted claim, this number is not
+ * asked to distinguish "dead" from "slow" at the moment it is read - it only has to be longer
+ * than any plausible single request, which is a much easier bar to argue and does not need
+ * to be perfect: if it is ever too short for a genuinely slow-but-alive leader, the cost is
+ * the SAME bounded, recoverable double-rotation the no-BroadcastChannel path already accepts
+ * (one tab's chain revoked, that tab signs back in) - not a silent correctness violation.
+ *
+ * A fresh call inside the leftover window (the claim is still within `CLAIM_BOUND_MS`, but
+ * THIS call's own `waitForLeaderResult` has separately timed out) re-reads the session again
+ * rather than claiming - `refresh-client.test.ts`'s "a fresh initiation inside the leftover
+ * window" case proves this directly: still exactly one `/auth/refresh` POST across two
+ * separate `refreshSession()` calls in the same tab.
  *
  * Still a DELIBERATE departure from `tandem-mobile/src/session/sessionStore.ts`'s "no
- * timers" position, for the reason round 1 gave: this timer exists purely to stop a wait that
- * would otherwise never end, not to poll a healthy session.
+ * timers" position, for the reason round 1 gave: these timers exist purely to stop a wait
+ * (and a claim's honoured lifetime) that would otherwise never end, not to poll a healthy
+ * session.
  */
 const FOLLOWER_TIMEOUT_MS = 5_000;
+const CLAIM_BOUND_MS = 30_000;
 
 type BroadcastMessage =
   { readonly type: 'claim' } | { readonly type: 'result'; readonly ok: boolean };
@@ -84,8 +96,13 @@ const CHANNEL_NAME = 'tandem:refresh-session';
 
 let localInFlight: Promise<boolean> | null = null;
 
-/** True once this tab has heard another tab's `claim` with no `result` yet seen for it. */
-let anotherTabIsLeading = false;
+/**
+ * `Date.now()` of the most recently heard `claim` with no `result` seen since, or `null` if
+ * none is outstanding. A TIMESTAMP, not a boolean (round 2's `anotherTabIsLeading`) - see this
+ * module's own docblock for why a boolean conflated "stopped waiting" with "no longer
+ * honoured" and reopened the double-rotation this file exists to prevent.
+ */
+let leaderClaimedAt: number | null = null;
 
 let followerResolvers: Array<(ok: boolean) => void> = [];
 
@@ -95,14 +112,20 @@ const channel: BroadcastChannel | null =
 if (channel !== null) {
   channel.onmessage = (event: MessageEvent<BroadcastMessage>) => {
     if (event.data.type === 'claim') {
-      anotherTabIsLeading = true;
+      leaderClaimedAt = Date.now();
       return;
     }
-    anotherTabIsLeading = false;
+    leaderClaimedAt = null;
     const resolvers = followerResolvers;
     followerResolvers = [];
     for (const resolve of resolvers) resolve(event.data.ok);
   };
+}
+
+/** Is another tab's claim still within its honoured window? The ONLY gate on whether a fresh
+ *  call may present the refresh token itself - never a follower's own wait giving up. */
+function anotherClaimIsHonoured(): boolean {
+  return leaderClaimedAt !== null && Date.now() - leaderClaimedAt < CLAIM_BOUND_MS;
 }
 
 async function postRefresh(): Promise<boolean> {
@@ -143,10 +166,12 @@ async function isSignedInAccordingToServer(): Promise<boolean> {
 
 /**
  * Waits for the leading tab's `result` broadcast. Resolves with that outcome, OR with `null`
- * if `FOLLOWER_TIMEOUT_MS` elapses first - the leader-vanished-or-merely-slow case, where
- * `run()` below reads the server's own session state rather than guessing. A late result
- * arriving after the timeout finds no waiter left (removed below) and is silently dropped -
- * correct, since this tab already settled on the session-read's answer by then.
+ * if `FOLLOWER_TIMEOUT_MS` elapses first - the caller-waited-long-enough case, where `run()`
+ * below reads the server's own session state rather than guessing. A late result arriving
+ * after the timeout finds no waiter left (removed below) and is silently dropped - correct,
+ * since this tab already settled on the session-read's answer by then. This timeout is
+ * UNRELATED to `CLAIM_BOUND_MS` - giving up here never by itself permits a new claim; see
+ * this module's own docblock.
  */
 function waitForLeaderResult(): Promise<boolean | null> {
   return new Promise<boolean | null>((resolve) => {
@@ -174,18 +199,17 @@ function waitForLeaderResult(): Promise<boolean | null> {
 }
 
 async function run(): Promise<boolean> {
-  if (channel !== null && anotherTabIsLeading) {
+  if (channel !== null && anotherClaimIsHonoured()) {
     const outcome = await waitForLeaderResult();
     if (outcome !== null) return outcome;
 
-    // Timed out. The leader's claim might still be genuinely active (it may simply be slow -
-    // nothing observable here distinguishes that from dead), so this tab does NOT touch
-    // `/auth/refresh` itself. It only asks the server what is currently true, and that
-    // answer - not a refresh attempt - is this call's result. `anotherTabIsLeading` is reset
-    // so a LATER, fresh `refreshSession()` call (not this one) is free to become a new
-    // leader against a token nobody is then mid-flight on.
-    anotherTabIsLeading = false;
-    return isSignedInAccordingToServer();
+    // This call's own wait gave up, but the CLAIM itself may still be within its honoured
+    // window - the leader may simply be slow, and nothing here distinguishes that from
+    // dead. Re-check rather than falling through to a fresh claim unconditionally.
+    if (anotherClaimIsHonoured()) {
+      return isSignedInAccordingToServer();
+    }
+    // The claim's own bound has ALSO now elapsed - fall through to becoming a fresh leader.
   }
 
   if (channel !== null) channel.postMessage({ type: 'claim' } satisfies BroadcastMessage);

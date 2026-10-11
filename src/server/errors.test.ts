@@ -114,4 +114,27 @@ describe('fieldErrorsFor', () => {
       expect(fieldErrorsFor(status, { message: 'm', errors: { x: ['y'] } })).toEqual({ x: 'y' });
     },
   );
+
+  it('drops a blank or whitespace-only first message per field, mirroring userMessageFor (fix round 3, M-A)', () => {
+    // userMessageFor's own docblock calls its non-blank guard "load-bearing, not decoration"
+    // because abort(403) parses as ''. fieldErrorsFor had no equivalent guard - MEASURED
+    // end-to-end: reset-password 422 with envelope {message:'', errors:{token:['   '],
+    // email:['']}} related {"errors":{"token":"   ","email":""}} verbatim, which Task 11's
+    // setError(field, {message: ''}) would render as a blank error element. Field-by-field
+    // here: a field whose ONLY candidate message is blank/whitespace is dropped entirely
+    // (not given an empty string), same as userMessageFor falling through to house copy for
+    // a blank authored message.
+    expect(
+      fieldErrorsFor(422, {
+        message: '',
+        errors: { token: ['   '], email: [''], password: ['too short'] },
+      }),
+    ).toEqual({ password: 'too short' });
+  });
+
+  it('returns null rather than {} when every field only had a blank or whitespace message', () => {
+    expect(
+      fieldErrorsFor(422, { message: '', errors: { token: ['   '], email: [''] } }),
+    ).toBeNull();
+  });
 });

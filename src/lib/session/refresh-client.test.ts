@@ -220,13 +220,25 @@ describe('refreshSession - two tabs', () => {
       expect(refreshMock).toHaveBeenCalledTimes(1);
       expect(sessionMock).toHaveBeenCalledTimes(1);
 
-      // The follower tab's OWN slot must also have reset, not just this one call's
-      // promise - a later, FRESH attempt in the same tab can still genuinely refresh,
-      // against a token nobody is mid-flight on by then.
+      // FIX ROUND 3: a SECOND call shortly after (still well inside CLAIM_BOUND_MS, 30s,
+      // since the original claim) must NOT yet refresh - the claim is still honoured, since
+      // nothing distinguishes "dead" from "merely very slow" this soon. It becomes another
+      // follower and reads session again - still only the leader's original, doomed attempt
+      // has ever touched /auth/refresh.
+      const resultBSoonAfter = tabB.refreshSession();
+      await vi.advanceTimersByTimeAsync(5_001); // this call's own wait also gives up.
+      await expect(resultBSoonAfter).resolves.toBe(false);
+      expect(refreshMock).toHaveBeenCalledTimes(1);
+      expect(sessionMock).toHaveBeenCalledTimes(2);
+
+      // Only once the claim's own ABSOLUTE bound has fully elapsed (30s since the original
+      // claim; already ~15s in) does a fresh call become a genuine new leader - the slot
+      // really does reset eventually, just not at either follower's own, shorter deadline.
+      await vi.advanceTimersByTimeAsync(20_000); // total elapsed since claim: ~35s.
       refreshMock.mockResolvedValue(new Response(null, { status: 200 }));
-      const resultBAgain = tabB.refreshSession();
+      const resultBMuchLater = tabB.refreshSession();
       await vi.advanceTimersByTimeAsync(0);
-      await expect(resultBAgain).resolves.toBe(true);
+      await expect(resultBMuchLater).resolves.toBe(true);
       expect(refreshMock).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
@@ -278,6 +290,110 @@ describe('refreshSession - two tabs', () => {
 
       // THE assertion: still exactly one call to /auth/refresh across the whole scenario.
       expect(refreshMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 2000);
+
+  it('a fresh initiation inside the leftover window re-reads session rather than claiming (fix round 3, Important)', async () => {
+    // Round 2's docblock claimed a fresh call after a follower's own timeout "starts a
+    // clean round against a token nobody is mid-flight on." MEASURED FALSE: resetting
+    // `anotherTabIsLeading` the moment ONE follower gave up waiting let a SECOND, later
+    // call in the same tab become a leader itself while the ORIGINAL leader was still
+    // genuinely working -
+    //   after timeout:      [POST /auth/refresh, GET /auth/session]
+    //   fresh call at 6s:   [POST /auth/refresh, GET /auth/session, POST /auth/refresh]
+    // two concurrent POSTs presenting the same tandem_rt. THE FIX: the claim's own
+    // honoured window (`CLAIM_BOUND_MS`, far longer than `FOLLOWER_TIMEOUT_MS`) is tracked
+    // separately from any one follower's wait giving up, so a fresh call inside the
+    // leftover interval re-reads the session again instead.
+    vi.useFakeTimers();
+    try {
+      const leaderGate = deferred<Response>();
+      const refreshMock = vi.fn().mockReturnValue(leaderGate.promise);
+      const sessionMock = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ status: 'expired' }), { status: 200 }));
+      const fetchMock = vi.fn((url: string) => {
+        if (url === '/api/auth/refresh') return refreshMock();
+        if (url === '/api/auth/session') return sessionMock();
+        throw new Error(`unexpected fetch url: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const tabA = await import('./refresh-client');
+      vi.resetModules();
+      const tabB = await import('./refresh-client');
+
+      const resultA = tabA.refreshSession(); // the leader; 8s round trip, still slow not dead.
+      const resultB1 = tabB.refreshSession(); // follower, first call.
+
+      // B's own wait gives up at 5s and reads session (still expired - A hasn't finished).
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(refreshMock).toHaveBeenCalledTimes(1);
+      await expect(resultB1).resolves.toBe(false);
+
+      // A FRESH call in tab B at 6s - e.g. a retried action, a navigation - while A is
+      // STILL in flight (A finishes at 8s). This is the exact scenario the Important fix
+      // targets: the claim from A is still within CLAIM_BOUND_MS (30s), so B must become a
+      // follower again (wait, then re-read) rather than presenting tandem_rt itself.
+      await vi.advanceTimersByTimeAsync(1_000); // now at 6s
+      const resultB2 = tabB.refreshSession();
+
+      // A finishes at 8s - two seconds after B2 started waiting (B2's own 5s deadline
+      // would be 11s, so A's result arrives first).
+      await vi.advanceTimersByTimeAsync(2_000); // now at 8s
+      leaderGate.resolve(new Response(null, { status: 200 }));
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(resultA).resolves.toBe(true);
+      await expect(resultB2).resolves.toBe(true); // B2 got A's real result via the broadcast.
+
+      // THE assertion: still exactly ONE /auth/refresh POST across the whole scenario -
+      // both of tab B's calls (the timed-out one and the fresh one) answered without ever
+      // presenting tandem_rt themselves.
+      expect(refreshMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 2000);
+
+  it('the session-read recovery branch actually reports signedIn (fix round 3, M-D)', async () => {
+    // Both shipped tests above feed the session read {status: 'expired'} - nothing exercised
+    // the branch that makes the read useful at all. MEASURED: replacing
+    // isSignedInAccordingToServer's real fetch with a stub that always returns false left
+    // the suite green before this test existed. This is the case where the leader actually
+    // succeeded (its cookies are live) but its broadcast was lost - the follower must read
+    // `true` from the session check and must NOT have refreshed itself either.
+    vi.useFakeTimers();
+    try {
+      const leaderNeverBroadcasts = new Promise<Response>(() => {
+        // The leader's own fetch resolved successfully from the SERVER's point of view
+        // (cookies were set), but this promise standing in for it never settles here -
+        // modelling a lost/never-sent broadcast rather than a failed request.
+      });
+      const refreshMock = vi.fn().mockReturnValue(leaderNeverBroadcasts);
+      const sessionMock = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ status: 'signedIn' }), { status: 200 }));
+      const fetchMock = vi.fn((url: string) => {
+        if (url === '/api/auth/refresh') return refreshMock();
+        if (url === '/api/auth/session') return sessionMock();
+        throw new Error(`unexpected fetch url: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const tabA = await import('./refresh-client');
+      vi.resetModules();
+      const tabB = await import('./refresh-client');
+
+      void tabA.refreshSession();
+      const resultB = tabB.refreshSession();
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      await expect(resultB).resolves.toBe(true);
+      expect(refreshMock).toHaveBeenCalledTimes(1); // only the leader's own attempt, ever.
     } finally {
       vi.useRealTimers();
     }

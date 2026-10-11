@@ -16,10 +16,13 @@ export type SessionReadResult =
  * Thrown by `getSession()` for anything that is NOT one of `SessionReadResult`'s three
  * states - a non-401 error status, a transport failure, or a 2xx body that failed to parse.
  * Mirrors `useSession.ts`'s `SessionFetchError` on the client side of the exact same fix (see
- * `getSession`'s own docblock for why there is no fourth state to return instead): a Server
- * Component that calls `getSession()` and lets this escape hits the nearest `error.tsx`
- * boundary, which is the correct outcome for "the API is down" - not a signal this module
- * manufactures meaning for.
+ * `getSession`'s own docblock for why there is no fourth state to return instead): in Next's
+ * App Router, an uncaught throw during a Server Component's render is caught by the nearest
+ * `error.tsx` boundary ABOVE it in the route tree - the framework mechanism, not a claim
+ * about this repo. `getSession()` has no production caller yet (noted in fix round 3) and no
+ * `error.tsx` exists anywhere under `src/app` today, so nothing currently catches this -
+ * Task 11, whichever task gives `getSession()` its first caller, is where that boundary (or a
+ * caller-side try/catch) actually gets built, not here.
  */
 export class SessionReadError extends Error {
   constructor(readonly status: number) {

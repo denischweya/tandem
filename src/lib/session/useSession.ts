@@ -76,19 +76,25 @@ export function SessionProvider({ children }: { children: ReactNode }): ReactNod
  * successful refresh, picking up the new `signedIn` state) or writes `signedOut` directly
  * (on failure) rather than refetching.
  *
- * FIX ROUND 2, M3: this used to justify the direct `signedOut` write with "the BFF already
- * cleared both cookies on that failure, so a refetch would land on signedOut anyway" - true
- * ONLY for `refreshSession()` resolving `false` via a 401 (refresh round 2, Important 3:
- * `refreshHandler` clears cookies on a 401 and ONLY a 401). It is false for the other two
- * ways `refreshSession()` can resolve `false` since this task's fix rounds: a transport
- * failure (cookies deliberately left untouched - a network blip is never evidence the
- * credential is bad) and a timed-out follower's session read coming back non-`signedIn`
- * (round 2, Important I-C - which may mean the leader is still working, not that it failed).
- * In both of those, this still writes `signedOut` into the cache while both cookies may well
- * be intact - a known, accepted rough edge of reading one `boolean` back from
- * `refreshSession()` rather than the richer outcome it discards, not fixed here because the
- * alternative (refetch `/api/auth/session` instead of guessing) risks an infinite retry loop
- * against a genuinely down API, which `refreshed === false` -> `signedOut` at least bounds.
+ * FIX ROUND 2, M3 (and corrected again in round 3 - the prior correction itself undercounted):
+ * this used to justify the direct `signedOut` write with "the BFF already cleared both
+ * cookies on that failure, so a refetch would land on signedOut anyway" - true ONLY for
+ * `refreshSession()` resolving `false` via a 401 (round 2's Important 3: `refreshHandler`
+ * clears cookies on a 401 and ONLY a 401). There are THREE other ways `refreshSession()`
+ * resolves `false`, not two as round 2's correction said - the omitted one is the LARGEST
+ * class and the one round 1's Important 3 fix deliberately made non-terminal:
+ *   1. a non-401 error status (429, 500, 503) from `refreshHandler` - cookies deliberately
+ *      left untouched, because the refresh token itself was never examined;
+ *   2. a transport failure relayed as a bare 502 - cookies also untouched, for the same
+ *      reason a network blip is never evidence the credential is bad;
+ *   3. a timed-out follower's session read coming back non-`signedIn` (round 2/3's
+ *      Important I-C) - which may mean the leader is still working, not that it failed, and
+ *      touches no cookie at all either way.
+ * In all three, this still writes `signedOut` into the cache while both cookies may well be
+ * intact - a known, accepted rough edge of reading one `boolean` back from `refreshSession()`
+ * rather than the richer outcome it discards, not fixed here because the alternative (refetch
+ * `/api/auth/session` instead of guessing) risks an infinite retry loop against a genuinely
+ * down API, which `refreshed === false` -> `signedOut` at least bounds.
  */
 export function useSession(): UseQueryResult<SessionResult> {
   const queryClient = useQueryClient();

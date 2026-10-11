@@ -75,10 +75,21 @@ function authorsItsOwnMessage(status: number): boolean {
   return Object.hasOwn(AUTHORS_ITS_OWN_MESSAGE, status);
 }
 
-/** House copy for a status this API does not author a sentence for, and for the two local
- *  failure modes (`contractErrorMessage`'s caller, a transport failure) that never reach the
- *  API at all. Never logged, never templated with any backend text - a constant string. */
+/**
+ * House copy for a status this API does not author a sentence for, and for a 2xx body that
+ * fails to parse against the schema a handler expected (`handlers.ts`'s `parseEnvelopeData`
+ * returning `null` - the contract and the server disagree). Never logged, never templated
+ * with any backend text - a constant string.
+ *
+ * FIX ROUND 3, M-B: this docblock used to say `HOUSE_SERVER_MESSAGE` also covers "a transport
+ * failure", citing a `contractErrorMessage` that does not exist anywhere in this repo (M3's
+ * sweep for stale docblocks missed this one, in the same file M5 made it stale in - M5 moved
+ * `relayFailure`'s `transportFailure` branch to `HOUSE_NETWORK_MESSAGE`, four lines below,
+ * which is what actually covers that case now).
+ */
 export const HOUSE_SERVER_MESSAGE = 'Something went wrong on our end. Please try again.';
+/** House copy for a transport failure (`fetch` itself threw - never reached the API at all).
+ *  `relayFailure`'s `transportFailure` branch is the one production call site. */
 export const HOUSE_NETWORK_MESSAGE =
   "We couldn't reach Tandem. Check your connection and try again.";
 
@@ -109,6 +120,26 @@ export function userMessageFor(status: number, envelope: ErrorEnvelope | null): 
 }
 
 /**
+ * FIX ROUND 3: `userMessageFor` and `fieldErrorsFor` make several INDEPENDENT decisions about
+ * the same envelope, and this task has now found a gate present in one and missing in the
+ * other FOUR times (round 2 Important 1's status gate; round 3 M-A's blank-message guard, and
+ * two earlier rounds' narrower instances of the same shape elsewhere in this file). Written
+ * down once, side by side, rather than re-derived the next time one of them changes:
+ *
+ *                                  userMessageFor            fieldErrorsFor
+ *   Gates on authorsItsOwnMessage   YES (unauthored -> house)  YES (unauthored -> null) - SAME allowlist, same table.
+ *   Gates on envelope === null      YES (-> house)              YES, via `envelope?.errors === undefined` (null envelope has no .errors either) - same outcome, different-shaped check because `errors` is optional on the schema and `message` is not.
+ *   Unit of decision                ONE value (the message)    MANY values (one per field key) - the structural difference everything else follows from.
+ *   Blank/whitespace guard          YES (`.trim().length > 0`) YES as of M-A (`.trim().length > 0`) - now the SAME test, applied per-field instead of once.
+ *   Array unwrapping                n/a (message is never an array) YES (`messages[0]`) - `errors` values are `string[]`, `message` never is.
+ *   Returned value on the happy path  the ORIGINAL `envelope.message`, untrimmed (trim is only the emptiness test) - the ORIGINAL `first`, untrimmed, for the same reason. AGREE.
+ *   Fallback when nothing survives   HOUSE_SERVER_MESSAGE - ALWAYS returns a string, because a handler always has SOMETHING to tell a user.   `null` - no "house copy for field errors" exists, because there is no field to blame once the real ones are gone; the caller (`relayFailure`) simply omits `errors` from the body rather than inventing one.
+ *
+ * The next new decision either function needs should be added to BOTH rows of whichever line
+ * it belongs to, in the same edit, rather than drifting apart again.
+ */
+
+/**
  * First message per field, ready for a form's field-level error state (Task 11). Kept here
  * rather than only inline in `handlers.ts` because the shape (`Record<string, string[]>` ->
  * `Record<string, string>`) is exactly the one `tandem-mobile/src/api/errors.ts` already
@@ -134,7 +165,12 @@ export function fieldErrorsFor(
   const out: Record<string, string> = {};
   for (const [field, messages] of Object.entries(envelope.errors)) {
     const first = messages[0];
-    if (first !== undefined) out[field] = first;
+    // FIX ROUND 3, M-A: `userMessageFor`'s non-blank guard is called "load-bearing, not
+    // decoration" in its own docblock, for the identical reason - `abort(403)` parses as
+    // `''`. This had no equivalent guard: `messages[0] !== undefined` admits `''` and
+    // `'   '`, which Task 11's `setError(field, {message: ''})` would render as a blank
+    // error element. `.trim().length > 0`, same test `userMessageFor` makes.
+    if (first !== undefined && first.trim().length > 0) out[field] = first;
   }
   return Object.keys(out).length > 0 ? out : null;
 }
