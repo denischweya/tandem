@@ -13,7 +13,12 @@ import {
 import { callApi, type ApiCallResult } from './apiFetch';
 import { clearedSetCookies, readSessionCookies, sessionSetCookies } from './cookies';
 import { assertSameOrigin } from './csrf';
-import { fieldErrorsFor, HOUSE_SERVER_MESSAGE, userMessageFor } from './errors';
+import {
+  fieldErrorsFor,
+  HOUSE_NETWORK_MESSAGE,
+  HOUSE_SERVER_MESSAGE,
+  userMessageFor,
+} from './errors';
 
 /**
  * Eight route handlers, each `(request: Request) => Promise<Response>` and NONE of them
@@ -79,11 +84,23 @@ function withSetCookies(
   return response;
 }
 
-function zodFieldErrors(error: z.ZodError): Record<string, string[]> {
-  const out: Record<string, string[]> = {};
+/**
+ * FIX ROUND 2, M1: used to build `Record<string, string[]>` (every issue per field). MEASURED
+ * by the reviewer: `POST /auth/register`'s local-validation 422 produced
+ * `errors: {email: ["must look like an email address"]}` (array) while the SAME route's
+ * backend-sourced 422 (through `relayFailure` -> `fieldErrorsFor`, gated in Important 1 this
+ * round) produced `errors: {email: "has already been taken"}` (bare string) - two shapes for
+ * the same field on the same route, with nothing pinning either and Task 11's forms as the
+ * consumer. Standardised on the BARE-STRING shape (first message per field) that
+ * `fieldErrorsFor`/`tandem-mobile/src/api/errors.ts` already use, since that is what
+ * React Hook Form's `setError(field, {message})` wants directly; first issue per field wins,
+ * matching `fieldErrorsFor`'s own "first message" rule.
+ */
+function zodFieldErrors(error: z.ZodError): Record<string, string> {
+  const out: Record<string, string> = {};
   for (const issue of error.issues) {
     const key = issue.path.length > 0 ? issue.path.join('.') : '_';
-    (out[key] ??= []).push(issue.message);
+    if (!(key in out)) out[key] = issue.message;
   }
   return out;
 }
@@ -126,11 +143,11 @@ function parseEnvelopeData<T>(json: unknown, schema: z.ZodType<T>): T | null {
 }
 
 /**
- * The shared error relay for every handler EXCEPT `resetPasswordHandler` (which forwards its
- * envelope intact - see that handler's own comment for why). Forwards `Retry-After` whenever
- * the API set one and nothing else; the message is `userMessageFor`'s authored-or-house-copy
- * choice, never the raw body, so an unauthored 4xx or a 5xx can never put backend text in
- * front of a user.
+ * The shared error relay for EVERY handler (fix round 2, M1: `resetPasswordHandler`'s own
+ * special-cased 422 is gone - it falls through to this, same as the other seven). Forwards
+ * `Retry-After` whenever the API set one and nothing else; the message is `userMessageFor`'s
+ * authored-or-house-copy choice, never the raw body, so an unauthored 4xx or a 5xx can never
+ * put backend text in front of a user.
  */
 function relayFailure(result: ApiCallResult): Response {
   if (result.kind === 'ok') {
@@ -140,14 +157,19 @@ function relayFailure(result: ApiCallResult): Response {
     return jsonResponse(502, { message: HOUSE_SERVER_MESSAGE });
   }
   if (result.kind === 'transportFailure') {
-    return jsonResponse(502, { message: HOUSE_SERVER_MESSAGE });
+    // FIX ROUND 2, M5: HOUSE_NETWORK_MESSAGE existed in errors.ts, exported, tested nowhere
+    // and used nowhere - the exact same "dead export" shape as fieldErrorsFor was before
+    // round 1 wired it up. This IS a network failure (fetch itself threw - never reached the
+    // API at all), not a server-side one, so it gets the copy written for that case rather
+    // than HOUSE_SERVER_MESSAGE's "something went wrong on our end".
+    return jsonResponse(502, { message: HOUSE_NETWORK_MESSAGE });
   }
   const headers: Record<string, string> = {};
   if (result.retryAfterSeconds !== null) headers['retry-after'] = String(result.retryAfterSeconds);
   const body: { message: string; errors?: Record<string, string> } = {
     message: userMessageFor(result.status, result.envelope),
   };
-  const fieldErrors = fieldErrorsFor(result.envelope);
+  const fieldErrors = fieldErrorsFor(result.status, result.envelope);
   if (fieldErrors !== null) body.errors = fieldErrors;
   return jsonResponse(result.status, body, headers);
 }
@@ -273,8 +295,15 @@ export async function refreshHandler(request: Request): Promise<Response> {
     return withClearedCookies(jsonResponse(401, { signedIn: false }));
   }
 
+  // FIX ROUND 2, M4: a bare jsonResponse(status, {signedIn: false}) with no headers argument
+  // dropped Retry-After on a 429 - the one header the browser's single-flight caller would
+  // actually want to back off on, on the one endpoint whose rate limit matters most.
   const status = result.kind === 'transportFailure' ? 502 : result.status;
-  return jsonResponse(status, { signedIn: false });
+  const extraHeaders: Record<string, string> = {};
+  if (result.kind === 'error' && result.retryAfterSeconds !== null) {
+    extraHeaders['retry-after'] = String(result.retryAfterSeconds);
+  }
+  return jsonResponse(status, { signedIn: false }, extraHeaders);
 }
 
 /**
@@ -323,21 +352,24 @@ export async function forgotPasswordHandler(request: Request): Promise<Response>
  * revoked every token the user held server-side, so the BFF's own idea of the session must
  * agree) and returns 204.
  *
- * A 422 - and ONLY a 422 - is forwarded with its envelope INTACT, deliberately NOT run
- * through `userMessageFor`/`fieldErrorsFor` the way every other failure here is. An invalid
- * reset token's `errors.token` carries the same sentence as `message`, and the page renders
- * it as a form-level message with a "Request a new link" action, never against the hidden
- * token input; reshaping the envelope here would be one more place that sentence has to stay
- * byte-for-byte in sync with the one the API actually sent.
+ * On a 422 - an invalid reset token - `errors.token` carries the same sentence as `message`,
+ * and the page renders it as a form-level message with a "Request a new link" action, never
+ * against the hidden token input.
  *
- * FIX ROUND 1, IMPORTANT 1: every other status (500, 503, …) goes through `relayFailure`
- * instead, exactly like every other handler. The original code forwarded `result.envelope`
- * intact at EVERY error status, which is a raw-backend-text leak (blueprint §135) for anything
- * that is not a 422 - `ErrorEnvelopeSchema` is a non-strict `z.object`, so a Laravel
- * debug-mode 500 carrying `{message: 'SQLSTATE[23000]: …'}` parsed as a valid envelope and
- * relayed verbatim. 422 is safe to forward intact only because it is already on
- * `userMessageFor`'s authored-status allowlist, so the two paths agree for every value the
- * API actually sends at that one status - that agreement does not extend to any other status.
+ * FIX ROUND 1, IMPORTANT 1: a 422 used to be special-cased here to forward `result.envelope`
+ * INTACT, with every other status going through `relayFailure`. The original code forwarded
+ * the envelope intact at EVERY status, which is a raw-backend-text leak (blueprint §135) for
+ * anything that is not a 422; round 1 narrowed the intact path to 422 only.
+ *
+ * FIX ROUND 2, M1: the special case is gone entirely now, folded into the SAME `relayFailure`
+ * every other handler uses. It can be, because 422 is on `userMessageFor`'s authored
+ * allowlist (so `message` still comes through verbatim) and `fieldErrorsFor` is now gated on
+ * the identical allowlist (Important 1, this round) and reshapes `errors` to the
+ * `Record<string, string>` shape `zodFieldErrors`'s local-validation 422 also now produces
+ * (M1) - so the three `errors` producers on this route agree on one shape rather than the
+ * two (`string[]` vs bare `string`) a reviewer found undistinguished. One fewer special case
+ * is also one fewer place the "right behaviour at one status, wrong elsewhere" shape can
+ * recur.
  */
 export async function resetPasswordHandler(request: Request): Promise<Response> {
   const csrfFailure = csrfGuard(request);
@@ -350,10 +382,6 @@ export async function resetPasswordHandler(request: Request): Promise<Response> 
 
   if (result.kind === 'ok') {
     return withClearedCookies(noBodyResponse(204));
-  }
-
-  if (result.kind === 'error' && result.status === 422) {
-    return jsonResponse(422, result.envelope ?? { message: HOUSE_SERVER_MESSAGE });
   }
 
   return relayFailure(result);

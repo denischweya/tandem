@@ -179,27 +179,31 @@ describe('refreshSession - two tabs', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('recovers when the leading tab vanishes without ever posting a result (fix round 1, Minor)', async () => {
-    // The original docblock named this residual and declined to fix it: "if the LEADING
-    // tab is closed ... before it posts its result message, a follower ... is left
-    // waiting on a promise that never settles - there is no timeout fallback." PROVEN
-    // worse than that sentence says: it is not just THIS wait that never settles - because
-    // run() returns that never-settling promise as `localInFlight`, the follower tab can
-    // NEVER refresh again for the life of the page. A SECOND call to refreshSession() in
-    // the same tab returns the SAME stuck promise (it is still non-null), and fetch is
-    // never called a second time - confirmed by timing this test out at 2s before the fix
-    // existed, with the assertions below never reached.
+  it('a DEAD leader (never posts a result) settles the follower via a session read, never a second /auth/refresh (fix round 2, Important I-C)', async () => {
+    // Round 1's fix fell through to the follower performing its OWN /auth/refresh POST on
+    // timeout. PROVEN by the reviewer to reopen the double-rotation disease this file
+    // exists to prevent, for any leader slower than the deadline - see this module's own
+    // docblock. The fix: a timed-out follower re-reads GET /api/auth/session and reports
+    // THAT, never presenting the refresh token itself. Here the leader is genuinely dead
+    // (its fetch never settles) and the session read correctly reports there is nothing
+    // live yet - `refresh` is called exactly ONCE (the leader's own, original, doomed
+    // attempt), never a second time from the follower.
     vi.useFakeTimers();
     try {
-      const neverResolves = new Promise<Response>(() => {
-        // The leading tab's fetch that never comes back - standing in for a leader tab
-        // that was closed (not just slow) before `postRefresh` returned.
+      const leaderNeverResolves = new Promise<Response>(() => {
+        // Stands in for a leader tab that was closed (not just slow) before its fetch
+        // returned - from the follower's point of view these are indistinguishable,
+        // which is exactly why the follower must not guess by refreshing.
       });
-      const fetchMock = vi
+      const refreshMock = vi.fn().mockReturnValue(leaderNeverResolves);
+      const sessionMock = vi
         .fn()
-        .mockReturnValueOnce(neverResolves)
-        .mockResolvedValueOnce(new Response(null, { status: 200 }))
-        .mockResolvedValue(new Response(null, { status: 200 }));
+        .mockResolvedValue(new Response(JSON.stringify({ status: 'expired' }), { status: 200 }));
+      const fetchMock = vi.fn((url: string) => {
+        if (url === '/api/auth/refresh') return refreshMock();
+        if (url === '/api/auth/session') return sessionMock();
+        throw new Error(`unexpected fetch url: ${url}`);
+      });
       vi.stubGlobal('fetch', fetchMock);
 
       const tabA = await import('./refresh-client');
@@ -211,17 +215,69 @@ describe('refreshSession - two tabs', () => {
 
       await vi.advanceTimersByTimeAsync(10_000);
 
-      await expect(resultB).resolves.toBe(true);
-      // Two calls: the leader's original attempt, plus the follower's own recovery
-      // attempt once it gave up waiting - not a third, so recovery does not retry forever
-      // either.
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      // Settles - no hang - via the session read's answer, NOT via a second refresh.
+      await expect(resultB).resolves.toBe(false);
+      expect(refreshMock).toHaveBeenCalledTimes(1);
+      expect(sessionMock).toHaveBeenCalledTimes(1);
 
       // The follower tab's OWN slot must also have reset, not just this one call's
-      // promise - otherwise the fix would only cover the single call under test here.
+      // promise - a later, FRESH attempt in the same tab can still genuinely refresh,
+      // against a token nobody is mid-flight on by then.
+      refreshMock.mockResolvedValue(new Response(null, { status: 200 }));
       const resultBAgain = tabB.refreshSession();
       await vi.advanceTimersByTimeAsync(0);
       await expect(resultBAgain).resolves.toBe(true);
+      expect(refreshMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 2000);
+
+  it('a SLOW BUT HEALTHY leader produces NO second refresh, even after the follower times out (fix round 2, Important I-C)', async () => {
+    // THE acceptance test for this fix: measured against round 1's design, a healthy
+    // leader on an 8-second round trip against a 5-second follower timeout produced a
+    // SECOND /auth/refresh at 5.001s while the first was still in flight - two concurrent
+    // presentations of the SAME refresh token, which is precisely the Rotated/RevokeChain
+    // case this file exists to prevent. The fix must survive exactly this scenario: no
+    // second POST to /auth/refresh, ever, regardless of what the follower's session read
+    // reports while the leader is still working (it will see the pre-refresh, still-
+    // expired state, same as if the leader were dead - there is no way to tell the two
+    // apart from here, which is the whole reason this design does not guess).
+    vi.useFakeTimers();
+    try {
+      const leaderGate = deferred<Response>();
+      const refreshMock = vi.fn().mockReturnValue(leaderGate.promise);
+      const sessionMock = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ status: 'expired' }), { status: 200 }));
+      const fetchMock = vi.fn((url: string) => {
+        if (url === '/api/auth/refresh') return refreshMock();
+        if (url === '/api/auth/session') return sessionMock();
+        throw new Error(`unexpected fetch url: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const tabA = await import('./refresh-client');
+      vi.resetModules();
+      const tabB = await import('./refresh-client');
+
+      const resultA = tabA.refreshSession(); // the leader; slow, not dead.
+      const resultB = tabB.refreshSession(); // the follower.
+
+      // Follower's timeout fires at 5s. The leader is STILL working (8s total).
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(refreshMock).toHaveBeenCalledTimes(1); // only the leader's own call, ever.
+      expect(sessionMock).toHaveBeenCalledTimes(1); // the follower's recovery read.
+
+      // The leader finally succeeds at 8s.
+      leaderGate.resolve(new Response(null, { status: 200 }));
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      await expect(resultA).resolves.toBe(true);
+      await expect(resultB).resolves.toBe(false); // settled earlier, from the session read.
+
+      // THE assertion: still exactly one call to /auth/refresh across the whole scenario.
+      expect(refreshMock).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

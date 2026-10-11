@@ -12,6 +12,22 @@ export type SessionReadResult =
   | { readonly status: 'expired' }
   | { readonly status: 'signedOut' };
 
+/**
+ * Thrown by `getSession()` for anything that is NOT one of `SessionReadResult`'s three
+ * states - a non-401 error status, a transport failure, or a 2xx body that failed to parse.
+ * Mirrors `useSession.ts`'s `SessionFetchError` on the client side of the exact same fix (see
+ * `getSession`'s own docblock for why there is no fourth state to return instead): a Server
+ * Component that calls `getSession()` and lets this escape hits the nearest `error.tsx`
+ * boundary, which is the correct outcome for "the API is down" - not a signal this module
+ * manufactures meaning for.
+ */
+export class SessionReadError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`);
+    this.name = 'SessionReadError';
+  }
+}
+
 function parseUser(json: unknown): z.infer<typeof UserSchema> | null {
   const parsed = z.object({ data: UserSchema }).safeParse(json);
   return parsed.success ? parsed.data.data : null;
@@ -32,6 +48,17 @@ function parseUser(json: unknown): z.infer<typeof UserSchema> | null {
  * so this never attempts one. `{status: 'expired'}` is the signal a page acts on by rendering
  * a small client component that calls `refreshSession()` and then `router.refresh()` - one
  * extra round trip on an expired access token, and zero cookie writes during a render.
+ *
+ * FIX ROUND 2, IMPORTANT 3 (reopened - the second half of the same defect round 1 fixed in
+ * `sessionHandler`, one file over): this used to map EVERY non-ok `callApi` result to
+ * `expired`, including a 429/500/503/transport failure that never examined the access token
+ * at all. `expired` is exactly the signal that drives a browser-side `refreshSession()` call
+ * per this docblock's own next paragraph - so a Server Component render during a brief API
+ * outage walked straight into a refresh attempt for a credential that was never actually
+ * invalid, the identical shape `sessionHandler`'s Important 3 fix already closed on the
+ * client-fetched path. Only a 401 - and ONLY a 401 - now reports `expired`; everything else
+ * (a non-401 error, a transport failure, or a 2xx body that fails to parse) throws
+ * `SessionReadError` instead, so it never reaches that signal.
  */
 export async function getSession(): Promise<SessionReadResult> {
   const headerBag = await headers();
@@ -39,10 +66,16 @@ export async function getSession(): Promise<SessionReadResult> {
   if (access === null) return { status: 'signedOut' };
 
   const result = await callApi('/me', { method: 'GET', bearer: access });
-  if (result.kind !== 'ok') return { status: 'expired' };
 
-  const user = parseUser(result.json);
-  if (user === null) return { status: 'expired' };
+  if (result.kind === 'ok') {
+    const user = parseUser(result.json);
+    if (user !== null) return { status: 'signedIn', user };
+    throw new SessionReadError(502);
+  }
 
-  return { status: 'signedIn', user };
+  if (result.kind === 'error' && result.status === 401) {
+    return { status: 'expired' };
+  }
+
+  throw new SessionReadError(result.kind === 'transportFailure' ? 502 : result.status);
 }

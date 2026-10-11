@@ -70,16 +70,16 @@ describe('userMessageFor', () => {
 
 describe('fieldErrorsFor', () => {
   it('returns null when the envelope is null', () => {
-    expect(fieldErrorsFor(null)).toBeNull();
+    expect(fieldErrorsFor(422, null)).toBeNull();
   });
 
   it('returns null when there is no errors map', () => {
-    expect(fieldErrorsFor({ message: 'Unauthenticated.' })).toBeNull();
+    expect(fieldErrorsFor(422, { message: 'Unauthenticated.' })).toBeNull();
   });
 
-  it('takes the FIRST message per field', () => {
+  it('takes the FIRST message per field, at an authored status (422)', () => {
     expect(
-      fieldErrorsFor({
+      fieldErrorsFor(422, {
         message: 'The given data was invalid.',
         errors: { email: ['taken'], password: ['too short', 'required'] },
       }),
@@ -87,6 +87,31 @@ describe('fieldErrorsFor', () => {
   });
 
   it('returns null for an empty errors map rather than an empty object', () => {
-    expect(fieldErrorsFor({ message: 'The given data was invalid.', errors: {} })).toBeNull();
+    expect(fieldErrorsFor(422, { message: 'The given data was invalid.', errors: {} })).toBeNull();
   });
+
+  it.each([400, 404, 405, 409, 419, 500, 502, 503])(
+    'gates on the SAME authored-status allowlist as userMessageFor, so an unauthored status (%i) never relays errors (fix round 2, Important 1 reopened)',
+    (status) => {
+      // MEASURED by the reviewer at handlers.ts:150 before this fix: relayFailure called
+      // fieldErrorsFor with no status allowlist at all, so RESET /auth/reset-password
+      // 500 -> {"message": houseCopy, "errors": {"token": "RAW-BACKEND-TEXT-500
+      // SQLSTATE[23000]"}} relayed raw backend text through `errors` even though `message`
+      // was already correctly gated in round 1 - the identical "right behaviour at 422,
+      // wrong everywhere else" shape Important 1 was raised to close, one field over.
+      expect(
+        fieldErrorsFor(status, {
+          message: 'some message',
+          errors: { token: ['RAW-BACKEND-TEXT SQLSTATE[23000]: duplicate key value'] },
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it.each([401, 403, 422, 429])(
+    'relays errors at every authored status (%i), not just 422',
+    (status) => {
+      expect(fieldErrorsFor(status, { message: 'm', errors: { x: ['y'] } })).toEqual({ x: 'y' });
+    },
+  );
 });

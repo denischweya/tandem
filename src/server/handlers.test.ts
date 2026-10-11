@@ -179,6 +179,23 @@ describe('loginHandler', () => {
     expect(response.headers.get('retry-after')).toBe('540');
   });
 
+  it('answers a transport failure with the NETWORK house copy, not the server one (fix round 2, M5)', async () => {
+    // HOUSE_NETWORK_MESSAGE was an exported, tested-nowhere, used-nowhere dead export - the
+    // same shape fieldErrorsFor was in before round 1 wired it up. A transport failure never
+    // reached the API at all, so it should read as "we couldn't reach Tandem", not "something
+    // went wrong on our end".
+    callApi.mockResolvedValue({ kind: 'transportFailure', error: new Error('ECONNREFUSED') });
+
+    const response = await loginHandler(
+      post('/api/auth/login', { email: 'ada@example.test', password: 'x' }),
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      message: "We couldn't reach Tandem. Check your connection and try again.",
+    });
+  });
+
   it('rejects a 422 body before calling the API at all', async () => {
     const response = await loginHandler(
       post('/api/auth/login', { email: 'not-an-email', password: '' }),
@@ -279,6 +296,71 @@ describe('registerHandler', () => {
 
     expect(callApi).toHaveBeenCalledTimes(1);
     expect(response.status).toBe(422);
+    // Bare string, not ['taken'] - fix round 2, M1.
+    expect(await response.json()).toMatchObject({ errors: { email: 'taken' } });
+  });
+});
+
+describe('the `errors` field has ONE shape across every producer on this route (fix round 2, M1)', () => {
+  // Reviewer's own measurement: on POST /api/auth/register, local validation produced
+  // `errors: {email: ["must look like an email address"]}` (an array) while an API 422 -
+  // reached through relayFailure, after Important 1 gated fieldErrorsFor this round -
+  // produced `errors: {email: "has already been taken"}` (a bare string), with
+  // resetPasswordHandler's then-intact 422 producing a THIRD, array-shaped answer. All three
+  // producers of this field now agree: a bare string per field, first message wins.
+
+  it('local (client-side) validation on register produces a bare string per field', async () => {
+    const response = await registerHandler(
+      post('/api/auth/register', {
+        email: 'not-an-email',
+        password: 'x',
+        display_name: '',
+        timezone: '',
+      }),
+    );
+    expect(response.status).toBe(422);
+    expect(callApi).not.toHaveBeenCalled();
+    const body = (await response.json()) as { errors: Record<string, unknown> };
+    expect(typeof body.errors.email).toBe('string');
+  });
+
+  it('a backend 422 on register produces a bare string per field', async () => {
+    callApi.mockResolvedValueOnce({
+      kind: 'error',
+      status: 422,
+      envelope: { message: 'The given data was invalid.', errors: { email: ['taken'] } },
+      retryAfterSeconds: null,
+    });
+    const response = await registerHandler(
+      post('/api/auth/register', {
+        email: 'ada@example.test',
+        password: 'hunter2hunter2',
+        display_name: 'Ada Lovelace',
+        timezone: 'Africa/Nairobi',
+      }),
+    );
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as { errors: Record<string, unknown> };
+    expect(typeof body.errors.email).toBe('string');
+  });
+
+  it('a backend 422 on reset-password produces a bare string per field', async () => {
+    const resetBody = {
+      token: 'a'.repeat(64),
+      email: 'ada@example.test',
+      password: 'hunter2hunter2',
+    };
+    const sentence = 'This password reset link is no longer valid. Request a new one.';
+    callApi.mockResolvedValue({
+      kind: 'error',
+      status: 422,
+      envelope: { message: sentence, errors: { token: [sentence] } },
+      retryAfterSeconds: null,
+    });
+    const response = await resetPasswordHandler(post('/api/auth/reset-password', resetBody));
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as { errors: Record<string, unknown> };
+    expect(typeof body.errors.token).toBe('string');
   });
 });
 
@@ -375,6 +457,29 @@ describe('refreshHandler', () => {
       expect(response.headers.getSetCookie()).toEqual([]);
     },
   );
+
+  it('forwards Retry-After on a 429 (fix round 2, M4)', async () => {
+    // The non-401 branch built a bare jsonResponse(status, {signedIn: false}) with no
+    // headers argument at all, so a 429's Retry-After - the one header the browser's
+    // single-flight caller would actually want to back off on, on the one endpoint whose
+    // rate limit matters most - never reached it.
+    callApi.mockResolvedValue({
+      kind: 'error',
+      status: 429,
+      envelope: { message: 'Too Many Attempts.' },
+      retryAfterSeconds: 30,
+    });
+
+    const response = await refreshHandler(
+      new Request('https://tandem.test/api/auth/refresh', {
+        method: 'POST',
+        headers: headers({ cookie: `${REFRESH_COOKIE}=${'f'.repeat(64)}` }),
+      }),
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('retry-after')).toBe('30');
+  });
 
   it('does NOT clear cookies on a transport failure either', async () => {
     callApi.mockResolvedValue({ kind: 'transportFailure', error: new Error('ECONNREFUSED') });
@@ -696,7 +801,7 @@ describe('resetPasswordHandler', () => {
     expect(cookies.every((c) => c.includes('Max-Age=0'))).toBe(true);
   });
 
-  it('forwards a 422 with its envelope INTACT, so errors.token carries the server sentence verbatim', async () => {
+  it('forwards a 422 through relayFailure, so errors.token carries the server sentence (fix round 2, M1: bare string, not an array)', async () => {
     const sentence = 'This password reset link is no longer valid. Request a new one.';
     callApi.mockResolvedValue({
       kind: 'error',
@@ -709,7 +814,9 @@ describe('resetPasswordHandler', () => {
 
     expect(response.status).toBe(422);
     expect(response.headers.getSetCookie()).toEqual([]);
-    expect(await response.json()).toEqual({ message: sentence, errors: { token: [sentence] } });
+    // Bare string, not `[sentence]` - the unified shape M1 asks for, not the old intact
+    // array passthrough.
+    expect(await response.json()).toEqual({ message: sentence, errors: { token: sentence } });
   });
 
   it('rejects a malformed body (token not 64 characters) before calling the API', async () => {
@@ -748,6 +855,29 @@ describe('resetPasswordHandler', () => {
     const body = await response.json();
     expect(JSON.stringify(body)).not.toContain('SQLSTATE');
     expect(JSON.stringify(body)).not.toContain(rawExceptionText);
+  });
+
+  it('does not relay raw backend text through `errors` either, at a 500 (fix round 2, Important 1 reopened)', async () => {
+    // Round 1 gated `message` through userMessageFor's allowlist but left `errors` relayed
+    // via fieldErrorsFor with NO status gate at all - the identical shape, one field over.
+    // MEASURED by the reviewer at handlers.ts:150: RESET /auth/reset-password 500 with an
+    // envelope carrying `errors.token` relayed that raw text verbatim.
+    const rawErrorText = 'RAW-BACKEND-TEXT-500 SQLSTATE[23000]';
+    callApi.mockResolvedValue({
+      kind: 'error',
+      status: 500,
+      envelope: {
+        message: 'Something went wrong on our end. Please try again.',
+        errors: { token: [rawErrorText] },
+      },
+      retryAfterSeconds: null,
+    });
+
+    const response = await resetPasswordHandler(post('/api/auth/reset-password', resetBody));
+
+    const body = await response.json();
+    expect(JSON.stringify(body)).not.toContain('RAW-BACKEND-TEXT');
+    expect(JSON.stringify(body)).not.toContain(rawErrorText);
   });
 });
 

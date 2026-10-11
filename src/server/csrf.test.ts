@@ -62,18 +62,41 @@ describe('assertSameOrigin', () => {
     ).not.toThrow();
   });
 
-  it('takes the FIRST X-Forwarded-Host when a proxy appends rather than replaces it (fix round 1, Minor)', () => {
+  it('rejects a cross-origin claim injected via a client-sent X-Forwarded-Host (fix round 2, M2 - takes the LAST value, not leftmost)', () => {
+    // Reviewer's measurement: leftmost took the CLIENT-INJECTABLE end. A same-origin fetch
+    // cannot set this header cross-origin (no preflight answered here, and a form post
+    // cannot set arbitrary headers at all - csrf.ts's own docblock says so), but IF a client
+    // could send one, taking the leftmost value let `Origin: https://evil.test` plus a
+    // client-sent `X-Forwarded-Host: evil.test` - with a legitimate proxy hop correctly
+    // APPENDING the real host, `tandem.test`, after it - pass, because the leftmost
+    // ("evil.test") matched the attacker's own forged Origin. The trustworthy value is the
+    // LAST one (the hop closest to this server, i.e. the proxy's own), matching
+    // X-Forwarded-For's convention of each additional hop APPENDING after the client's own
+    // (spoofable) leading value.
+    const headers = new Headers({ origin: 'https://evil.test', host: 'internal:3000' });
+    headers.append('x-forwarded-host', 'evil.test'); // client-injected, untrustworthy
+    headers.append('x-forwarded-host', 'tandem.test'); // the proxy's own, appended after it
+
+    expect(() =>
+      assertSameOrigin(
+        new Request('https://tandem.test/api/auth/login', { method: 'POST', headers }),
+      ),
+    ).toThrow(CsrfError);
+  });
+
+  it('takes the LAST X-Forwarded-Host when a proxy appends rather than replaces it (fix round 1, Minor; corrected in round 2, M2)', () => {
     // Not browser-reachable - a cross-origin fetch adding this header needs a preflight this
     // endpoint never answers, and a form post cannot set arbitrary headers at all - but a
     // proxy that appends a second X-Forwarded-Host instead of replacing the first turns
     // EVERY legitimate mutation into a 403: Headers.get() joins same-named headers with
-    // ', ', so the unhardened version compared originHost against the whole
-    // "tandem.test, internal-hop.test" string and never matched. The convention this
-    // follows (the first hop's value is the original client-facing host; later values are
-    // appended by each additional proxy) is the same one X-Forwarded-For uses.
+    // ', ', so the fully-unhardened version compared originHost against the whole
+    // "internal-hop.test, tandem.test" string and never matched. The LAST value - the
+    // nearest hop's own entry, appended after whatever came before it - is the trustworthy
+    // one; see `lastForwardedHost`'s own docblock for why the FIRST value (round 1's choice)
+    // is exactly backwards.
     const headers = new Headers({ origin: 'https://tandem.test', host: 'internal:3000' });
-    headers.append('x-forwarded-host', 'tandem.test');
     headers.append('x-forwarded-host', 'internal-hop.test');
+    headers.append('x-forwarded-host', 'tandem.test');
 
     expect(() =>
       assertSameOrigin(

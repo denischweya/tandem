@@ -114,8 +114,22 @@ export function userMessageFor(status: number, envelope: ErrorEnvelope | null): 
  * `Record<string, string>`) is exactly the one `tandem-mobile/src/api/errors.ts` already
  * standardised, and a second client reaching for the same transform should find it named the
  * same way.
+ *
+ * FIX ROUND 2, IMPORTANT 1 (reopened): this used to take only `envelope` and relay
+ * `envelope.errors` at ANY status. MEASURED: `relayFailure` called it unconditionally, so a
+ * `{message: "...", errors: {token: ["RAW-BACKEND-TEXT-500 SQLSTATE[23000]..."]}}` arriving
+ * behind a 500 relayed that raw text verbatim through `errors`, even after round 1 gated
+ * `message` itself through `userMessageFor`'s allowlist - the exact "right behaviour at 422,
+ * wrong everywhere else" shape Important 1 was raised to close, one field over. `status` is
+ * now a REQUIRED parameter and the function gates on `authorsItsOwnMessage` itself, same as
+ * `userMessageFor` - structural, not caller discipline, so a future call site cannot forget
+ * the gate the way this one did.
  */
-export function fieldErrorsFor(envelope: ErrorEnvelope | null): Record<string, string> | null {
+export function fieldErrorsFor(
+  status: number,
+  envelope: ErrorEnvelope | null,
+): Record<string, string> | null {
+  if (!authorsItsOwnMessage(status)) return null;
   if (envelope?.errors === undefined) return null;
   const out: Record<string, string> = {};
   for (const [field, messages] of Object.entries(envelope.errors)) {

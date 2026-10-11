@@ -40,7 +40,7 @@ export function assertSameOrigin(request: Request): void {
   const origin = request.headers.get('origin');
   if (origin === null) throw new CsrfError();
 
-  const host = firstForwardedHost(request) ?? request.headers.get('host');
+  const host = lastForwardedHost(request) ?? request.headers.get('host');
   if (host === null) throw new CsrfError();
 
   let originHost: string;
@@ -58,13 +58,21 @@ export function assertSameOrigin(request: Request): void {
  * untouched - the comma-split below is a no-op for that ordinary case. It only matters for a
  * misconfigured proxy that APPENDS a second hop's value instead of replacing the first: with
  * no split, the whole `"tandem.test, internal-hop.test"` string never equals a bare hostname
- * and every mutation 403s. The first value is taken, matching the same convention
- * `X-Forwarded-For` uses: the first hop recorded is the original client-facing host, and
- * later values are appended by each additional hop.
+ * and every mutation 403s.
+ *
+ * FIX ROUND 2, M2: round 1 took the FIRST value here, reasoning (wrongly) by analogy with
+ * `X-Forwarded-For`. MEASURED: the first value is the CLIENT-INJECTABLE end, not the
+ * trustworthy one - a request (hypothetically, since none of this is browser-reachable
+ * today, as this file's own docblock says) carrying `X-Forwarded-Host: evil.test` would have
+ * a legitimate proxy hop APPEND the real host after it (`"evil.test, tandem.test"`), and
+ * taking the first value matched the attacker's own forged entry rather than the proxy's.
+ * The LAST value is the one closest to this server - the nearest hop's own appended entry -
+ * which is what is actually trustworthy in a conventional append-per-hop chain.
  */
-function firstForwardedHost(request: Request): string | null {
+function lastForwardedHost(request: Request): string | null {
   const raw = request.headers.get('x-forwarded-host');
   if (raw === null) return null;
-  const first = raw.split(',')[0]?.trim();
-  return first !== undefined && first.length > 0 ? first : null;
+  const parts = raw.split(',');
+  const last = parts[parts.length - 1]?.trim();
+  return last !== undefined && last.length > 0 ? last : null;
 }
