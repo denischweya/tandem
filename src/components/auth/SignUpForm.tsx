@@ -8,7 +8,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
 import { postJson } from '@/lib/auth/bffClient';
-import { isRegisterField } from '@/lib/auth/fields';
+import { isRegisterField, matchedFieldErrors } from '@/lib/auth/fields';
 import { resolveTimezone } from '@/lib/auth/timezone';
 import { Button } from '@/components/ui/Button';
 import { FormError } from '@/components/ui/FormError';
@@ -26,19 +26,36 @@ type FormOutput = z.output<typeof RegisterSchema>;
  * (`jsonResponse(201, {user, signedIn: false, email})`). There is no `signedIn: true` on the
  * wire to check for - `'signedIn' in body` is the correct discriminant, not `body.signedIn`.
  *
- * MEASURED BUG, found by this file's own test ("routes to /signin with the address prefilled
- * when signedIn is false"): `z.union` tries members IN ORDER and a plain `z.object()` is
- * non-strict by default, so with the narrower `{user, signedIn, email}` schema listed SECOND,
- * a response that actually carries `signedIn: false` still matched the FIRST, broader
- * `{user}` schema first - it just silently stripped `signedIn`/`email` as unrecognised keys
- * instead of failing - and `'signedIn' in parsed.data` then read `false`, routing a
- * registered-but-not-signed-in user to `/plans` instead of `/signin`. The fix is ORDER, not a
- * `.strict()` call on either member: the MORE SPECIFIC shape goes first, so it only yields to
- * the broader one when its own extra required fields are genuinely absent.
+ * MEASURED BUG (now fixed twice over), found by this file's own test ("routes to /signin with
+ * the address prefilled when signedIn is false"): `z.union` tries members IN ORDER and a
+ * plain `z.object()` is non-strict by default, so with the narrower `{user, signedIn, email}`
+ * schema listed SECOND, a response that actually carries `signedIn: false` still matched the
+ * FIRST, broader `{user}` schema first - it just silently stripped `signedIn`/`email` as
+ * unrecognised keys instead of failing - and `'signedIn' in parsed.data` then read `false`,
+ * routing a registered-but-not-signed-in user to `/plans` instead of `/signin`.
+ *
+ * FIX ROUND 1, Important 4: this docblock used to claim "the fix is ORDER, not a `.strict()`
+ * call on either member" - WRONG ON THE MERITS, measured by the reviewer: reordering only
+ * guards against the two members being swapped. It does nothing for a DIFFERENT drift the
+ * reviewer reproduced directly - a 201 body of `{user, signedIn: false}` WITHOUT `email` -
+ * which, with the narrow member listed first (the post-self-correction order above), fails
+ * the narrow member (missing `email`) and STILL matched the broad `{user}` member, which
+ * silently accepted the extra `signedIn` key and stripped it, same as the original bug.
+ * Probe output before this fix: `push= [] replace= [["/plans"]]` - a registered-but-not-
+ * signed-in user routed straight to an authenticated surface.
+ *
+ * `.strict()` on the broad member is the actual fix, and it makes member ORDER irrelevant:
+ * a strict `{user}` schema rejects ANY extra key, so a body carrying `signedIn` (true, false,
+ * or anything else) can never match it regardless of where it sits in the union - either the
+ * narrow member matches first, or the body fails BOTH members and `parsed.success` is false,
+ * which routes into the existing "Something went wrong" branch below. A body that is
+ * genuinely just `{user}` still matches the broad member either way. Swapping the two members
+ * no longer changes behaviour for any input - verified by running this file's existing order
+ * test with the members swapped AND with them in the order below; both pass.
  */
 const RegisterResponseSchema = z.union([
   z.object({ user: UserSchema, signedIn: z.literal(false), email: z.string() }),
-  z.object({ user: UserSchema }),
+  z.object({ user: UserSchema }).strict(),
 ]);
 
 /**
@@ -98,12 +115,17 @@ export function SignUpForm() {
       // `fieldState`/`setError` reach it exactly like any editable field). No special case:
       // a special case is exactly the "same decision made in one place and not its sibling"
       // shape this wave has hit repeatedly.
-      for (const [field, message] of Object.entries(failure.fieldErrors)) {
-        if (isRegisterField(field)) {
+      //
+      // FIX ROUND 1, Important 2: only return early when at least one entry actually matched
+      // - see `matchedFieldErrors`'s own docblock. An `errors` map naming no field this form
+      // renders used to hit the unconditional `return` below and show nothing at all.
+      const matched = matchedFieldErrors(failure.fieldErrors, isRegisterField);
+      if (matched.length > 0) {
+        for (const [field, message] of matched) {
           form.setError(field, { type: 'server', message });
         }
+        return;
       }
-      return;
     }
     setFormError(failure.message);
   });

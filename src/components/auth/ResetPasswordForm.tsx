@@ -8,7 +8,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
 import { postJson } from '@/lib/auth/bffClient';
-import { isResetField } from '@/lib/auth/fields';
+import { isResetField, matchedFieldErrors } from '@/lib/auth/fields';
 import { Button } from '@/components/ui/Button';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { FormError } from '@/components/ui/FormError';
@@ -85,12 +85,16 @@ export function ResetPasswordForm({ token, email }: ResetPasswordFormProps) {
         setTokenError(deadTokenMessage);
         return;
       }
-      for (const [field, message] of Object.entries(rest)) {
-        if (isResetField(field)) {
+      // FIX ROUND 1, Important 2: only return early when at least one entry actually
+      // matched - see `matchedFieldErrors`'s own docblock in src/lib/auth/fields.ts. Applies
+      // to `rest` (the token carve-out above already handled, and always returns).
+      const matched = matchedFieldErrors(rest, isResetField);
+      if (matched.length > 0) {
+        for (const [field, message] of matched) {
           form.setError(field, { type: 'server', message });
         }
+        return;
       }
-      return;
     }
     setFormError(failure.message);
   });

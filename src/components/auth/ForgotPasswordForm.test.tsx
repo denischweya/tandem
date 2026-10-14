@@ -74,6 +74,35 @@ describe('ForgotPasswordForm', () => {
     expect(JSON.parse(secondInit.body as string)).toEqual({ email: 'ada@example.test' });
   });
 
+  /**
+   * FIX ROUND 1, Important 2. The same unconditional-return defect `SignInForm` was measured
+   * with, reproduced here: an `errors` map naming a field this form does not render (its only
+   * field is `email`).
+   */
+  it('a 422 whose errors map names no rendered field falls back to a form-level FormError, not a silent no-op', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            message: 'The given data was invalid.',
+            errors: { captcha: 'This field is required.' },
+          }),
+          { status: 422 },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+
+    render(<ForgotPasswordForm />);
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test');
+    await user.click(screen.getByRole('button', { name: 'Send reset link' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('The given data was invalid.');
+    expect(screen.queryByTestId('forgot-password-confirmation')).toBeNull();
+  });
+
   it('a transport failure shows a form-level error and stays on the form, not the success state', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
     const user = userEvent.setup();

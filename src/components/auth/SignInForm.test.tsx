@@ -56,6 +56,39 @@ describe('SignInForm', () => {
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/invite/abc123'));
   });
 
+  /**
+   * FIX ROUND 1, Important 1. MEASURED: `/signin?next=https://evil.example/tandem` used to
+   * send a user who had JUST AUTHENTICATED straight to an off-origin page - the classic
+   * post-login open-redirect phishing hop, via `router.replace(next ...)` with no same-origin
+   * check. `safeNextPath` (src/lib/auth/redirect.ts) now gates every `next` value; this test
+   * reproduces the EXACT attack string from the finding and asserts the fallback, not just
+   * the accept case the pre-existing test above already had.
+   */
+  it('falls back to /plans rather than following an off-origin `next` (open-redirect guard)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(200, { user: TEST_USER })));
+    const user = userEvent.setup();
+
+    render(<SignInForm next="https://evil.example/tandem" />);
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test');
+    await user.type(screen.getByLabelText('Password'), 'hunter2hunter2');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/plans'));
+    expect(replace).not.toHaveBeenCalledWith('https://evil.example/tandem');
+  });
+
+  it('falls back to /plans rather than following a scheme-relative `next` (//evil.example)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(200, { user: TEST_USER })));
+    const user = userEvent.setup();
+
+    render(<SignInForm next="//evil.example" />);
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test');
+    await user.type(screen.getByLabelText('Password'), 'hunter2hunter2');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/plans'));
+  });
+
   it('a 401 renders the API sentence verbatim as a form-level error, never against a field', async () => {
     vi.stubGlobal(
       'fetch',
@@ -99,6 +132,37 @@ describe('SignInForm', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Too Many Attempts. Try again in 2 minutes.');
     expect(alert.textContent).not.toMatch(/\d+ attempts? (left|remaining)/i);
+  });
+
+  /**
+   * FIX ROUND 1, Important 2. MEASURED by the reviewer: `errors: {captcha: 'This field is
+   * required.'}` produced `alerts=[]` - no field absorbed it (no Input here is named
+   * `captcha`), the unconditional `return` right after the mapping loop swallowed the API's
+   * own `message`, and the submit SILENTLY DID NOTHING while the button re-enabled. This is
+   * the exact probe from the finding, reproduced against this form directly.
+   */
+  it('a 422 whose errors map names no rendered field falls back to a form-level FormError, not a silent no-op', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(422, {
+          message: 'The given data was invalid.',
+          errors: { captcha: 'This field is required.' },
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+
+    render(<SignInForm />);
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test');
+    await user.type(screen.getByLabelText('Password'), 'hunter2hunter2');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('The given data was invalid.');
+    expect(screen.getByLabelText('Email')).not.toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Password')).not.toHaveAttribute('aria-invalid', 'true');
+    expect(replace).not.toHaveBeenCalled();
   });
 
   it('shows the registered-but-not-signed-in notice when reason=registered', () => {

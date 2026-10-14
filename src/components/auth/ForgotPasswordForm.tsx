@@ -7,7 +7,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
 import { postJson } from '@/lib/auth/bffClient';
-import { isForgotPasswordField } from '@/lib/auth/fields';
+import { isForgotPasswordField, matchedFieldErrors } from '@/lib/auth/fields';
 import { Button } from '@/components/ui/Button';
 import { FormError } from '@/components/ui/FormError';
 import { Input } from '@/components/ui/Input';
@@ -52,12 +52,15 @@ export function ForgotPasswordForm() {
 
     const { failure } = result;
     if (failure.fieldErrors !== null) {
-      for (const [field, message] of Object.entries(failure.fieldErrors)) {
-        if (isForgotPasswordField(field)) {
+      // FIX ROUND 1, Important 2: only return early when at least one entry actually
+      // matched - see `matchedFieldErrors`'s own docblock in src/lib/auth/fields.ts.
+      const matched = matchedFieldErrors(failure.fieldErrors, isForgotPasswordField);
+      if (matched.length > 0) {
+        for (const [field, message] of matched) {
           form.setError(field, { type: 'server', message });
         }
+        return;
       }
-      return;
     }
     setFormError(failure.message);
   }

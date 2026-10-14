@@ -121,6 +121,34 @@ describe('ResetPasswordForm', () => {
     expect(push).toHaveBeenCalledWith('/forgot-password');
   });
 
+  /**
+   * FIX ROUND 1, Important 2. The same unconditional-return defect `SignInForm` was measured
+   * with, reproduced here on the branch that runs AFTER the token carve-out: an `errors` map
+   * naming a field this form does not render, with no `token` key present at all.
+   */
+  it('a 422 whose errors map names no rendered field (and no token) falls back to a form-level FormError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(422, {
+          message: 'The given data was invalid.',
+          errors: { captcha: 'This field is required.' },
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+
+    render(<ResetPasswordForm token={TOKEN} email="ada@example.test" />);
+    await user.type(screen.getByLabelText('New password'), 'hunter2hunter2');
+    await user.type(screen.getByLabelText('Confirm new password'), 'hunter2hunter2');
+    await user.click(screen.getByRole('button', { name: 'Reset password' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('The given data was invalid.');
+    // Still the form (the FormError sits inside it), not the dead-token ErrorState.
+    expect(screen.getByTestId('reset-password-token')).toBeInTheDocument();
+  });
+
   it('maps a non-token field error (e.g. email) onto its own field, leaving the form in place', async () => {
     vi.stubGlobal(
       'fetch',

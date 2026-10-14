@@ -65,3 +65,46 @@ export type ResetField = (typeof RESET_FIELDS)[number];
 export function isResetField(key: string): key is ResetField {
   return (RESET_FIELDS as readonly string[]).includes(key);
 }
+
+/**
+ * FIX ROUND 1, Important 2. MEASURED by the reviewer on `SignInForm` with
+ * `errors: {captcha: 'This field is required.'}`: `alerts=[]`, the API's `message` absent
+ * from `document.body`, no field marked invalid - the submit SILENTLY DID NOTHING and the
+ * button re-enabled. Cause was the unconditional `return` right after each form's
+ * field-mapping loop, IDENTICAL IN ALL FOUR FORMS (`SignInForm`, `SignUpForm`,
+ * `ForgotPasswordForm`, `ResetPasswordForm`): a `fieldErrors` map whose every key is
+ * unrecognised still took the early `return`, never reaching `setFormError(failure.message)`.
+ *
+ * This is the one place that loop now lives. It reports how many entries actually matched
+ * `isField`, and every one of the four forms' submit handlers only takes its own early return
+ * when that count is greater than zero - otherwise it falls through to its generic
+ * `setFormError(failure.message)`, exactly as if `fieldErrors` had been `null`. Centralising
+ * it here means a fifth form (or a sixth) inherits the fix rather than needing its own copy
+ * of the same five lines - which is the literal mechanism the prior defect shipped through.
+ *
+ * NOT a fix for a different, narrower residual the reviewer also named: `LoginSchema` carries
+ * `install_id`/`platform` and `RegisterSchema` carries `locale`, and `isLoginField`/
+ * `isRegisterField` return TRUE for all three even though no form renders an Input for any of
+ * them - `matchedFieldErrors` would count an error keyed by one of those as "matched" and
+ * still suppress `setFormError`, same as before this fix. Left open deliberately rather than
+ * patched over: both fields are `['sometimes', ...]` upstream (`LoginRequest`/
+ * `RegisterRequest::rules()`, mirrored in `@tandem/shared`'s own docblock) - validated ONLY
+ * when present in the request - and neither form ever sends any of the three
+ * (`SignInForm`/`SignUpForm`'s `postJson` calls list their bodies explicitly, and none
+ * includes `install_id`, `platform` or `locale`), so the real API can never produce a 422
+ * keyed by one of them for a request either form actually sends. Excluding them from
+ * `LOGIN_FIELDS`/`REGISTER_FIELDS` the way `token` is excluded from `RESET_FIELDS` would close
+ * even the unreachable case, but would do so by re-introducing exactly the "enumerate what
+ * this screen renders, by hand" list the schema-derivation above exists to avoid - for three
+ * fields that, unlike `token`, are not merely hidden from view but structurally never sent.
+ */
+export function matchedFieldErrors<TField extends string>(
+  fieldErrors: Record<string, string>,
+  isField: (key: string) => key is TField,
+): ReadonlyArray<readonly [TField, string]> {
+  const matched: Array<[TField, string]> = [];
+  for (const [field, message] of Object.entries(fieldErrors)) {
+    if (isField(field)) matched.push([field, message]);
+  }
+  return matched;
+}

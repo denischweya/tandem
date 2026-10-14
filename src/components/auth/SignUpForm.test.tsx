@@ -103,6 +103,63 @@ describe('SignUpForm', () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
+  /**
+   * FIX ROUND 1, Important 4. MEASURED by the reviewer: a 201 body of
+   * `{user, signedIn: false}` WITHOUT `email` matched the broad `{user}` member (non-strict
+   * by default), silently stripping `signedIn`, and routed a registered-but-not-signed-in
+   * user straight to `/plans` - probe output `push= [] replace= [["/plans"]]`. This is a
+   * DIFFERENT drift than reordering the union (which the test below already guards): the
+   * narrow member is tried first either way, but it requires `email` and this body has none,
+   * so it falls through to the broad member regardless of order. `.strict()` on the broad
+   * member is what actually closes it.
+   */
+  it('a 201 body with signedIn: false but no email does NOT silently route to /plans (Important 4)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse(201, { user: TEST_USER, signedIn: false })),
+    );
+    const user = userEvent.setup();
+
+    render(<SignUpForm />);
+    await user.type(screen.getByLabelText('Name'), 'Ada Lovelace');
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test');
+    await user.type(screen.getByLabelText('Password'), 'hunter2hunter2');
+    await user.click(screen.getByRole('button', { name: 'Create an account' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Something went wrong on our end. Please try again.');
+    expect(replace).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  /**
+   * FIX ROUND 1, Important 2. The same unconditional-return defect `SignInForm` was measured
+   * with, reproduced here: an `errors` map naming a field this form does not render.
+   */
+  it('a 422 whose errors map names no rendered field falls back to a form-level FormError, not a silent no-op', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(422, {
+          message: 'The given data was invalid.',
+          errors: { captcha: 'This field is required.' },
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+
+    render(<SignUpForm />);
+    await user.type(screen.getByLabelText('Name'), 'Ada Lovelace');
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test');
+    await user.type(screen.getByLabelText('Password'), 'hunter2hunter2');
+    await user.click(screen.getByRole('button', { name: 'Create an account' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('The given data was invalid.');
+    expect(replace).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it('maps a 422 field error (a duplicate email) onto the Email field, not a generic FormError', async () => {
     vi.stubGlobal(
       'fetch',

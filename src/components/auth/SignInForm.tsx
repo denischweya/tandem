@@ -9,7 +9,8 @@ import { z } from 'zod';
 
 import { postJson } from '@/lib/auth/bffClient';
 import { noticeFor } from '@/lib/auth/copy';
-import { isLoginField } from '@/lib/auth/fields';
+import { isLoginField, matchedFieldErrors } from '@/lib/auth/fields';
+import { safeNextPath } from '@/lib/auth/redirect';
 import { Button } from '@/components/ui/Button';
 import { FormError } from '@/components/ui/FormError';
 import { Input } from '@/components/ui/Input';
@@ -30,7 +31,12 @@ export interface SignInFormProps {
 /**
  * Spec §11's sign-in surface. POSTs `/api/auth/login`, then `router.replace` to `next` (the
  * page that redirected here, e.g. `/plans?next=` round-tripped through the query string) or
- * `/plans` when none was given.
+ * `/plans` when none was given - but ONLY after `safeNextPath` (src/lib/auth/redirect.ts)
+ * has passed it. FIX ROUND 1, Important 1: this used to be `router.replace(next ... : '/plans')`
+ * with no same-origin check, so `/signin?next=https://evil.example/tandem` sent a user who
+ * had JUST AUTHENTICATED to an off-origin page of the attacker's choosing. `next` is now
+ * rejected (falling back to `/plans`) unless it is a single-leading-slash, same-document path -
+ * see that module's own docblock for the exact accept/reject rules and why.
  *
  * **401** answers `{message}` with NO `errors` - the API cannot say which field was wrong
  * ("These credentials do not match our records." never distinguishes a bad email from a bad
@@ -42,6 +48,13 @@ export interface SignInFormProps {
  * shown would be wrong the instant the next attempt succeeds. `X-RateLimit-Remaining` is not
  * even relayed for register/forgot-password, but it would be wrong to show here even if it
  * were relayed for login too.
+ *
+ * FIX ROUND 1, Important 2: a 422 whose `errors` map names no field this form renders (an
+ * invented key like `captcha`, or a schema field this form simply does not collect) used to
+ * fall into the generic-mapping loop below, match NOTHING, and hit the unconditional `return`
+ * right after it - the submit silently did nothing and the API's own `message` was dropped.
+ * `matchedFieldErrors` now reports how many entries actually matched `isLoginField`, and this
+ * only returns early (skipping `setFormError`) when that count is greater than zero.
  */
 export function SignInForm({ next, prefilledEmail, reason }: SignInFormProps) {
   const router = useRouter();
@@ -65,7 +78,7 @@ export function SignInForm({ next, prefilledEmail, reason }: SignInFormProps) {
     if (result.kind === 'ok') {
       const parsed = LoginSuccessSchema.safeParse(result.json);
       if (parsed.success) {
-        router.replace(next !== undefined && next.length > 0 ? next : '/plans');
+        router.replace(safeNextPath(next));
         return;
       }
       setFormError('Something went wrong on our end. Please try again.');
@@ -74,12 +87,13 @@ export function SignInForm({ next, prefilledEmail, reason }: SignInFormProps) {
 
     const { failure } = result;
     if (failure.fieldErrors !== null) {
-      for (const [field, message] of Object.entries(failure.fieldErrors)) {
-        if (isLoginField(field)) {
+      const matched = matchedFieldErrors(failure.fieldErrors, isLoginField);
+      if (matched.length > 0) {
+        for (const [field, message] of matched) {
           form.setError(field, { type: 'server', message });
         }
+        return;
       }
-      return;
     }
     setFormError(failure.message);
   });

@@ -13,6 +13,7 @@ import {
   isRegisterField,
   isResetField,
   LOGIN_FIELDS,
+  matchedFieldErrors,
   REGISTER_FIELDS,
   RESET_FIELDS,
 } from './fields';
@@ -89,5 +90,45 @@ describe('RESET_FIELDS', () => {
 
   it('rejects an invented field', () => {
     expect(isResetField('nonexistent')).toBe(false);
+  });
+});
+
+/**
+ * FIX ROUND 1, Important 2. MEASURED by the reviewer on `SignInForm`:
+ * `errors: {captcha: 'This field is required.'}` produced `alerts=[]` - no field absorbed
+ * it, and the unconditional `return` after the mapping loop swallowed the API's `message`
+ * entirely. `matchedFieldErrors` is the one function every one of the four forms' submit
+ * handlers now calls before deciding whether to return early or fall through to
+ * `setFormError`.
+ */
+describe('matchedFieldErrors', () => {
+  it('matches every entry whose key the guard recognises', () => {
+    const matched = matchedFieldErrors(
+      { email: 'has already been taken', password: 'too short' },
+      isRegisterField,
+    );
+    expect([...matched].sort()).toEqual(
+      [
+        ['email', 'has already been taken'],
+        ['password', 'too short'],
+      ].sort(),
+    );
+  });
+
+  it('returns an EMPTY array when every key is unrecognised - the exact captcha probe', () => {
+    const matched = matchedFieldErrors({ captcha: 'This field is required.' }, isLoginField);
+    expect(matched).toEqual([]);
+  });
+
+  it('drops only the unrecognised entries when the map is mixed', () => {
+    const matched = matchedFieldErrors(
+      { email: 'has already been taken', captcha: 'This field is required.' },
+      isRegisterField,
+    );
+    expect(matched).toEqual([['email', 'has already been taken']]);
+  });
+
+  it('an empty fieldErrors map matches nothing, same as an all-unrecognised one', () => {
+    expect(matchedFieldErrors({}, isLoginField)).toEqual([]);
   });
 });
