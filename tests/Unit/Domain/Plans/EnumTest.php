@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Domain\Plans\ActivityType;
 use App\Domain\Plans\MemberRole;
 use App\Domain\Plans\MemberStatus;
 use App\Domain\Plans\PlanStatus;
@@ -27,6 +28,25 @@ it('matches blueprint section 8 visibility exactly, with no public option', func
     // product decision smuggled in as an enum.
     expect(array_map(fn (Visibility $v) => $v->value, Visibility::cases()))
         ->toBe(['private', 'invite_only']);
+});
+
+it('matches spec section 11.1 activity types exactly', function (): void {
+    // Nine cases and no tenth without a decision. There is deliberately no `plan.deleted`: a
+    // hard delete CASCADEs plan_activity away, so there is no row left for it to live on.
+    // `plan.created` is already the literal PlanActivityFactory seeds, so the first value here
+    // is pinned against something the suite already writes rather than against itself.
+    expect(array_map(fn (ActivityType $t) => $t->value, ActivityType::cases()))
+        ->toBe([
+            'plan.created',
+            'plan.updated',
+            'plan.archived',
+            'member.invited',
+            'member.joined',
+            'member.left',
+            'member.removed',
+            'member.role_changed',
+            'invite.revoked',
+        ]);
 });
 
 // The case that used to sit here - "agrees with the column defaults the migrations set" -
