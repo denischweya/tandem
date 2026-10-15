@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use App\Domain\Plans\ActivityType;
 use App\Domain\Plans\Capability;
+use App\Domain\Plans\InviteOutcome;
+use App\Domain\Plans\InviteState;
 use App\Domain\Plans\MemberRole;
 use App\Domain\Plans\MemberStatus;
 use App\Domain\Plans\PlanStatus;
@@ -74,6 +76,23 @@ it('matches blueprint section 9 capability matrix exactly, all sixteen rows incl
             'CreateEvent',
             'SuggestTimes',
         ]);
+});
+
+it('closes InviteState to exactly the four states InvitePolicy decides over', function (): void {
+    // Unbacked (no column value to transcribe), so this pins case NAMES in declaration order,
+    // not values. This is a different guard from InvitePolicyTest.php's exhaustiveness loop:
+    // that loop proves every case InviteState HAS is handled by decide() (an unhandled case
+    // throws UnhandledMatchError), but a case that is both added AND handled widens the
+    // vocabulary without that loop - or any test named after one existing case - noticing.
+    // This assertion is the one that catches that growth. §0.6 of the wave's global
+    // constraints is the authority on the count and the names, not this comment.
+    expect(array_map(fn (InviteState $s) => $s->name, InviteState::cases()))
+        ->toBe(['Valid', 'Expired', 'Revoked', 'Accepted']);
+});
+
+it('closes InviteOutcome to exactly accept and reject', function (): void {
+    expect(array_map(fn (InviteOutcome $o) => $o->name, InviteOutcome::cases()))
+        ->toBe(['Accept', 'Reject']);
 });
 
 // The case that used to sit here - "agrees with the column defaults the migrations set" -
