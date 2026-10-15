@@ -157,3 +157,112 @@ it('pins CreateEvent as role-gated only - PROVISIONAL, blueprint section 9 says 
     expect(PlanPermissions::allows(MemberRole::Admin, Capability::CreateEvent))->toBeTrue();
     expect(PlanPermissions::allows(MemberRole::Member, Capability::CreateEvent))->toBeTrue();
 });
+
+it('matches blueprint section 3 point 3 - an admin may remove a member, only the owner may remove an admin, nobody removes the owner', function (): void {
+    $matrix = [
+        [MemberRole::Owner, MemberRole::Admin, true],
+        [MemberRole::Owner, MemberRole::Member, true],
+        [MemberRole::Owner, MemberRole::Owner, false],
+        [MemberRole::Admin, MemberRole::Member, true],
+        [MemberRole::Admin, MemberRole::Owner, false],
+        [MemberRole::Admin, MemberRole::Admin, false],
+        [MemberRole::Member, MemberRole::Owner, false],
+        [MemberRole::Member, MemberRole::Admin, false],
+        [MemberRole::Member, MemberRole::Member, false],
+    ];
+
+    // Explicit count: 3 actor roles x 3 target roles.
+    expect($matrix)->toHaveCount(9);
+
+    $actual = [];
+    $expected = [];
+
+    foreach ($matrix as [$actor, $target, $allowed]) {
+        $actual[] = PlanPermissions::canRemoveMember($actor, $target);
+        $expected[] = $allowed;
+    }
+
+    expect($actual)->toBe($expected);
+});
+
+it('lets only the owner change a role, and never the owners own role, regardless of the target role asked for', function (): void {
+    // $to ranges over all three MemberRole cases at every (actor, target) pair below, which is
+    // what proves canChangeRole really is $to-invariant rather than coincidentally untested at
+    // the one $to value that would have exposed a bug - the class docblock's claim, pinned.
+    $matrix = [];
+
+    foreach (MemberRole::cases() as $actor) {
+        foreach (MemberRole::cases() as $target) {
+            foreach (MemberRole::cases() as $to) {
+                $matrix[] = [
+                    $actor,
+                    $target,
+                    $to,
+                    $actor === MemberRole::Owner && $target !== MemberRole::Owner,
+                ];
+            }
+        }
+    }
+
+    // Explicit count: 3 actors x 3 targets x 3 "to" roles.
+    expect($matrix)->toHaveCount(27);
+
+    $actual = [];
+    $expected = [];
+
+    foreach ($matrix as [$actor, $target, $to, $allowed]) {
+        $actual[] = PlanPermissions::canChangeRole($actor, $target, $to);
+        $expected[] = $allowed;
+    }
+
+    expect($actual)->toBe($expected);
+});
+
+it('lets the owner invite at admin or member role, and restricts the admin to member-role invites only', function (): void {
+    // Scoped to the two roles a FormRequest actually lets anyone invite at (admin, member) -
+    // spec section 10.4 constrains the role field to those two for every actor, so this is the
+    // 3 x 2 matrix section 17.1 names, not the full 3 x 3.
+    $matrix = [
+        [MemberRole::Owner, MemberRole::Admin, true],
+        [MemberRole::Owner, MemberRole::Member, true],
+        [MemberRole::Admin, MemberRole::Admin, false],
+        [MemberRole::Admin, MemberRole::Member, true],
+        [MemberRole::Member, MemberRole::Admin, false],
+        [MemberRole::Member, MemberRole::Member, false],
+    ];
+
+    // Explicit count: 3 actor roles x 2 invitable roles.
+    expect($matrix)->toHaveCount(6);
+
+    $actual = [];
+    $expected = [];
+
+    foreach ($matrix as [$actor, $invited, $allowed]) {
+        $actual[] = PlanPermissions::canInviteWithRole($actor, $invited);
+        $expected[] = $allowed;
+    }
+
+    expect($actual)->toBe($expected);
+});
+
+it('refuses an owner-role invite from every actor, defensively, even though the FormRequest never offers the choice', function (): void {
+    // Not part of the 3 x 2 matrix above - the matrix only covers the two roles a FormRequest
+    // can submit. This is the third, defensive row: an owner-role invite would be an
+    // ownership transfer bypassing the transfer endpoint's eligibility checks, so this
+    // predicate refuses it independently of which role is asking, including the owner's own.
+    foreach (MemberRole::cases() as $actor) {
+        expect(PlanPermissions::canInviteWithRole($actor, MemberRole::Owner))->toBeFalse();
+    }
+});
+
+it('matches blueprint section 9 point 2 - only the owner cannot leave, reduced to one argument because the schema permits exactly one owner', function (): void {
+    expect(PlanPermissions::canLeave(MemberRole::Owner))->toBeFalse();
+    expect(PlanPermissions::canLeave(MemberRole::Admin))->toBeTrue();
+    expect(PlanPermissions::canLeave(MemberRole::Member))->toBeTrue();
+});
+
+it('restricts archiving to the owner, the same split as deleting', function (): void {
+    expect(PlanPermissions::canArchive(MemberRole::Owner))->toBeTrue();
+    expect(PlanPermissions::canArchive(MemberRole::Admin))->toBeFalse();
+    expect(PlanPermissions::canArchive(MemberRole::Member))->toBeFalse();
+});

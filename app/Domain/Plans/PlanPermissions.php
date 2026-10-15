@@ -158,4 +158,105 @@ final class PlanPermissions
             },
         };
     }
+
+    /**
+     * Pinned verbatim: the Owner may remove an Admin or a Member; only the Owner may remove an
+     * Admin; nobody may remove the Owner. The owner appointed the admin (assign admins is
+     * owner-only), so letting a second admin undo that appointment hands admins a one-way
+     * power over each other that the matrix reserves to the owner.
+     */
+    public static function canRemoveMember(MemberRole $actor, MemberRole $target): bool
+    {
+        // match, not a chain of ifs, for the same UnhandledMatchError exhaustiveness as every
+        // other method here: a fourth MemberRole would fail loudly at this line rather than
+        // silently taking whichever branch an if-chain happened to fall through to.
+        return match ($actor) {
+            // The owner may remove anyone except another owner - the schema permits exactly
+            // one, so $target === Owner never arises in practice, but it is refused here
+            // anyway rather than left unhandled.
+            MemberRole::Owner => match ($target) {
+                MemberRole::Admin, MemberRole::Member => true,
+                MemberRole::Owner => false,
+            },
+
+            // An admin may remove a Member and nothing above it: removing an Admin is the
+            // owner's appointment power, revocable only by the owner who exercised it.
+            MemberRole::Admin => match ($target) {
+                MemberRole::Member => true,
+                MemberRole::Owner, MemberRole::Admin => false,
+            },
+
+            // A member removes nobody - remove members names Owner and Admin only.
+            MemberRole::Member => match ($target) {
+                MemberRole::Owner, MemberRole::Admin, MemberRole::Member => false,
+            },
+        };
+    }
+
+    /**
+     * Owner only, and only over a non-owner target. $to is part of the pinned signature but
+     * does not gate anything beyond what $actor and $target already decide: refusing
+     * $target === Owner already covers "the owner's own role is never edited directly", and
+     * the one further rule the spec states - $to === Owner requires the actor to already be
+     * Owner - adds nothing once $actor === Owner is already required for anything to pass.
+     * $to === Owner is an ownership transfer and $to === $target is a no-op; both are the
+     * Owner's to ask for, and the caller - ChangeMemberRole - is the one that must tell them
+     * apart: a transfer writes plans.owner_id and demotes the outgoing owner in the same
+     * transaction, and a no-op short-circuits before any write at all. This predicate answers
+     * only whether the actor may ask, not what the use case must do about the answer.
+     */
+    public static function canChangeRole(MemberRole $actor, MemberRole $target, MemberRole $to): bool
+    {
+        // match, not a chain of ifs, for UnhandledMatchError exhaustiveness - see every other
+        // method in this file. $to is accepted but not matched on, for the reason above.
+        return match ($actor) {
+            MemberRole::Owner => $target !== MemberRole::Owner,
+            MemberRole::Admin, MemberRole::Member => false,
+        };
+    }
+
+    /**
+     * An Admin may invite only at Member role - assign admins is owner-only, and an admin who
+     * could mint an admin-role invite would have promoted someone by the back door. The Owner
+     * may invite at Admin or Member, never at Owner: role is already constrained to
+     * admin|member at the FormRequest, and this predicate refuses Owner-role invites
+     * independently of that, because an owner-role invite would be an ownership transfer that
+     * bypasses the transfer endpoint's eligibility checks entirely, regardless of who is
+     * asking.
+     */
+    public static function canInviteWithRole(MemberRole $actor, MemberRole $invited): bool
+    {
+        return match ($actor) {
+            MemberRole::Owner => $invited !== MemberRole::Owner,
+            MemberRole::Admin => $invited === MemberRole::Member,
+            MemberRole::Member => false,
+        };
+    }
+
+    /**
+     * Reduces to "the owner cannot leave": the schema permits exactly one owner, so there is
+     * no "last owner" to count - canLeave needs no member count and no is-this-the-last-one
+     * flag, which is a property of the schema rather than a simplification.
+     */
+    public static function canLeave(MemberRole $role): bool
+    {
+        return match ($role) {
+            MemberRole::Owner => false,
+            MemberRole::Admin, MemberRole::Member => true,
+        };
+    }
+
+    /**
+     * Owner only. Not a Capability: blueprint section 9's matrix has no archive row, so adding
+     * one to Capability would make this enum's own docblock - "the closed set of blueprint
+     * section 9's capability rows" - false. canArchive is the fifth non-blueprint predicate
+     * alongside canLeave, canRemoveMember, canChangeRole and canInviteWithRole.
+     */
+    public static function canArchive(MemberRole $role): bool
+    {
+        return match ($role) {
+            MemberRole::Owner => true,
+            MemberRole::Admin, MemberRole::Member => false,
+        };
+    }
 }
