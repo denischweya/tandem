@@ -100,6 +100,23 @@ it('matches blueprint section 9 permission matrix exactly, across all three role
     // checked before that comparison runs on what could otherwise be a thinned table.
     expect($matrix)->toHaveCount(count(Capability::cases()) * count(MemberRole::cases()));
 
+    // Set equality over the (Capability, MemberRole) pairs, not just a count (Fix round 2):
+    // a count alone cannot tell 48 distinct pairs apart from 47 plus a duplicate, so a
+    // duplicated row paired with a different omitted row left the count above, and the
+    // exhaustiveness loop below, both green - measured, see task-2-report.md. The expected
+    // side is built from the enums rather than typed out again, so it cannot drift from
+    // Capability::cases()/MemberRole::cases() independently of the table above.
+    $actualPairs = array_map(fn (array $row): string => $row[0]->name.'/'.$row[1]->value, $matrix);
+    $expectedPairs = [];
+    foreach (Capability::cases() as $capability) {
+        foreach (MemberRole::cases() as $role) {
+            $expectedPairs[] = $capability->name.'/'.$role->value;
+        }
+    }
+    sort($actualPairs);
+    sort($expectedPairs);
+    expect($actualPairs)->toBe($expectedPairs);
+
     $actual = [];
     $expected = [];
 
