@@ -171,8 +171,29 @@ it('matches blueprint section 3 point 3 - an admin may remove a member, only the
         [MemberRole::Member, MemberRole::Member, false],
     ];
 
-    // Explicit count: 3 actor roles x 3 target roles.
-    expect($matrix)->toHaveCount(9);
+    // Derived, not hardcoded: see the Capability matrix's matching comment above - a literal 9
+    // stays correct-looking even if MemberRole ever grew a fourth case.
+    expect($matrix)->toHaveCount(count(MemberRole::cases()) ** 2);
+
+    // Set equality over the (actor, target) pairs, not just a count (Fix round 1) - the exact
+    // hole Task 2's own Fix round 2 closed for allows(), reopened here: a count alone cannot
+    // tell 9 distinct pairs apart from 8 plus a duplicate, so deleting
+    // [MemberRole::Admin, MemberRole::Admin, false] and duplicating
+    // [MemberRole::Admin, MemberRole::Member, true] in its place - which is the one row this
+    // whole task's admin-versus-admin asymmetry turns on - left the count above, and the
+    // toBe() below, both green; measured, see "Fix round 1" in task-3-report.md. The expected
+    // side is built from MemberRole::cases() rather than typed out again, so it cannot drift
+    // from the matrix above independently.
+    $actualPairs = array_map(fn (array $row): string => $row[0]->value.'/'.$row[1]->value, $matrix);
+    $expectedPairs = [];
+    foreach (MemberRole::cases() as $actor) {
+        foreach (MemberRole::cases() as $target) {
+            $expectedPairs[] = $actor->value.'/'.$target->value;
+        }
+    }
+    sort($actualPairs);
+    sort($expectedPairs);
+    expect($actualPairs)->toBe($expectedPairs);
 
     $actual = [];
     $expected = [];
@@ -183,6 +204,19 @@ it('matches blueprint section 3 point 3 - an admin may remove a member, only the
     }
 
     expect($actual)->toBe($expected);
+});
+
+it('decides removal for every actor and target pair, so a fourth MemberRole cannot be added silently', function (): void {
+    // Same pattern as allows()'s own exhaustiveness test above: toBeBool() is tautological
+    // against canRemoveMember()'s declared return type. The real force is UnhandledMatchError -
+    // both the outer match (over $actor) and every inner match (over $target) have no default
+    // arm, so a fourth MemberRole reaches this loop directly, independently of the 9-row table
+    // above, and throws rather than silently going uncalled by anything in this file.
+    foreach (MemberRole::cases() as $actor) {
+        foreach (MemberRole::cases() as $target) {
+            expect(PlanPermissions::canRemoveMember($actor, $target))->toBeBool();
+        }
+    }
 });
 
 it('lets only the owner change a role, and never the owners own role, regardless of the target role asked for', function (): void {
@@ -198,6 +232,9 @@ it('lets only the owner change a role, and never the owners own role, regardless
                     $actor,
                     $target,
                     $to,
+                    // $actor === Owner is section 8.2's refusal 1 (owner-only); $target !==
+                    // Owner is refusal 2 (never the owner's own role) - refusal 3 is subsumed
+                    // by 1, and refusal 4 (a no-op) is the caller's short-circuit, not refused.
                     $actor === MemberRole::Owner && $target !== MemberRole::Owner,
                 ];
             }
@@ -231,8 +268,27 @@ it('lets the owner invite at admin or member role, and restricts the admin to me
         [MemberRole::Member, MemberRole::Member, false],
     ];
 
-    // Explicit count: 3 actor roles x 2 invitable roles.
-    expect($matrix)->toHaveCount(6);
+    // Derived, not hardcoded: 3 actor roles x the two invitable roles, not the full 3 x 3 - see
+    // the comment above.
+    expect($matrix)->toHaveCount(count(MemberRole::cases()) * 2);
+
+    // Set equality over the (actor, invited) pairs, not just a count (Fix round 1) - the same
+    // hole as canRemoveMember's table above, and Task 2's Fix round 2 before that: a count
+    // alone cannot tell 6 distinct pairs apart from 5 plus a duplicate. $invitable is typed
+    // out rather than taken from MemberRole::cases(), because the restriction to two of the
+    // three roles really is the point of this table - the full 3 x 3 is deliberately out of
+    // scope here and pinned separately by the dedicated owner-role test below.
+    $invitable = [MemberRole::Admin, MemberRole::Member];
+    $actualPairs = array_map(fn (array $row): string => $row[0]->value.'/'.$row[1]->value, $matrix);
+    $expectedPairs = [];
+    foreach (MemberRole::cases() as $actor) {
+        foreach ($invitable as $invited) {
+            $expectedPairs[] = $actor->value.'/'.$invited->value;
+        }
+    }
+    sort($actualPairs);
+    sort($expectedPairs);
+    expect($actualPairs)->toBe($expectedPairs);
 
     $actual = [];
     $expected = [];
@@ -261,8 +317,26 @@ it('matches blueprint section 9 point 2 - only the owner cannot leave, reduced t
     expect(PlanPermissions::canLeave(MemberRole::Member))->toBeTrue();
 });
 
+it('decides leaving for every role, so a fourth MemberRole cannot be added silently', function (): void {
+    // Same pattern as allows()'s own exhaustiveness test above: toBeBool() is tautological
+    // against canLeave()'s declared return type. The real force is UnhandledMatchError - the
+    // match has no default arm, so a fourth MemberRole reaches this loop and throws, rather
+    // than never being called by anything in this file (the three literals above are each a
+    // fixed case, not a loop over MemberRole::cases()).
+    foreach (MemberRole::cases() as $role) {
+        expect(PlanPermissions::canLeave($role))->toBeBool();
+    }
+});
+
 it('restricts archiving to the owner, the same split as deleting', function (): void {
     expect(PlanPermissions::canArchive(MemberRole::Owner))->toBeTrue();
     expect(PlanPermissions::canArchive(MemberRole::Admin))->toBeFalse();
     expect(PlanPermissions::canArchive(MemberRole::Member))->toBeFalse();
+});
+
+it('decides archiving for every role, so a fourth MemberRole cannot be added silently', function (): void {
+    // Same pattern and same reason as canLeave's exhaustiveness test above.
+    foreach (MemberRole::cases() as $role) {
+        expect(PlanPermissions::canArchive($role))->toBeBool();
+    }
 });

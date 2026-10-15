@@ -247,9 +247,10 @@ final class PlanPermissions
     }
 
     /**
-     * Owner only. Not a Capability: blueprint section 9's matrix has no archive row, so adding
-     * one to Capability would make this enum's own docblock - "the closed set of blueprint
-     * section 9's capability rows" - false. canArchive is the fifth non-blueprint predicate
+     * Owner only. Not a Capability: blueprint section 9's matrix has no archive row, and
+     * Capability's own docblock describes the enum as blueprint section 9's permission matrix
+     * "transcribed once into a closed set" - adding an archive row the blueprint never lists
+     * would make that description false. canArchive is the fifth non-blueprint predicate
      * alongside canLeave, canRemoveMember, canChangeRole and canInviteWithRole.
      */
     public static function canArchive(MemberRole $role): bool
