@@ -9,6 +9,7 @@ import { z } from 'zod';
 
 import { postJson } from '@/lib/auth/bffClient';
 import { isRegisterField, matchedFieldErrors } from '@/lib/auth/fields';
+import { safeNextPath } from '@/lib/auth/redirect';
 import { resolveTimezone } from '@/lib/auth/timezone';
 import { Button } from '@/components/ui/Button';
 import { FormError } from '@/components/ui/FormError';
@@ -58,6 +59,10 @@ const RegisterResponseSchema = z.union([
   z.object({ user: UserSchema }).strict(),
 ]);
 
+export interface SignUpFormProps {
+  next?: string | undefined;
+}
+
 /**
  * Spec §11's create-account surface. `POST /auth/register` answers 201 with a user and NO
  * tokens (§91) - "create an account and be signed in" is two API calls, and `registerHandler`
@@ -69,8 +74,18 @@ const RegisterResponseSchema = z.union([
  * `unique`) or silently failing: register-then-login is two API calls and the second one can
  * fail on its own (login's throttle, a dropped connection) for a registration that still
  * succeeded.
+ *
+ * TASK 12: `next` (e.g. `/invite/{token}`, from `InviteActions`'s "Create an account and
+ * join") is this form's half of spec §11's case 3 - "a brand-new user registers and accepts
+ * in one flow." On the SIGNED-IN success path this now replaces to `safeNextPath(next)`
+ * instead of a hardcoded `/plans`, mirroring `SignInForm` exactly (same function, same
+ * fallback, no second check). On the registered-but-NOT-signed-in path, `next` is forwarded
+ * - raw, unvalidated - onto the `/signin` hand-off: carrying a value in a query string is not
+ * consuming it, and the actual consumption point is `SignInForm`'s own `safeNextPath` call
+ * once the user lands there, exactly as `/plans`'s existing `redirect('/signin?next=%2Fplans')`
+ * already forwards a value it does not itself validate.
  */
-export function SignUpForm() {
+export function SignUpForm({ next }: SignUpFormProps) {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -100,10 +115,11 @@ export function SignUpForm() {
       }
       if ('signedIn' in parsed.data) {
         const params = new URLSearchParams({ email: parsed.data.email, reason: 'registered' });
+        if (next !== undefined) params.set('next', next);
         router.push(`/signin?${params.toString()}`);
         return;
       }
-      router.replace('/plans');
+      router.replace(safeNextPath(next));
       return;
     }
 
@@ -178,7 +194,13 @@ export function SignUpForm() {
       </Button>
 
       <div className={styles.links}>
-        <a className={styles.link} href="/signin" data-testid="create-account-signin-link">
+        <a
+          className={styles.link}
+          href={
+            next === undefined ? '/signin' : `/signin?${new URLSearchParams({ next }).toString()}`
+          }
+          data-testid="create-account-signin-link"
+        >
           Already have an account? Sign in
         </a>
       </div>

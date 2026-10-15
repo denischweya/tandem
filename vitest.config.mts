@@ -2,6 +2,39 @@ import { resolve } from 'node:path';
 
 import { defineConfig } from 'vitest/config';
 
+/**
+ * TASK 12's toolchain guard. `.nvmrc` pins Node 22, but this machine's default (and CI's,
+ * absent an explicit version step) is Node 20.18.2 - and `npm run test` against THIS repo's
+ * installed jsdom 30.1.2 under Node 20.18.2 is not a clean failure. MEASURED (2026-10-16,
+ * `npm run test` run directly under Node 20.18.2, output pasted verbatim in the task report):
+ * every `.test.tsx` worker crashes with `ERR_REQUIRE_ESM` from `html-encoding-sniffer`'s
+ * `require()` of `@exodus/bytes`'s ESM build, vitest reports those 13 crashes as bare
+ * "Unhandled Error"s rather than failed test files, and the summary reads
+ * `Test Files  14 passed (14)` - 14/14, not 14/27, because the 13 `.tsx` files that never
+ * started are silently absent from the denominator rather than counted as failing. The
+ * process DOES exit non-zero on this specific jsdom/Node pairing (`Errors  13 errors` prints
+ * above that summary), which is louder than this guard's own docblock first assumed - but the
+ * diagnosis a reader actually sees is "`require() of ES Module ... not supported`" four
+ * layers deep in a transitive dependency, not "wrong Node version." `package.json`'s
+ * `engines` field is not enough on its own either: `npm install` only WARNS on a mismatch, it
+ * does not fail the run that matters (`npm run test`/`npm run verify`), so a 20.x install
+ * still reaches this exact point having been told nothing was wrong. This check turns that
+ * four-layers-deep crash into the one line actually worth reading, as early as this config
+ * file loads - before vitest spawns a single worker.
+ */
+const MIN_SUPPORTED_NODE_MAJOR = 22;
+const [installedNodeMajor] = process.versions.node.split('.').map(Number);
+if (installedNodeMajor === undefined || installedNodeMajor < MIN_SUPPORTED_NODE_MAJOR) {
+  throw new Error(
+    `tandem-web's test suite requires Node ${MIN_SUPPORTED_NODE_MAJOR}+ (see .nvmrc); this ` +
+      `is Node ${process.versions.node}. On Node < ${MIN_SUPPORTED_NODE_MAJOR} every ` +
+      `*.test.tsx worker crashes loading jsdom (ERR_REQUIRE_ESM from html-encoding-sniffer -> ` +
+      `@exodus/bytes), and vitest's summary silently drops those files from its total instead ` +
+      `of counting them as failed - "Test Files 14 passed (14)" when 13 more never ran. Run ` +
+      `\`nvm use ${MIN_SUPPORTED_NODE_MAJOR}\` (matching .nvmrc) and try again.`,
+  );
+}
+
 export default defineConfig({
   resolve: { alias: { '@': resolve(__dirname, './src') } },
   test: {

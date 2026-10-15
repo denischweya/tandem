@@ -141,7 +141,13 @@ export function SignInForm({ next, prefilledEmail, reason }: SignInFormProps) {
         <a className={styles.link} href="/forgot-password" data-testid="sign-in-forgot-password">
           Forgot password?
         </a>
-        <a className={styles.link} href="/signup" data-testid="sign-in-signup-link">
+        <a
+          className={styles.link}
+          href={
+            next === undefined ? '/signup' : `/signup?${new URLSearchParams({ next }).toString()}`
+          }
+          data-testid="sign-in-signup-link"
+        >
           Create an account
         </a>
       </div>

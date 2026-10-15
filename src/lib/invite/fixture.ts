@@ -7,9 +7,24 @@
  * future endpoint: `getInviteByToken` is `async` and returns `null` for an
  * unrecognised token on purpose, so the page already handles "this link
  * doesn't resolve to anything" (expired, revoked, mistyped) rather than
- * assuming every token that reaches the route is good forever. Swapping the
- * body of `getInviteByToken` for a real `fetch` later should not require any
- * change to the page or components that consume it.
+ * assuming every token that reaches the route is good forever.
+ *
+ * CORRECTION (Task 12): this docblock used to claim that swapping the body of
+ * `getInviteByToken` for a real `fetch` later "should not require any change to the page or
+ * components that consume it." That is not true, and is withdrawn rather than carried
+ * forward. `InvitePerson`/`InvitePlan`/`InviteDetails` below are camelCase
+ * (`startInstant`, `timeZone`, `locationName`, `attendees`) by this module's own invention -
+ * every resource `openapi.json` actually publishes is snake_case - and there is no invite
+ * endpoint in spec §8 to generate a real type from in the first place (the Wave 2 design
+ * spec's §10.3 is where `GET /api/v1/invites/{token}` -> `InvitePreviewResource`
+ * `{plan_id, plan_title, inviter_name, member_count}` gets decided; until it lands and an
+ * OpenAPI-generated type exists, there is nothing real for these interfaces to match). They
+ * are a guess at a contract that does not exist yet, not a stand-in for one that does, so
+ * they stay here rather than being promoted into `@tandem/shared` - promoting a guessed
+ * shape into the package every client pins against would hand both clients a contract the
+ * API was never asked to honour. When §10.3 lands, the page's own `InvitePreviewResource`
+ * fields replace this module's guesses directly - see `DeferredJoinNotice`'s docblock for
+ * the full deletion list that change carries with it.
  */
 
 export interface InvitePerson {

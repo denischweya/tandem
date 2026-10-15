@@ -31,6 +31,20 @@ export type SessionReadResult =
  * This docblock no longer names an absent boundary: either build the one named here, or
  * handle it at your own call site and update this paragraph in the same change, the way this
  * edit does.
+ *
+ * TASK 12 gave this a SECOND production caller: `src/app/invite/[token]/page.tsx`. It makes
+ * the SAME per-call-site choice, with its own (deliberately un-shared) copy of the identical
+ * `readSessionSafely` shape, rather than extracting one module both pages import - the two
+ * pages disagree on what a failed read should render. `/plans` has nothing to show without a
+ * session (`SessionErrorFallback` replaces the whole page), so it fails toward an error
+ * state; `/invite/[token]`'s whole reason for existing is to show the plan to someone who
+ * has not signed in yet, so it fails toward the SIGNED-OUT branch instead - the one render
+ * this page can always produce regardless of whether the session read itself worked. A
+ * shared helper would have to parameterise that fallback, for two call sites, which is the
+ * kind of indirection this repo's own `matchedFieldErrors` docblock warns reads as "no
+ * information" at the one call site that actually matters. Still only an `error.tsx` or a
+ * call-site catch, per the paragraph above - a third caller that wants the SAME fallback as
+ * one of these two should import it from there rather than writing a third copy.
  */
 export class SessionReadError extends Error {
   constructor(readonly status: number) {

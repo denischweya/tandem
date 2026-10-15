@@ -1,46 +1,43 @@
 'use client';
 
-import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
-import styles from './SignupPrompt.module.css';
 
-const PROVIDERS = ['Apple', 'Google', 'Email'] as const;
-
-const HEADING_ID = 'signup-heading';
+export interface SignupPromptProps {
+  /**
+   * The already-constructed `/invite/{token}` path to round-trip through `next=`. Carried
+   * raw (not re-validated here) because the one sanctioned check on a caller-supplied
+   * redirect target, `safeNextPath` (src/lib/auth/redirect.ts), runs at the point the value
+   * is actually CONSUMED - `/signup`'s own landing page - not at every place it is merely
+   * passed along. Adding a second check here would be exactly the "do not write a second
+   * path check" this app's redirect guard explicitly forbids.
+   */
+  next: string;
+}
 
 /**
- * "Keep your plans in one place" — the optional account step, shown after
- * the RSVP choices rather than gating them. No account system exists yet,
- * so each provider is a real, focusable button that is honest about not
- * being wired up, instead of a fake OAuth flow or a dead-looking chip.
+ * The account-creation half of `InviteActions` - spec §11's case 3 ("a brand-new user
+ * registers and accepts in one flow"), as far as authentication goes.
+ *
+ * ADR 0006 (Accepted, supersedes ADR 0005): Cycle 1 "does not ship /auth/oauth/google or
+ * /auth/oauth/apple, the oauth_identities table, or any provider ID-token verifier" - OAuth
+ * sign-in lands in the calendar cycle, not this one. This component used to render three
+ * provider chips ('Apple', 'Google', 'Email'), each announcing "isn't available yet" when
+ * clicked - honest about today, but misleading about the roadmap, since it offered two
+ * providers this cycle has already decided never to build. Email is the only honest option,
+ * so it is the only one left, rewritten as the one real action this flow has: create an
+ * account and land back on this invite, signed in.
  */
-export function SignupPrompt() {
-  const [clicked, setClicked] = useState<(typeof PROVIDERS)[number] | null>(null);
+export function SignupPrompt({ next }: SignupPromptProps) {
+  const router = useRouter();
 
   return (
-    <section className={styles.card} aria-labelledby={HEADING_ID}>
-      <h2 id={HEADING_ID} className={styles.title}>
-        Keep your plans in one place
-      </h2>
-      <p className={styles.sub}>Optional. Your reply counts either way.</p>
-      <div className={styles.chips} role="group" aria-label="Continue with">
-        {PROVIDERS.map((provider) => (
-          <Button
-            key={provider}
-            variant="chip"
-            style={{ background: 'var(--color-bg)' }}
-            onClick={() => setClicked(provider)}
-            data-testid={`signup-${provider.toLowerCase()}`}
-          >
-            {provider}
-          </Button>
-        ))}
-      </div>
-      <p role="status" aria-live="polite" className={styles.note} data-testid="signup-note">
-        {clicked
-          ? `Sign-up with ${clicked} isn't available yet — your response above is already saved.`
-          : ''}
-      </p>
-    </section>
+    <Button
+      variant="secondary"
+      onClick={() => router.push(`/signup?${new URLSearchParams({ next }).toString()}`)}
+      data-testid="invite-signup"
+    >
+      Create an account and join
+    </Button>
   );
 }
