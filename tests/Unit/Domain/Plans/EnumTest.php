@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Domain\Plans\ActivityType;
+use App\Domain\Plans\Capability;
 use App\Domain\Plans\MemberRole;
 use App\Domain\Plans\MemberStatus;
 use App\Domain\Plans\PlanStatus;
@@ -46,6 +47,32 @@ it('matches spec section 11.1 activity types exactly', function (): void {
             'member.removed',
             'member.role_changed',
             'invite.revoked',
+        ]);
+});
+
+it('matches blueprint section 9 capability matrix exactly, all sixteen rows including the eight this cycle defers', function (): void {
+    // Owner's six rows, then Admin's three rows not already covered by Owner, then Member's
+    // seven rows - the order blueprint section 9 lists them in, column by column. Sixteen, not
+    // eleven and not eighteen: "edit Plan" and "remove members" each appear in two columns of
+    // the blueprint's table and are therefore one case, not two.
+    expect(array_map(fn (Capability $c) => $c->name, Capability::cases()))
+        ->toBe([
+            'EditPlan',
+            'DeletePlan',
+            'ManageMembers',
+            'AssignAdmins',
+            'RemoveMembers',
+            'ManagePlanSettings',
+            'InviteMembers',
+            'ManageTasks',
+            'ModerateChat',
+            'ViewPlan',
+            'SendMessages',
+            'CreateTasks',
+            'AssignSelf',
+            'CompleteAssignedTasks',
+            'CreateEvent',
+            'SuggestTimes',
         ]);
 });
 
