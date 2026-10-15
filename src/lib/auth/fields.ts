@@ -87,16 +87,31 @@ export function isResetField(key: string): key is ResetField {
  * `isRegisterField` return TRUE for all three even though no form renders an Input for any of
  * them - `matchedFieldErrors` would count an error keyed by one of those as "matched" and
  * still suppress `setFormError`, same as before this fix. Left open deliberately rather than
- * patched over: both fields are `['sometimes', ...]` upstream (`LoginRequest`/
- * `RegisterRequest::rules()`, mirrored in `@tandem/shared`'s own docblock) - validated ONLY
- * when present in the request - and neither form ever sends any of the three
- * (`SignInForm`/`SignUpForm`'s `postJson` calls list their bodies explicitly, and none
- * includes `install_id`, `platform` or `locale`), so the real API can never produce a 422
- * keyed by one of them for a request either form actually sends. Excluding them from
- * `LOGIN_FIELDS`/`REGISTER_FIELDS` the way `token` is excluded from `RESET_FIELDS` would close
- * even the unreachable case, but would do so by re-introducing exactly the "enumerate what
- * this screen renders, by hand" list the schema-derivation above exists to avoid - for three
- * fields that, unlike `token`, are not merely hidden from view but structurally never sent.
+ * patched over, but on the ARGUMENT THAT IS ACTUALLY TRUE for each field, not a single
+ * "nothing sends any of them" claim - FIX ROUND 2 correction: that single claim was false for
+ * `platform`. The 422 that could ever reach a browser is relayed from the REAL API's response
+ * to the BFF's OWN outbound request (`relayFailure`, src/server/handlers.ts), not gated by
+ * what the browser's `postJson` body contains - and `loginHandler`/`registerHandler`
+ * (handlers.ts, the `/auth/login` call each one makes) hardcode `platform: 'web'` on EVERY
+ * login, confirmed against `tandem-api`'s own `LoginRequest::rules()`: `platform =>
+ * ['sometimes','required','string','in:ios,android,web']`. So `platform` is a VALUE argument,
+ * not an absence one: it is always present on the wire, and `'web'` always satisfies `in:`, so
+ * no 422 can ever be keyed by it for a reason unrelated to whether it was sent.
+ * `install_id` and `locale` remain absence arguments, each for its own reason: `install_id`
+ * is deliberately NOT forwarded by `loginHandler` at all (ADR 0003: "the web BFF has no
+ * install_id concept to bind to" - ONE of this task's own FIX ROUND 1 changes made that
+ * explicit by building the outbound body field-by-field rather than spreading
+ * `validated.data`), and `locale` is never collected or sent by `SignUpForm` in the first
+ * place, so it never reaches `registerHandler`'s outbound body either. Both are therefore
+ * still `['sometimes', ...]` fields validated only when present, and present is a state
+ * neither one ever reaches - unlike `platform`, which is always present and always valid.
+ * Net conclusion unchanged either way: the real API cannot produce a 422 keyed by any of the
+ * three for a request either handler actually sends, so this residual is not reachable in
+ * practice. Excluding them from `LOGIN_FIELDS`/`REGISTER_FIELDS` the way `token` is excluded
+ * from `RESET_FIELDS` would close even the unreachable case, but would do so by
+ * re-introducing exactly the "enumerate what this screen renders, by hand" list the
+ * schema-derivation above exists to avoid - for three fields that, unlike `token`, are not
+ * merely hidden from view but structurally incapable of 422ing.
  */
 export function matchedFieldErrors<TField extends string>(
   fieldErrors: Record<string, string>,

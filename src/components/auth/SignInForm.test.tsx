@@ -89,6 +89,27 @@ describe('SignInForm', () => {
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/plans'));
   });
 
+  /**
+   * FIX ROUND 2, CRITICAL. MEASURED end to end (not just at `safeNextPath`'s own boundary):
+   * `/\t/evil.example` passed round 1's guard untouched - it starts with one `/`, not `//` -
+   * but the WHATWG URL parser strips the tab before `router.replace` resolves the string, so
+   * the browser would have hard-navigated off-origin exactly as if `next` had been
+   * `//evil.example` outright. This reproduces that through the real component, the same way
+   * the two tests above do for the round-1 cases.
+   */
+  it('falls back to /plans rather than following a tab-smuggled scheme-relative `next`', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(200, { user: TEST_USER })));
+    const user = userEvent.setup();
+
+    render(<SignInForm next={'/\t/evil.example'} />);
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test');
+    await user.type(screen.getByLabelText('Password'), 'hunter2hunter2');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/plans'));
+    expect(replace).not.toHaveBeenCalledWith('/\t/evil.example');
+  });
+
   it('a 401 renders the API sentence verbatim as a form-level error, never against a field', async () => {
     vi.stubGlobal(
       'fetch',
