@@ -88,11 +88,17 @@ it('matches blueprint section 9 permission matrix exactly, across all three role
         [Capability::SuggestTimes, MemberRole::Member, true],
     ];
 
-    // Explicit count: 16 capabilities x 3 roles. tests/Pest.php has no failOnRisky (section
-    // 0.4 of this plan), so a table that silently lost rows to a bad merge would still report
-    // green on the comparison below without this - the count is checked before that
-    // comparison runs on what could otherwise be a thinned table.
-    expect($matrix)->toHaveCount(48);
+    // Derived, not hardcoded: a literal 48 stays correct-looking even after a seventeenth
+    // Capability is added, because this table is never grown to match - it would just keep
+    // testing the sixteen it already knows about. count(Capability::cases()) *
+    // count(MemberRole::cases()) ties this count to the same source of truth EnumTest.php
+    // pins, so the table falling out of sync with the enum fails here, not silently. (It does
+    // not, by itself, catch a duplicated row masking an omitted one while the enum stays at
+    // sixteen - see "Fix round 1" in task-2-report.md for the measurement.) tests/Pest.php has
+    // no failOnRisky (section 0.4 of this plan), so a table that silently lost rows to a bad
+    // merge would still report green on the comparison below without this - the count is
+    // checked before that comparison runs on what could otherwise be a thinned table.
+    expect($matrix)->toHaveCount(count(Capability::cases()) * count(MemberRole::cases()));
 
     $actual = [];
     $expected = [];
@@ -103,6 +109,30 @@ it('matches blueprint section 9 permission matrix exactly, across all three role
     }
 
     expect($actual)->toBe($expected);
+});
+
+it('decides access for every capability and role pair, so a new capability cannot be added silently', function (): void {
+    // Same pattern as the MemberStatus exhaustiveness test above: toBeBool() is tautological
+    // against allows()'s declared return type. The real force is UnhandledMatchError - the
+    // outer match over Capability has no default arm, so a capability that the 48-row table
+    // above (hand-written, not derived from Capability::cases()) forgot still gets called
+    // here, and throws rather than silently returning a wrong answer.
+    foreach (Capability::cases() as $capability) {
+        foreach (MemberRole::cases() as $role) {
+            expect(PlanPermissions::allows($role, $capability))->toBeBool();
+        }
+    }
+});
+
+it('is additive, not exclusive - Owner never loses what Admin has, and Admin never loses what Member has', function (): void {
+    // Section 3.1's role hierarchy, stated as an invariant rather than left to emerge from the
+    // 48 literals above. A future edit that grants Admin a capability Owner lacks, or grants
+    // Member one Admin lacks, fails this test by name instead of silently inverting the
+    // hierarchy the matrix table would still happen to read correctly row by row.
+    foreach (Capability::cases() as $capability) {
+        expect(PlanPermissions::allows(MemberRole::Owner, $capability) || ! PlanPermissions::allows(MemberRole::Admin, $capability))->toBeTrue();
+        expect(PlanPermissions::allows(MemberRole::Admin, $capability) || ! PlanPermissions::allows(MemberRole::Member, $capability))->toBeTrue();
+    }
 });
 
 it('pins CreateEvent as role-gated only - PROVISIONAL, blueprint section 9 says "if permitted" and no column holds the condition; the Events cycle adds it with plan_events', function (): void {
