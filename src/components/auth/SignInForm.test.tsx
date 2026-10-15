@@ -110,6 +110,20 @@ describe('SignInForm', () => {
     expect(replace).not.toHaveBeenCalledWith('/\t/evil.example');
   });
 
+  /**
+   * FIX ROUND 1 (reviewer Important 2). This link was added so a visitor who followed
+   * "Sign in and join," realised they need an account, and clicked "Create an account"
+   * instead would not have their invite context dropped on the way - a gap found while
+   * fixing `SignUpForm`'s class, not named by the original brief. Untested until now.
+   */
+  it('the "Create an account" link forwards `next` when given', () => {
+    render(<SignInForm next="/invite/abc123" />);
+    expect(screen.getByTestId('sign-in-signup-link')).toHaveAttribute(
+      'href',
+      '/signup?next=%2Finvite%2Fabc123',
+    );
+  });
+
   it('a 401 renders the API sentence verbatim as a form-level error, never against a field', async () => {
     vi.stubGlobal(
       'fetch',

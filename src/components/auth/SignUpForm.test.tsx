@@ -80,6 +80,84 @@ describe('SignUpForm', () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  /**
+   * FIX ROUND 1 (reviewer Important 1). MEASURED by the reviewer: `SignUpForm.tsx`'s own
+   * `router.replace(safeNextPath(next))` (the exact guard `SignInForm.test.tsx` already
+   * covers with four tests) had NONE of its own - reverting it to either a hardcoded
+   * `/plans` or the pre-Task-11 unguarded `router.replace(next ?? '/plans')` kept every
+   * existing test in this file green. These four mirror `SignInForm.test.tsx`'s positive
+   * case and its three rejection cases (round 1's off-origin and scheme-relative strings,
+   * round 2's tab-smuggled one) onto the SAME `safeNextPath` call site in this form.
+   */
+  it('routes to `next` when it was given, instead of /plans', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(201, { user: TEST_USER })));
+    const user = userEvent.setup();
+
+    render(<SignUpForm next="/invite/abc123" />);
+    await user.type(screen.getByLabelText('Name'), 'Ada Lovelace');
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test');
+    await user.type(screen.getByLabelText('Password'), 'hunter2hunter2');
+    await user.click(screen.getByRole('button', { name: 'Create an account' }));
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/invite/abc123'));
+  });
+
+  it('falls back to /plans rather than following an off-origin `next` (open-redirect guard)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(201, { user: TEST_USER })));
+    const user = userEvent.setup();
+
+    render(<SignUpForm next="https://evil.example/tandem" />);
+    await user.type(screen.getByLabelText('Name'), 'Ada Lovelace');
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test');
+    await user.type(screen.getByLabelText('Password'), 'hunter2hunter2');
+    await user.click(screen.getByRole('button', { name: 'Create an account' }));
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/plans'));
+    expect(replace).not.toHaveBeenCalledWith('https://evil.example/tandem');
+  });
+
+  it('falls back to /plans rather than following a scheme-relative `next` (//evil.example)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(201, { user: TEST_USER })));
+    const user = userEvent.setup();
+
+    render(<SignUpForm next="//evil.example" />);
+    await user.type(screen.getByLabelText('Name'), 'Ada Lovelace');
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test');
+    await user.type(screen.getByLabelText('Password'), 'hunter2hunter2');
+    await user.click(screen.getByRole('button', { name: 'Create an account' }));
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/plans'));
+  });
+
+  it('falls back to /plans rather than following a tab-smuggled scheme-relative `next`', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(201, { user: TEST_USER })));
+    const user = userEvent.setup();
+
+    render(<SignUpForm next={'/\t/evil.example'} />);
+    await user.type(screen.getByLabelText('Name'), 'Ada Lovelace');
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test');
+    await user.type(screen.getByLabelText('Password'), 'hunter2hunter2');
+    await user.click(screen.getByRole('button', { name: 'Create an account' }));
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/plans'));
+    expect(replace).not.toHaveBeenCalledWith('/\t/evil.example');
+  });
+
+  /**
+   * The "Already have an account? Sign in" link forwards `next` too (added alongside the
+   * `SignInForm` "Create an account" link fix, for the same reason: a visitor who followed
+   * "Sign in and join," realised they need an account, used THIS link instead, then
+   * realised they already had one, should not have their invite context dropped on the
+   * last hop back).
+   */
+  it('the "Already have an account?" link forwards `next` when given', () => {
+    render(<SignUpForm next="/invite/abc123" />);
+    expect(screen.getByTestId('create-account-signin-link')).toHaveAttribute(
+      'href',
+      '/signin?next=%2Finvite%2Fabc123',
+    );
+  });
+
   it('routes to /signin with the address prefilled when signedIn is false', async () => {
     vi.stubGlobal(
       'fetch',
@@ -99,6 +177,39 @@ describe('SignUpForm', () => {
 
     await waitFor(() =>
       expect(push).toHaveBeenCalledWith('/signin?email=ada%40example.test&reason=registered'),
+    );
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  /**
+   * FIX ROUND 1 (reviewer Important 2). `SignUpForm.tsx`'s `params.set('next', next)` is
+   * spec §11 case 3's load-bearing hop: drop it and a brand-new user who registers but is
+   * NOT auto-signed-in silently loses the invite and lands on a plain `/signin`, with
+   * nothing red anywhere - the existing test above only renders with no `next` at all, so it
+   * cannot see this. Extends it rather than replacing it, so the no-`next` case stays
+   * covered on its own.
+   */
+  it('forwards `next` into the /signin hand-off when given, for a registered-but-not-signed-in user', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(201, { user: TEST_USER, signedIn: false, email: 'ada@example.test' }),
+        ),
+    );
+    const user = userEvent.setup();
+
+    render(<SignUpForm next="/invite/abc123" />);
+    await user.type(screen.getByLabelText('Name'), 'Ada Lovelace');
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test');
+    await user.type(screen.getByLabelText('Password'), 'hunter2hunter2');
+    await user.click(screen.getByRole('button', { name: 'Create an account' }));
+
+    await waitFor(() =>
+      expect(push).toHaveBeenCalledWith(
+        '/signin?email=ada%40example.test&reason=registered&next=%2Finvite%2Fabc123',
+      ),
     );
     expect(replace).not.toHaveBeenCalled();
   });

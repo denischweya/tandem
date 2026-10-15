@@ -39,12 +39,18 @@ export type SessionReadResult =
  * session (`SessionErrorFallback` replaces the whole page), so it fails toward an error
  * state; `/invite/[token]`'s whole reason for existing is to show the plan to someone who
  * has not signed in yet, so it fails toward the SIGNED-OUT branch instead - the one render
- * this page can always produce regardless of whether the session read itself worked. A
- * shared helper would have to parameterise that fallback, for two call sites, which is the
- * kind of indirection this repo's own `matchedFieldErrors` docblock warns reads as "no
- * information" at the one call site that actually matters. Still only an `error.tsx` or a
- * call-site catch, per the paragraph above - a third caller that wants the SAME fallback as
- * one of these two should import it from there rather than writing a third copy.
+ * this page can always produce regardless of whether the session read itself worked.
+ *
+ * CORRECTED (Fix round 1): this paragraph used to claim "a shared helper would have to
+ * parameterise that fallback" - MEASURED FALSE, by the reviewer: the two copies are
+ * byte-identical, neither takes nor uses a fallback parameter, and each page picks its own
+ * fallback OUTSIDE the duplicated unit (in the branch reading `result.ok`), not inside it. A
+ * single parameterless `readSessionSafely` here would serve both verbatim. The honest reason
+ * it stays duplicated: sharing two byte-identical six-line wrappers buys little, not that
+ * the call sites structurally differ in a way that would force a parameter. Still only an
+ * `error.tsx` or a call-site catch, per the paragraph above - a third caller that wants the
+ * SAME fallback as one of these two should import it from there rather than writing a third
+ * copy.
  */
 export class SessionReadError extends Error {
   constructor(readonly status: number) {

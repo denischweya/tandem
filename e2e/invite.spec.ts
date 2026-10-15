@@ -7,9 +7,20 @@ import { tabUntilFocused } from './support/keyboard';
 const VALID_TOKEN = '7Jm9kP3';
 const INVITE_PATH = `/invite/${VALID_TOKEN}`;
 
-function nextQuery(): string {
-  return new URLSearchParams({ next: INVITE_PATH }).toString();
-}
+/**
+ * FIX ROUND 1 (reviewer Minor 2). These used to be built with
+ * `new URLSearchParams({ next: INVITE_PATH }).toString()` - the IDENTICAL call
+ * `InviteActions`/`SignupPrompt` themselves make to produce the href they navigate to. An
+ * assertion built from the same encoding call as the implementation moves with it: if the
+ * production code's encoding ever changed, this expectation would change right along with
+ * it and stay green over a real behaviour change - the same "an assertion must be able to
+ * observe the value it is named for" trap this wave has hit before (the mobile relay test
+ * that could not see its own field). Written as literals instead, computed once by hand
+ * (`node -e "new URLSearchParams({next:'/invite/7Jm9kP3'}).toString()"` -> confirmed) rather
+ * than re-derived at test-run time.
+ */
+const EXPECTED_SIGNIN_URL = '/signin?next=%2Finvite%2F7Jm9kP3';
+const EXPECTED_SIGNUP_URL = '/signup?next=%2Finvite%2F7Jm9kP3';
 
 /**
  * A `UserSchema`-valid body (`@tandem/shared`) for mocking `/api/auth/login`'s 200 response -
@@ -55,13 +66,13 @@ test.describe('guest invite', () => {
     const signIn = page.getByRole('button', { name: 'Sign in and join' });
     await expect(signIn).toBeVisible();
     await signIn.click();
-    await expect(page).toHaveURL(`/signin?${nextQuery()}`);
+    await expect(page).toHaveURL(EXPECTED_SIGNIN_URL);
 
     await page.goto(INVITE_PATH);
     const signUp = page.getByRole('button', { name: 'Create an account and join' });
     await expect(signUp).toBeVisible();
     await signUp.click();
-    await expect(page).toHaveURL(`/signup?${nextQuery()}`);
+    await expect(page).toHaveURL(EXPECTED_SIGNUP_URL);
   });
 
   test('both actions are reachable and operable by keyboard', async ({ page }) => {
@@ -72,13 +83,13 @@ test.describe('guest invite', () => {
     // Enter activates the focused button, same as a native control — the accessibility
     // pattern `RsvpResponse`'s RSVP buttons established, kept here.
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL(`/signin?${nextQuery()}`);
+    await expect(page).toHaveURL(EXPECTED_SIGNIN_URL);
 
     await page.goto(INVITE_PATH);
     await tabUntilFocused(page, 'invite-signup');
     await expect(page.getByTestId('invite-signup')).toBeFocused();
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL(`/signup?${nextQuery()}`);
+    await expect(page).toHaveURL(EXPECTED_SIGNUP_URL);
   });
 
   test('an unrecognised or expired token shows a graceful message, not a crash', async ({
