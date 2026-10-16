@@ -427,15 +427,23 @@ export async function verifyEmailHandler(request: Request): Promise<Response> {
  * `signedIn` NOR `expired` NOR `signedOut` - there is no fourth state in this handler's
  * contract (`useSession.ts`'s `SessionResultSchema` is a strict three-member discriminated
  * union), so these now fall through to `relayFailure`, which answers with a non-2xx status
- * and a body that has no `status` field at all. `useSession.ts`'s `fetchSession` throws on a
- * non-2xx before it ever reaches `SessionResultSchema.parse`, so this surfaces as a THROWN
- * query error that react-query retries a bounded number of times - it is never read as
- * `expired` and never triggers `refreshSession()`. Before this fix, EVERY non-ok result
+ * and a body that has no `status` field at all. Before this fix, EVERY non-ok result
  * (including a 500 that never looked at the access token, and a transport failure that never
  * reached the API at all) mapped to `expired`, so a brief API outage walked every open web
  * session through expired -> refresh -> (the API still down) -> refreshHandler's own
  * over-eager clearing -> both credentials discarded -> signed out, forcing a password
  * re-entry for a refresh token that was never invalid.
+ *
+ * CORRECTED (Wave 1b final review, branch coherence): this paragraph used to justify the fix
+ * ENTIRELY by `useSession.ts`'s `fetchSession`, which throws on a non-2xx before reaching
+ * `SessionResultSchema.parse`, surfacing as a react-query error react-query itself retries -
+ * MEASURED, that consumer never runs: `useSession()` has zero call sites anywhere in this
+ * tree. The fix is still correct, for the readers that ARE live: `src/server/session.ts`'s
+ * `getSession()` (read server-side by `/plans` and `/invite/[token]`) throws its own
+ * `SessionReadError` on exactly this shape rather than misreading a 500 as `expired`, and
+ * `ExpiredSessionRefresh.tsx`'s `isNowSignedOut` (added Wave 1b final review, W7) relies on
+ * `!response.ok` meaning "not a clean signedIn/expired/signedOut answer" to stay conservative
+ * on a transient failure rather than misreading one as confirmation a session just ended.
  */
 export async function sessionHandler(request: Request): Promise<Response> {
   const { access } = readSessionCookies(request.headers.get('cookie'));

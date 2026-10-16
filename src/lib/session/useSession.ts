@@ -17,6 +17,20 @@ import { refreshSession } from './refresh-client';
  * Named `.ts`, not `.tsx`, per the brief's own file list - `SessionProvider` therefore uses
  * `createElement` rather than JSX syntax, since a plain `.ts` file is never scanned for JSX
  * (`<Foo>` there parses as a type assertion, not an element).
+ *
+ * NO CONSUMER YET (Wave 1b final review, branch coherence - "the branch's single largest
+ * coherence defect"). `grep -rn "useSession()"` over `src` and `e2e` returns this file's own
+ * definition and one docblock mention in `layout.tsx` - no page or component calls it. Every
+ * export below `SessionProvider` (`useSession` itself, `fetchSession`, `SessionFetchError`,
+ * `SessionResultSchema`, `SESSION_QUERY_KEY`, `SessionResult`) is therefore unreached in
+ * production. In practice the `expired` -> refresh flow runs entirely through
+ * `ExpiredSessionRefresh.tsx` and `refresh-client.ts`, never through this hook - and that
+ * component (and `/plans/page.tsx`'s own server-side `getSession()`) handle the SAME failure
+ * outcome DIFFERENTLY from how this hook's own docblock below describes handling it (see
+ * that docblock's own note on the three ways `refreshSession()` resolves `false`). Not a
+ * defect - nothing here executes, nothing leaks - but whoever gives `useSession` its first
+ * caller inherits that disagreement and should resolve it then, not assume this hook's
+ * documented behaviour is already live and proven.
  */
 
 const SessionResultSchema = z.discriminatedUnion('status', [

@@ -14,10 +14,19 @@ import { QueryClient } from '@tanstack/react-query';
  * error (or a transport failure) with a non-2xx status and a body with no `status` field,
  * and `useSession.ts`'s `fetchSession` throws a `SessionFetchError` (carrying `.status`)
  * before ever reaching `SessionResultSchema.parse` for exactly that case - see its own
- * docblock. So `isAuthFailure` is load-bearing for `useSession` ITSELF now, not merely
- * speculative groundwork for data-fetching hooks Task 11 and later add - though it still
- * needs to stay correct for those too, which is why the check stays duck-typed rather than an
- * `instanceof SessionFetchError` that would tie this module to one caller's error class.
+ * docblock. The intent was that `isAuthFailure` would be load-bearing for `useSession` ITSELF
+ * from this point on, not merely speculative groundwork for data-fetching hooks Task 11 and
+ * later add.
+ *
+ * CORRECTED (Wave 1b final review, branch coherence): "load-bearing for `useSession` ITSELF
+ * NOW" was true of the CODE, not of anything that actually runs - `useSession()` has zero
+ * call sites anywhere in this tree (see that hook's own corrected docblock), so this
+ * `QueryClient` is never the one `useQuery({queryFn: fetchSession})` runs against, and this
+ * predicate can never receive the `SessionFetchError` it was written to recognise. It still
+ * needs to stay correct for whichever data-fetching hook actually reaches it first - which is
+ * why the check stays duck-typed rather than an `instanceof SessionFetchError` that would tie
+ * this module to one caller's error class - but "load-bearing" overstated what this correction
+ * itself had just verified.
  */
 function isAuthFailure(error: unknown): boolean {
   if (typeof error !== 'object' || error === null || !('status' in error)) return false;

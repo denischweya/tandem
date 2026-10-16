@@ -20,8 +20,13 @@ export const metadata: Metadata = {
  * `SessionProvider` wraps `{children}`, not the other way into making THIS file a client
  * component: `RootLayout` stays a Server Component (so every page under it can itself default
  * to one), and `SessionProvider` - a `'use client'` boundary exported from
- * `src/lib/session/useSession.ts` - is the one client island the tree needs for
- * `useSession()`'s `QueryClientProvider` to exist above every page that calls it.
+ * `src/lib/session/useSession.ts` - supplies the `QueryClientProvider` `useSession()` would
+ * need above every page that called it.
+ *
+ * CORRECTED (Wave 1b final review, branch coherence): this used to say "every page that
+ * calls it" as if that were already true - MEASURED FALSE, no page calls `useSession()`
+ * anywhere in this tree (see that hook's own corrected docblock). `SessionProvider` is wired
+ * in ahead of its only consumer, not in response to one.
  */
 export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
