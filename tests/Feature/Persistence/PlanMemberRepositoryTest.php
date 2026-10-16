@@ -144,10 +144,15 @@ it('refuses every transfer target DeleteAccount::successorFor would refuse', fun
     //
     // Three layers again, and the third is invisible: the `status` filter refuses $invited and
     // $left, `whereNull('suspended_at')` refuses $suspended, and $deleted is refused by User's
-    // SoftDeletes global scope, which whereHas() is what applies. Deleting the whole whereHas
-    // line therefore reds the $suspended case ONLY - with no join to `users` left there is no
-    // scope either - so the soft-delete half needs a mutation of its own that keeps the
-    // suspension check and drops the scope.
+    // SoftDeletes global scope, which whereHas() is what applies.
+    //
+    // Deleting the whole whereHas line loses BOTH account conditions at once - there is then no
+    // `users` subquery to carry either - so that mutation proves neither half on its own.
+    // Isolating them takes two: ->whereHas('user') with no closure keeps the scope and drops
+    // the suspension check, and withTrashed() inside the closure keeps the suspension check and
+    // drops the scope. Measured both ways, and the soft-delete half needed $deleted moved to
+    // the front of this loop to observe at all, because Pest stops a test at its first failing
+    // expectation and a later case is never evaluated.
     $repository = app(PlanMemberRepository::class);
 
     $plan = Plan::factory()->create();
@@ -184,8 +189,10 @@ it('lists active members in joined_at ASC, id ASC order with their display names
     // reads as a diff naming the leaked member rather than as the missing-profile exception the
     // hydration loop raises - a different layer entirely, with its own test at the end of this
     // file. $invited keeps PlanMemberFactory's default NULL joined_at, which is the shape an
-    // invited row really has, so it is excluded twice over and deleting the whereNotNull filter
-    // appends 'Invited' here too.
+    // invited row really has - but that does not make this test a second detector for the
+    // whereNotNull filter: measured, the status filter excludes the row before the NULL check
+    // can matter, so deleting whereNotNull leaves this test green and the NULL-joined_at case
+    // below is the only thing in this file that reds for it.
     $invited = User::factory()->hasProfile(['display_name' => 'Invited'])->create();
     PlanMember::factory()->create(['plan_id' => $plan->id, 'user_id' => $invited->id]);
 

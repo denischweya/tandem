@@ -59,10 +59,12 @@ final readonly class EloquentPlanMemberRepository implements PlanMemberRepositor
         // and a manual join would have to restate `deleted_at IS NULL` alongside this
         // `suspended_at IS NULL` - two copies of one rule, free to disagree.
         //
-        // Which also means the two halves fail differently under mutation, and the test says
-        // so: deleting this line entirely stops refusing a SUSPENDED target but still refuses a
-        // soft-deleted one, because with no join to `users` the SoftDeletes scope has nothing
-        // to apply to either.
+        // Which also means the two halves need separate mutations to prove, and not the one a
+        // first reading suggests: deleting this line entirely stops refusing a suspended target
+        // AND a soft-deleted one, because with no `users` subquery there is neither a
+        // suspension check nor a SoftDeletes scope left. Measured, against a prediction to the
+        // contrary. ->whereHas('user') with no closure is what isolates the suspension half,
+        // and withTrashed() inside this closure the soft-delete half.
         $target = $query
             ->whereHas('user', fn (Builder $account) => $account->whereNull('suspended_at'))
             ->first();
