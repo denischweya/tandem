@@ -114,10 +114,14 @@ final readonly class RecordActivity
      * completeness check (cases() vs array_keys($shapes)) runs before the loop that calls
      * execute(), so a case missing from that test's fixture reds there first, never reaching
      * this method at all - and a case present in the fixture is, by construction, one this
-     * match already handles. The only way to observe THIS line's UnhandledMatchError is to add
-     * a case to the enum, add a matching fixture row so the completeness check still agrees,
-     * and deliberately leave this match without an arm for it - which is a break step performed
-     * during implementation, not a standing assertion in the suite.
+     * match already handles. (In a full suite run, a tenth case added to the enum also reds
+     * tests/Unit/Domain/Plans/EnumTest.php:41's vocabulary pin on ActivityType::cases(), which
+     * reds for the same reason as this method's own pre-check and just as independently of
+     * whether this match has an arm for it - neither is this line's red.) The only way to
+     * observe THIS line's UnhandledMatchError is to add a case to the enum, add a matching
+     * fixture row so the completeness check still agrees, and deliberately leave this match
+     * without an arm for it - which is a break step performed during implementation, not a
+     * standing assertion in the suite.
      *
      * Two decisions visible in the arms. plan.updated carries field NAMES and never values:
      * plan_activity is immutable and readable by every member, so a value written here is

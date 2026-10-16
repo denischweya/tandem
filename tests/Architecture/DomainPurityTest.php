@@ -155,20 +155,39 @@ arch('only the activity writer, the activity reader, account deletion and the fa
 // primitive for "does this file's source contain this substring", so a plain content scan is
 // the only way to see a bare `DB::table('plan_activity')` call that imports no model.
 //
+// Fix round 1 (2026-10-16) rewrote both the needle and the allow-list below. The first draft
+// matched only the literal quoted both sides - `'plan_activity'` / `"plan_activity"` - which
+// missed an aliased table reference (`DB::table('plan_activity as a')`,
+// `DB::table("plan_activity AS pa")`) and any raw-SQL spelling (`DB::statement('insert into
+// plan_activity ...')`, `DB::insert('... plan_activity ...')`). An alias is an ordinary thing to
+// write in query-builder code, not an exotic evasion, and a raw statement's created_at is
+// exactly the now()-instead-of-Clock hazard this rule exists to prevent. The needle is now the
+// bare word `plan_activity`, no quoting required, which catches all of the above along with the
+// comment-only mentions it already caught.
+//
 // Deliberately lexical, not semantic, and that is a limitation worth stating rather than
 // hiding: this scan cannot tell a real write from a comment that merely mentions the table
 // name, so a file that legitimately discusses plan_activity in prose has to go on the allow-list
-// too, exactly like a file that writes to it. It also cannot tell an INSERT from a SELECT - the
-// allow-list below includes the one known reader (EloquentPlanActivityRepository) for that
-// reason. What it buys back is coverage the rule above cannot offer at all: nothing under app/
-// may reference the literal table name except these three files, named or not.
+// too, exactly like a file that writes to it. It also cannot tell an INSERT from a SELECT, or a
+// table reference from an incidental substring inside a longer identifier (measured: no such
+// identifier exists under app/ today - `grep -rn plan_activity app/` shows the word standing
+// alone in every match). And the scan is scoped to app/ only: a raw `plan_activity` reference in
+// routes/, database/seeders or a published factory is covered by neither this scan nor the arch
+// rule above - nothing in this suite guards those paths.
 //
-// The allow-list is exactly three, by file path relative to app/: the model itself (it must
-// name its own table), the one writer this task creates, and the one reader a later task
-// creates (listed before it exists, harmless for the same reason as the arch rule above - the
-// scan below only ever matches files that exist today, so an absent allow-listed path changes
-// nothing about what passes). The positive assertion after the scan - that it actually found
-// the one match guaranteed to exist - exists so this test cannot pass by matching nothing: a
+// The allow-list is six, by file path relative to app/, in two groups, measured today by
+// `grep -rln plan_activity app/`. Two files write or read the table through the query builder:
+// the model itself (it must name its own table) and the one reader a later task creates (listed
+// before it exists, harmless for the same reason as the arch rule above - the scan below only
+// matches files that exist today, so an absent allow-listed path changes nothing about what
+// passes). The other four mention the table name only in prose: RecordActivity (this task's own
+// docblock, four lines - fix round 1 found an earlier version of this comment framing its entry
+// as pre-authorisation for a future quoted form it does not use; it needs no such excuse, since
+// its prose already matches the bare-word needle today), DeleteAccount (§9.3 step 4's
+// anonymisation comment), PurgeDeletedUsersCommand and ActivityType (one comment line each).
+// That grep finds nothing else under app/ today, so the six are a closed set, not a ceiling with
+// room presumed under it. The positive assertion after the scan - that it actually found the
+// one match guaranteed to exist - exists so this test cannot pass by matching nothing: a
 // typo'd needle would make $offenders always [] and this guard would never have been exercised.
 it('allows the literal table name "plan_activity" only where it already belongs', function (): void {
     // No uses() binding exists for tests/Architecture (tests/Pest.php:26 binds only Feature),
@@ -178,9 +197,14 @@ it('allows the literal table name "plan_activity" only where it already belongs'
     $appDirectory = dirname(__DIR__, 2).'/app';
 
     $allowed = [
+        // Write or read the table through the query builder.
         'Models/PlanActivity.php',
-        'Application/Plans/RecordActivity.php',
         'Infrastructure/Persistence/Eloquent/EloquentPlanActivityRepository.php',
+        // Mention the table name only in prose.
+        'Application/Plans/RecordActivity.php',
+        'Application/Users/DeleteAccount.php',
+        'Console/Commands/PurgeDeletedUsersCommand.php',
+        'Domain/Plans/ActivityType.php',
     ];
 
     $offenders = [];
@@ -196,8 +220,7 @@ it('allows the literal table name "plan_activity" only where it already belongs'
 
         $contents = file_get_contents($file->getPathname());
 
-        if ($contents !== false
-            && (str_contains($contents, "'plan_activity'") || str_contains($contents, '"plan_activity"'))) {
+        if ($contents !== false && str_contains($contents, 'plan_activity')) {
             $offenders[] = str_replace('\\', '/', substr($file->getPathname(), strlen($appDirectory) + 1));
         }
     }

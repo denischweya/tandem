@@ -29,9 +29,9 @@ uses(RefreshDatabase::class);
  *   - spec §11.1's subject_type/metadata table, as a refusal rather than as a comment.
  *   - spec §11.4: nothing reaches audit_logs, and nothing reaches the log.
  *
- * Imports arrive with the case that needs them: DB and assertDatabaseEmpty with A.7, nothing
- * else later. Pint's Laravel preset includes no_unused_imports, so adding them earlier makes
- * `pint --test` fail on an intermediate state.
+ * Every import above is used by at least one case below - Pint's Laravel preset includes
+ * no_unused_imports, so an import for a case that got cut during review would fail
+ * `pint --test` rather than sit there unused.
  */
 it('writes one row with created_at taken from the Clock, to the second', function (): void {
     $plan = Plan::factory()->create();
@@ -308,8 +308,10 @@ it('writes a row for every one of the nine types, with the shape section 11.1 gi
     // constants, so a mutation to either constant moves expected and actual together and the
     // assertion above stays green while member.invited and invite.revoked publish the wrong
     // subject_type to every client. This pins the actual string by literal, independent of the
-    // constant under test - 'PlanInvite' and 'User' appear nowhere else as literals in this
-    // file before this line.
+    // constant under test. 'PlanInvite' appears nowhere else as a literal in this file before
+    // this line; 'User' does (:181, :241), in hand-written refusal-message and assertion
+    // literals that are themselves independent of the SUBJECT_USER constant - worth naming
+    // rather than claiming away, though it does not weaken the independence this pin is for.
     expect(PlanActivity::query()->orderBy('activity_type')->pluck('subject_type', 'activity_type')->all())
         ->toBe([
             'invite.revoked' => 'PlanInvite',
