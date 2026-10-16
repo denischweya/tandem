@@ -234,22 +234,32 @@ it('allows the literal table name "plan_activity" only where it already belongs'
 // Task 8's authorization-seam gate (fix round 1, 2026-10-16). findVisibleTo() is the one method
 // that enforces §5.1's 404-over-403 rule, and the same interface publishes two methods that
 // deliberately go around it: findById(), which returns a Plan with no membership check at all,
-// and countActiveMembers(), which is additionally an existence oracle - a real Plan always has
-// at least one active member, so a non-zero count confirms to a caller who cannot see the Plan
-// that it exists.
+// and countActiveMembers(), which is additionally a PARTIAL existence oracle: a NONZERO count
+// confirms to a caller who cannot see the Plan that it exists.
+//
+// Only nonzero. An earlier version of this comment justified the oracle with "a real Plan always
+// has at least one active member", and that premise is false - verified in the code, not
+// reasoned about. DeleteAccount::resolvePlanOwnership() ARCHIVES a Plan with no eligible
+// successor rather than deleting it, and DeleteAccount then marks every membership of the
+// departing user `left` with no plan filter at all, so a sole owner closing their account leaves
+// a real, persisted Plan with zero active members until PurgeDeletedUsersCommand removes it on
+// day 30. A zero is therefore ambiguous between a malformed id, a Plan that does not exist, and
+// exactly that Plan. The leak is one-directional and that is the honest version of it; the gate
+// is unchanged, because only its justification was wrong.
 //
 // Both methods are correct, and the interface's own docblock names the callers that need them:
 // §10.3's unauthenticated invite preview and §10.7 step 3's archived-Plan refusal, where the
 // invite token is the credential and the caller is by definition not a member yet. So this is an
 // ALLOW-LIST, not a ban. Those callers will arrive; what this gate buys is that the task adding
-// one has to put itself on the list below, which makes bypassing the seam a decision someone
-// wrote down rather than an accident nothing reds.
+// one has to put itself on this test's own $allowed list, which makes bypassing the seam a
+// decision someone wrote down rather than an accident nothing reds.
 //
 // Not an arch() rule, for a mechanical reason: pest-plugin-arch's dependency walker inspects
 // `use` statements and class references, and every legitimate caller of listForActor() imports
 // the very same PlanRepository class that a caller of findById() would. An import-level rule
-// cannot separate the two. The precedent for a plain content scan instead is the plan_activity
-// test above, and the same limits apply here. Stated, not hidden:
+// cannot separate the two. The precedent for a plain content scan instead is
+// it('allows the literal table name "plan_activity" only where it already belongs') in this same
+// file, and the same limits apply here. Stated, not hidden:
 //
 //   - It is lexical, so a dynamic call defeats it completely: `$m = 'findById'; $repo->$m($id);`
 //     contains neither needle, and so does any call through a variable method name, a
@@ -261,16 +271,25 @@ it('allows the literal table name "plan_activity" only where it already belongs'
 //     a thoroughly generic name - or countActiveMembers(). That is not a defect to engineer
 //     around: adding the path to the allow-list is the intended response, and it is the same
 //     deliberate decision this gate exists to force.
-//   - It is scoped to app/ only, exactly like the scan above. tests/ is intentionally outside
-//     it, because PlanRepositoryTest calls both methods directly and must keep doing so; so are
-//     routes/, database/ and any other path, which nothing in this suite guards.
+//   - It is scoped to app/ only, exactly like that plan_activity scan. tests/ is intentionally
+//     outside it, because PlanRepositoryTest calls both methods directly and must keep doing so;
+//     so are routes/, database/ and any other path, which nothing in this suite guards.
+//   - THE LARGEST FALSE NEGATIVE, and the one to know about before trusting this gate: it sees
+//     two method names, so a use case that goes to `Plan::query()` (or PlanMember::query())
+//     directly skips findVisibleTo() without containing either needle. That route is wide open
+//     BY DESIGN - App\Application depending on App\Models is deliberately allowed, and
+//     arch('models do not reach into the application layer') forbids only the reverse edge, so
+//     nothing in this suite stands in its way. It is not hypothetical either:
+//     DeleteAccount::resolvePlanOwnership() already reads Plans exactly that way, for a
+//     legitimate reason. Probed and confirmed rather than assumed. There is no mechanical guard
+//     for that vector at all, here or in PHPStan; review is the only thing covering it.
 //
 // The positive assertion before the diff exists so this cannot pass by matching nothing: a
 // typo'd needle would leave $offenders empty and the guard would never have fired.
 it('allows findById() and countActiveMembers() only where the authorization seam already admits them', function (): void {
-    // Path computed from __DIR__ for the same reason the scan above does it: no uses() binding
-    // exists for tests/Architecture, so this suite never boots the application and app_path()
-    // has no container binding to resolve against.
+    // Path computed from __DIR__ for the same reason the plan_activity scan does it: no uses()
+    // binding exists for tests/Architecture, so this suite never boots the application and
+    // app_path() has no container binding to resolve against.
     $appDirectory = dirname(__DIR__, 2).'/app';
 
     $allowed = [

@@ -107,10 +107,11 @@ it('refuses a malformed plan id without reaching Postgres', function (): void {
 });
 
 it('refuses a malformed actor id on both read paths, and reaches Postgres on neither', function (): void {
-    // The $actorId twin of the test above, which asserts only the $planId half. Both methods
-    // put the raw actor string in front of plan_members.user_id - findVisibleTo() through
-    // withViewer()'s two subselects, listForActor() through its whereHas - so with either shape
-    // check gone this is SQLSTATE[22P02] and a 500 where a 404 or an empty page belongs.
+    // The $actorId twin of 'refuses a malformed plan id without reaching Postgres', which
+    // asserts only the $planId half. Both methods put the raw actor string in front of
+    // plan_members.user_id - findVisibleTo() through withViewer()'s two subselects,
+    // listForActor() through its whereHas - so with either shape check gone this is
+    // SQLSTATE[22P02] and a 500 where a 404 or an empty page belongs.
     //
     // Two guards in two methods, and each was mutation-proved on its own: a single mutation
     // spanning both would show only that one of them fires.
@@ -145,6 +146,13 @@ it('refuses an actor who holds no plan_members row, and omits the Plan from thei
     // default instead and a persisted non-member receives a full PlanContext for a Plan they
     // have no relationship to. The list omits the Plan for a different reason entirely: the
     // whereHas filter on plan_members.user_id, which the ternaries never see.
+    //
+    // Expect the shape of that second proof, so a re-runner does not read it as a broken step:
+    // dropping the whereHas user_id filter reds this assertion as an ERROR, not as a
+    // `Failed asserting ...` diff. The row then reaches contextFor(), which cannot resolve a
+    // membership for THIS actor, and listForActor() raises its RuntimeException. SQL wider than
+    // the policy is a loud 500 by design - never a silent leak - so the error IS the guard
+    // working.
     $plan = Plan::factory()->create(['title' => 'Secret']);
     PlanMember::factory()->active()->create(['plan_id' => $plan->id]);
 
@@ -180,16 +188,20 @@ it('refuses a Plan whose membership role no MemberRole case recognises', functio
 });
 
 it('refuses a Plan whose membership status no MemberStatus case recognises', function (): void {
-    // The status twin of the test above. "Deny, not 500" was applied to both columns of
-    // contextFor() and, until this case existed, proved for only one of them: MemberStatus::
-    // cases() drives the two policy-comparison tests, so no fixture in this file ever wrote a
-    // status outside the enum.
+    // The status twin of 'refuses a Plan whose membership role no MemberRole case recognises'.
+    // "Deny, not 500" was applied to both columns of contextFor() and, until this case existed,
+    // proved for only one of them: the policy-comparison tests enumerate MemberStatus::cases(),
+    // so every status they write is by construction one the enum recognises, and nothing else in
+    // this file wrote one outside it.
     //
     // MemberStatus::tryFrom() is what makes the refusal: with from() in its place this throws
     // ValueError out of findVisibleTo() and the 404 becomes a 500. The list's answer comes from
     // somewhere else again - the SQL `plan_members.status = 'active'` filter excludes the row
-    // before contextFor() can see it - so the from() mutation reds the first assertion only,
-    // and the second is held open by the query instead.
+    // before contextFor() can see it - so the from() mutation reds the first assertion only, and
+    // the second is held open by the query instead. Expect the same error shape its twin
+    // describes when proving that second half: dropping that SQL filter reds as an ERROR rather
+    // than a `Failed asserting ...` diff, because the row then reaches contextFor(), fails to
+    // resolve, and listForActor() raises its RuntimeException.
     $plan = Plan::factory()->create();
     $actor = User::factory()->hasProfile()->create();
 
@@ -375,14 +387,17 @@ it('clamps a limit of 0 up to one row rather than returning an empty page', func
     // yields -5 - so 0 and negatives are values this method can really be handed whenever the
     // limit rule one layer out is missing or marked nullable. Without the arm, min(MAX_LIMIT, 0)
     // makes this limit(1) with take(0): an empty page AND a null cursor for an actor who does
-    // have Plans, which a client reads as "no Plans" rather than as a clamp.
+    // have Plans, which a client reads as "no Plans" rather than as a clamp. The null cursor
+    // follows by construction rather than needing its own measurement - take(0) leaves
+    // $page->last() null, and a cursor is built from the last row or not at all.
     $actor = User::factory()->hasProfile()->create();
 
     foreach (range(1, 2) as $index) {
         $plan = Plan::factory()->create(['title' => "Plan {$index}"]);
         member($plan, $actor, MemberRole::Member, '2026-01-01 10:00:00');
-        // Explicit updated_at for the same reason the paging test writes one: two rows stamped
-        // in the same millisecond make "which row is first" a coin toss.
+        // Explicit updated_at for the same reason 'pages forward in updated_at DESC, id DESC
+        // order and then stops' writes one: two rows stamped in the same millisecond make
+        // "which row is first" a coin toss.
         DB::table('plans')->where('id', $plan->id)->update(['updated_at' => "2026-02-0{$index} 10:00:00.000000+00"]);
     }
 
@@ -390,7 +405,9 @@ it('clamps a limit of 0 up to one row rather than returning an empty page', func
 
     expect(titlesOf($page))->toBe(['Plan 2']);
     // The cursor matters as much as the row: a page of one with no way forward is still a dead
-    // end for the other Plan.
+    // end for the other Plan. This assertion has a red of its own, independent of the clamp -
+    // narrowing the has-a-next-page test from $rows->count() > $size to > $size + 1 leaves the
+    // row correct and the cursor null.
     expect($page->nextCursor)->not->toBeNull();
 });
 
