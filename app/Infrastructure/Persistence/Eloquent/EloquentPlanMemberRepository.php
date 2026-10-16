@@ -163,6 +163,16 @@ final readonly class EloquentPlanMemberRepository implements PlanMemberRepositor
             // throw leaves the analyser at errors: 0 and reds 'refuses to publish a member
             // whose profile row is missing'.
             //
+            // And what it buys is the DIAGNOSIS rather than the refusal, which is worth knowing
+            // before anyone trims it: with the throw deleted the row is still not published,
+            // because PlanMemberView::$displayName is a typed string under strict_types and
+            // null reaches it - the measured failure is "Argument #2 ($displayName) must be of
+            // type string, null given", a TypeError naming a constructor parameter. This throw
+            // is what turns that into a message naming the plan_members row and the user whose
+            // profile is missing. A `(string)` coercion in its place is the version that would
+            // publish an empty display_name for a real member, and that is the option being
+            // refused here.
+            //
             // The joined_at throw below is the other way round: it is held open by the ANALYSER,
             // because PlanMemberView::$joinedAt is a non-nullable Carbon while $row->joined_at
             // is Carbon|null. Deleting it is one argument.type error at level 8 with every test
