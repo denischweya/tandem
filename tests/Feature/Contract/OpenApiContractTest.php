@@ -331,13 +331,65 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     expect(data_get(openApiDocument(), 'components.schemas.RegisterRequest.properties.timezone.description'))
         ->toBe('An IANA time zone identifier, such as "Europe/London" or "America/New_York".');
 
-    // The second, and the reason this test is here at all: every other published description
-    // and summary in the document is enumerated below. Spec §5.2 records three positions that
-    // publish prose verbatim - a comment above a rules() key, a FormRequest class docblock, a
-    // controller method docblock - and each was found only by reading the generated document,
-    // never by a gate. This is the gate: a note for the next engineer written in any of those
-    // three places fails here by name.
+    // The second, and the reason this test is here at all: every published description and
+    // summary in the five positions a DOCBLOCK can reach is enumerated below. Spec §5.2 records
+    // three - a comment above a rules() key, a FormRequest class docblock, a controller method
+    // docblock - and each was found only by reading the generated document, never by a gate.
+    //
+    // Two more are walked here, and Wave 2 is the first wave that writes into either. Both are
+    // the same harvest position - a comment above a rules() array key - for a PARAMETER rather
+    // than for a body field, and they differ only in where Scramble puts the string:
+    //
+    //   paths.*.*.parameters[n].description
+    //     A flat parameter. SchemaBagToParametersTransformer::makeParameterFromSchema() MOVES
+    //     the description off the schema and onto the Parameter ($schema->setDescription(''),
+    //     then ->description($description)), so it never appears under components.schemas at
+    //     all. Every rules() key of a GET or DELETE route lands here with no @query tag
+    //     involved: FormRequestParametersExtractor passes in: 'query' for every method in
+    //     RequestBodyExtension::HTTP_METHODS_WITHOUT_REQUEST_BODY (['get','delete','head']). A
+    //     controller method's `@param` tag description lands here too, for a path parameter -
+    //     PathParametersExtractor::handle() reads it off the action's own PHPDoc.
+    //
+    //   paths.*.*.parameters[n].schema.description
+    //     A deep (dot-notated) parameter: DeepParametersMerger::extractTypeFromParameter() moves
+    //     the description the other way, onto the parameter's schema. UNREACHABLE while
+    //     config/scramble.php keeps 'flatten_deep_query_parameters' => true, because a
+    //     dot-notated key is then flattened to foo[bar] with a flat schema and takes the first
+    //     path instead. Walked anyway, so flipping that flag cannot silently reopen the blind
+    //     spot - this half is insurance on a config value and proves nothing today, which is
+    //     said plainly here for the same reason OpenApiEnvironmentTest's docblock says it.
+    //
+    // Three positions are deliberately NOT walked by name. paths.*.*.responses.*.description (14
+    // strings today), components.responses.* (7), and info.description / servers.0.description
+    // (2) are AUTHORED - every one comes from a #[Response] attribute, from Scramble's own fixed
+    // strings, or from config/scramble.php - never from a docblock harvest. A path-level
+    // allow-list over ~50 authored strings cannot catch the only defect available there (an
+    // internal citation inside prose that is meant to be published), so it would be fifty lines
+    // of literal buying nothing.
+    //
+    // A SIXTH position is neither walked by name above nor excused as authored, and it is why
+    // the count below exists. A paginated list's ->additional(['meta' => ['next_cursor' => ...]])
+    // merges a plain PHP array into the response, and Scramble publishes its shape INLINE at
+    // paths.*.*.responses.*.content.*.schema.properties.meta.properties.next_cursor - never as a
+    // components.schemas entry. PhpDocResolver::enterNode() (vendor/dedoc/scramble/src/Infer/
+    // Visitors/PhpDocResolver.php) attaches a parsed docblock to ANY Expr\ArrayItem carrying a
+    // `//` or `/** */` comment, with no scoping to FormRequest::rules() at all - the identical
+    // mechanism already walked into components.schemas.*.properties above, just landing at a
+    // path this test has never named. Wave 2 writes no such resource yet (there is no list
+    // endpoint and no `next_cursor` anywhere in today's document), so the named walk above
+    // cannot be extended to a path that does not exist to prove it visits correctly. A comment
+    // above a future 'next_cursor' => $page->nextCursor would publish there with $prose and
+    // $parameterCount both unchanged - which is exactly the leak the count below exists to
+    // catch, in the only way a blind spot that has no name yet CAN be caught.
+    //
+    // One blind spot remains in the named walk, stated rather than implied: it descends exactly
+    // one level into components.schemas.*.properties, so a nested object's field description
+    // (components.schemas.X.properties.a.properties.b.description) escapes it too. Wave 2 writes
+    // no dot-notated body rule, so the document contains no such object to walk - checked, not
+    // assumed. Both that gap and the sixth position above are closed at the COUNT level, not the
+    // name level, by the recursive walk at the end of this test.
     $prose = [];
+    $parameterCount = 0;
 
     foreach (Arr::wrap(data_get(openApiDocument(), 'paths')) as $path => $operations) {
         foreach (Arr::wrap($operations) as $method => $operation) {
@@ -346,6 +398,18 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
 
                 if (is_string($value) && $value !== '') {
                     $prose[] = "paths.{$path}.{$method}.{$key}";
+                }
+            }
+
+            foreach (Arr::wrap(data_get($operation, 'parameters')) as $index => $parameter) {
+                $parameterCount++;
+
+                foreach (['description', 'schema.description'] as $key) {
+                    $value = data_get($parameter, $key);
+
+                    if (is_string($value) && $value !== '') {
+                        $prose[] = "paths.{$path}.{$method}.parameters.{$index}.{$key}";
+                    }
                 }
             }
         }
@@ -363,6 +427,22 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         }
     }
 
+    // Counted, for the reason the envelope case above is counted: a traversal that stopped
+    // finding parameter objects would build an empty $prose and pass while watching nothing.
+    // Four today, all four on POST /auth/verify-email. A Wave 2 route with a path or query
+    // parameter moves this number, and is meant to: any task that adds one must update this
+    // literal in the same commit and state the arithmetic it contributes (+1, +2, ...) in its
+    // report (controller-amendments.md Amendment 2). Task 39 re-derives the final absolute count
+    // from the regenerated document rather than trusting any task's arithmetic forward.
+    expect($parameterCount)->toBe(
+        4,
+        'The parameter walk above visited a different number of parameter objects than the '
+        .'document publishes. Either a route gained or lost a parameter - in which case this '
+        .'number moves with it (update the literal here in the same commit, and say by how much '
+        .'in your report) - or the walk stopped finding them, in which case the two parameter '
+        .'positions are no longer being checked at all.',
+    );
+
     expect($prose)->toEqualCanonicalizing([
         // Deliberate, client-facing, added by #[Endpoint] rather than by a docblock.
         'paths./auth/verify-email.post.summary',
@@ -371,5 +451,92 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         'components.schemas.RegisterRequest.properties.timezone.description',
     ], 'Published prose must be deliberate. Anything new here is either a client-facing '
         .'description that belongs in this list, or internal reasoning that leaked through one '
-        .'of spec §5.2\'s three harvest positions.');
+        .'of spec §5.2\'s harvest positions.');
+
+    // B37a: the two checks above name five positions by hand and excuse three more as
+    // authored. Both leave the sixth position described above - and any position nobody here
+    // has thought to name - completely unwatched: a string landing there moves neither
+    // $parameterCount nor $prose, so the mutation that proves it (a `//` comment above a future
+    // 'next_cursor' => $page->nextCursor) would leave both green and the byte gate would
+    // reproduce the leak forever. This closes that at the only level a blind-spot-by-definition
+    // CAN be closed at - not by naming the position, which would make it not a blind spot - but
+    // by counting every description/summary in the WHOLE document, at any depth, by key name
+    // alone, and pinning the total. It proves nothing about WHERE a new one landed or WHETHER it
+    // is deliberate - that is $prose's job for the positions it knows how to name - only that
+    // the total the two checks above account for has not silently grown somewhere neither of
+    // them looked.
+    $allProseStrings = 0;
+
+    $walkAllProse = function (mixed $node) use (&$walkAllProse, &$allProseStrings): void {
+        if (! is_array($node)) {
+            return;
+        }
+
+        foreach ($node as $key => $value) {
+            if (($key === 'description' || $key === 'summary') && is_string($value) && $value !== '') {
+                $allProseStrings++;
+            } else {
+                $walkAllProse($value);
+            }
+        }
+    };
+
+    $walkAllProse(openApiDocument());
+
+    // 26 today, measured by running this exact walk against the committed document and listing
+    // every position it found: 14 paths.*.*.responses.*.description + 7 components.responses.*
+    // (description, plus the nested message/errors property descriptions) + 2 info.description /
+    // servers.0.description + 2 paths./auth/verify-email.post.{summary,description} + 1
+    // components.schemas.RegisterRequest.properties.timezone.description - the last three of
+    // which $prose above already names and pins by content, not just by count.
+    expect($allProseStrings)->toBe(
+        26,
+        'The document now publishes a different number of description/summary strings, in a '
+        .'position neither $prose nor $parameterCount names above. Find it (walk the document '
+        .'for every description/summary key and print the full path, the way this number was '
+        .'first measured), then either add it to $prose\'s allow-list as deliberate client-facing '
+        .'prose, or trace and remove the docblock comment that leaked it - and update this '
+        .'number either way. It is not meant to catch up silently.',
+    );
+});
+
+it('publishes no component schema without properties, so no native enum reaches the document', function (): void {
+    // Spec §16.2 predicted that Scramble harvests a native backed enum's CLASS docblock into the
+    // published schema description, and the prediction holds: EnumTransformer::transform() calls
+    // addEnumDescription() unconditionally, and that method reads the enum's class docblock
+    // through ReflectionEnum::getDocComment() and prepends it to the description. The config key
+    // §16.2 blames for it - enum_cases_description_strategy - does NOT control it: only
+    // addEnumCasesDescriptions() reads that key, it handles CASE docblocks, and it returns early
+    // here because no case carries one. Output is byte-identical under 'description',
+    // 'extension', null and false. So the restriction §16.2 reaches is correct and the escape
+    // hatch its wording implies does not exist: Wave 2 types no FormRequest rule and no Resource
+    // field as a native PHP enum, and validates `role` and `status` with
+    // Rule::in(array_column(MemberRole::cases(), 'value')) - which publishes a plain string with
+    // an `enum` list, by way of Rules\In::__toString() and RuleTransformers/InRule.
+    //
+    // This is NOT the published-prose case above wearing a different hat. That case catches a
+    // published enum only while the enum still has a class docblock to leak; an enum with no
+    // docblock publishes no description and that case stays green. What is true either way is
+    // this: an enum schema carries `enum` and no `properties`, and
+    // tandem-shared/src/validation/auth.test.ts parses components.schemas with a Zod schema whose
+    // `properties` key is not .optional(), so the FIRST such entry makes .parse() throw and fails
+    // both cases in describe("the contract's own constraints") IN ANOTHER REPOSITORY, naming a
+    // cause that has nothing to do with whatever was added. Catching it here names the real one.
+    $schemas = Arr::wrap(data_get(openApiDocument(), 'components.schemas'));
+
+    expect($schemas === [])->toBeFalse(
+        'components.schemas is empty, so this traversal checked nothing. The document has at '
+        .'least eight component schemas.',
+    );
+
+    foreach ($schemas as $name => $schema) {
+        expect(data_get($schema, 'properties'))->not->toBeNull(
+            "components.schemas.{$name} publishes no `properties`, which is what a native PHP "
+            .'enum publishes instead of an object. Wave 2 types no FormRequest rule and no '
+            .'Resource field as a native enum (spec §16.2): a published enum carries its class '
+            .'docblock as the schema description, and it also breaks tandem-shared\'s constraint '
+            .'test, whose ConstraintDocument requires `properties` on every entry. Validate with '
+            .'Rule::in(array_column(X::cases(), \'value\')) and render the value as a string.',
+        );
+    }
 });
