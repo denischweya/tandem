@@ -113,6 +113,30 @@ it('refuses a Plan that does not exist with the same exception', function (): vo
         ->toThrow(PlanNotVisible::class);
 });
 
+it('refuses an actor who holds no plan_members row, and omits the Plan from their list', function (): void {
+    // §5.1's third case, and the one this whole seam exists for: a persisted user, a real Plan
+    // with real members, and no row joining the two.
+    //
+    // Both answers are asserted because two independent mechanisms produce them, and neither
+    // mutation reds the other half. findVisibleTo() refuses because withViewer()'s
+    // viewer_role/viewer_status subselects return NULL for a non-member and contextFor()'s two
+    // is_string() ternaries fall to their `: null` arm - give those arms a Member/Active
+    // default instead and a persisted non-member receives a full PlanContext for a Plan they
+    // have no relationship to. The list omits the Plan for a different reason entirely: the
+    // whereHas filter on plan_members.user_id, which the ternaries never see.
+    $plan = Plan::factory()->create(['title' => 'Secret']);
+    PlanMember::factory()->active()->create(['plan_id' => $plan->id]);
+
+    $stranger = User::factory()->hasProfile()->create();
+    $repository = app(PlanRepository::class);
+
+    expect(fn () => $repository->findVisibleTo($plan->id, $stranger->id))
+        ->toThrow(PlanNotVisible::class);
+
+    expect(titlesOf($repository->listForActor($stranger->id, PlanStatus::Active, new PageQuery(25, null))))
+        ->toBe([]);
+});
+
 it('refuses a Plan whose membership role no MemberRole case recognises', function (): void {
     // Fail closed. An unrecognised role is corrupt data no writer in this codebase can produce
     // (every writer writes MemberRole::X->value), and the alternatives are a ValueError at
@@ -132,6 +156,56 @@ it('refuses a Plan whose membership role no MemberRole case recognises', functio
 
     expect(app(PlanRepository::class)->listForActor($actor->id, PlanStatus::Active, new PageQuery(25, null))->items)
         ->toBe([]);
+});
+
+it('refuses a Plan whose membership status no MemberStatus case recognises', function (): void {
+    // The status twin of the test above. "Deny, not 500" was applied to both columns of
+    // contextFor() and, until this case existed, proved for only one of them: MemberStatus::
+    // cases() drives the two policy-comparison tests, so no fixture in this file ever wrote a
+    // status outside the enum.
+    //
+    // MemberStatus::tryFrom() is what makes the refusal: with from() in its place this throws
+    // ValueError out of findVisibleTo() and the 404 becomes a 500. The list's answer comes from
+    // somewhere else again - the SQL `plan_members.status = 'active'` filter excludes the row
+    // before contextFor() can see it - so the from() mutation reds the first assertion only,
+    // and the second is held open by the query instead.
+    $plan = Plan::factory()->create();
+    $actor = User::factory()->hasProfile()->create();
+
+    member($plan, $actor, MemberRole::Member, '2026-01-01 10:00:00');
+    DB::table('plan_members')
+        ->where('plan_id', $plan->id)
+        ->where('user_id', $actor->id)
+        ->update(['status' => 'wizard']);
+
+    expect(fn () => app(PlanRepository::class)->findVisibleTo($plan->id, $actor->id))
+        ->toThrow(PlanNotVisible::class);
+
+    expect(app(PlanRepository::class)->listForActor($actor->id, PlanStatus::Active, new PageQuery(25, null))->items)
+        ->toBe([]);
+});
+
+it('keeps an archived Plan visible to its active member', function (): void {
+    // findVisibleTo() deliberately does NOT filter plans.status, and this is what holds that
+    // open. §5.3 allows every GET on an archived Plan - "members keep reading their history" -
+    // and puts PlanNotEditable (409) on the write paths, which run AFTER visibility has already
+    // succeeded. Narrowing this query with where('plans.status', 'active') would therefore turn
+    // every archived-Plan 409 into a 404 and make the 409 unreachable, and before this case
+    // existed that change passed this file green.
+    //
+    // listForActor() is the method that does filter on plans.status, and "filters the list on
+    // plans.status and defaults nothing itself" pins it. The two rules differ on purpose: the
+    // list is a choice of which Plans to show, this method is an authorization answer.
+    $actor = User::factory()->hasProfile()->create();
+    $plan = Plan::factory()->archived()->create(['title' => 'Over']);
+
+    member($plan, $actor, MemberRole::Owner, '2026-01-01 10:00:00');
+
+    $context = app(PlanRepository::class)->findVisibleTo($plan->id, $actor->id);
+
+    expect($context->plan->title)->toBe('Over');
+    expect($context->plan->status)->toBe(PlanStatus::Archived->value);
+    expect($context->role)->toBe(MemberRole::Owner);
 });
 
 it('filters the list on plans.status and defaults nothing itself', function (): void {

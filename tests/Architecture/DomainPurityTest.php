@@ -230,3 +230,80 @@ it('allows the literal table name "plan_activity" only where it already belongs'
     expect($offenders)->toContain('Models/PlanActivity.php')
         ->and(array_diff($offenders, $allowed))->toBe([]);
 });
+
+// Task 8's authorization-seam gate (fix round 1, 2026-10-16). findVisibleTo() is the one method
+// that enforces §5.1's 404-over-403 rule, and the same interface publishes two methods that
+// deliberately go around it: findById(), which returns a Plan with no membership check at all,
+// and countActiveMembers(), which is additionally an existence oracle - a real Plan always has
+// at least one active member, so a non-zero count confirms to a caller who cannot see the Plan
+// that it exists.
+//
+// Both methods are correct, and the interface's own docblock names the callers that need them:
+// §10.3's unauthenticated invite preview and §10.7 step 3's archived-Plan refusal, where the
+// invite token is the credential and the caller is by definition not a member yet. So this is an
+// ALLOW-LIST, not a ban. Those callers will arrive; what this gate buys is that the task adding
+// one has to put itself on the list below, which makes bypassing the seam a decision someone
+// wrote down rather than an accident nothing reds.
+//
+// Not an arch() rule, for a mechanical reason: pest-plugin-arch's dependency walker inspects
+// `use` statements and class references, and every legitimate caller of listForActor() imports
+// the very same PlanRepository class that a caller of findById() would. An import-level rule
+// cannot separate the two. The precedent for a plain content scan instead is the plan_activity
+// test above, and the same limits apply here. Stated, not hidden:
+//
+//   - It is lexical, so a dynamic call defeats it completely: `$m = 'findById'; $repo->$m($id);`
+//     contains neither needle, and so does any call through a variable method name, a
+//     __call() forward, or a wrapper that re-exposes the method under a different name.
+//   - It cannot tell a call from prose. PlanRepository's class docblock discusses findById() in
+//     a sentence, so that file is on the list for two reasons at once; a future file that only
+//     MENTIONS either name has to be listed exactly like one that calls it.
+//   - It will false-positive on an unrelated class that happens to declare its own findById() -
+//     a thoroughly generic name - or countActiveMembers(). That is not a defect to engineer
+//     around: adding the path to the allow-list is the intended response, and it is the same
+//     deliberate decision this gate exists to force.
+//   - It is scoped to app/ only, exactly like the scan above. tests/ is intentionally outside
+//     it, because PlanRepositoryTest calls both methods directly and must keep doing so; so are
+//     routes/, database/ and any other path, which nothing in this suite guards.
+//
+// The positive assertion before the diff exists so this cannot pass by matching nothing: a
+// typo'd needle would leave $offenders empty and the guard would never have fired.
+it('allows findById() and countActiveMembers() only where the authorization seam already admits them', function (): void {
+    // Path computed from __DIR__ for the same reason the scan above does it: no uses() binding
+    // exists for tests/Architecture, so this suite never boots the application and app_path()
+    // has no container binding to resolve against.
+    $appDirectory = dirname(__DIR__, 2).'/app';
+
+    $allowed = [
+        // The declaration - which also discusses findById() in its class docblock.
+        'Application/Plans/PlanRepository.php',
+        // The implementation.
+        'Infrastructure/Persistence/Eloquent/EloquentPlanRepository.php',
+    ];
+
+    $offenders = [];
+
+    $files = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($appDirectory, FilesystemIterator::SKIP_DOTS),
+    );
+
+    foreach ($files as $file) {
+        if ($file->getExtension() !== 'php') {
+            continue;
+        }
+
+        $contents = file_get_contents($file->getPathname());
+
+        if ($contents === false) {
+            continue;
+        }
+
+        if (str_contains($contents, 'findById') || str_contains($contents, 'countActiveMembers')) {
+            $offenders[] = str_replace('\\', '/', substr($file->getPathname(), strlen($appDirectory) + 1));
+        }
+    }
+
+    sort($offenders);
+
+    expect($offenders)->toContain('Application/Plans/PlanRepository.php')
+        ->and(array_diff($offenders, $allowed))->toBe([]);
+});

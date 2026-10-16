@@ -27,6 +27,14 @@ interface PlanRepository
      * The first statement of every Plan use case, which is what makes §5's 404 rule enforced
      * once rather than per controller.
      *
+     * It deliberately applies NO plans.status filter: §5.3 keeps every GET on an archived Plan
+     * working and answers the write paths with PlanNotEditable (409), which is raised after
+     * visibility has already succeeded - so narrowing this method to `active` would turn every
+     * archived-Plan 409 into a 404 and make that 409 unreachable. listForActor() below filters
+     * plans.status because choosing which Plans to list is a different question from whether
+     * the actor may see one. PlanRepositoryTest's "keeps an archived Plan visible to its active
+     * member" is the case that reds if this is ever tightened.
+     *
      * @throws PlanNotVisible for a malformed $planId, an unknown Plan, an actor with no
      *                        plan_members row, or an actor whose row's status does not satisfy
      *                        PlanPermissions::grantsAccess()
