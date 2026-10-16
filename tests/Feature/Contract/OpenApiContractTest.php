@@ -173,10 +173,11 @@ it('declares every error status the application itself raises', function (): voi
     // absent from the contract - including /auth/refresh's 401, which is the one spec §17
     // criterion 11's "refresh on 401" is built on.
     //
-    // A literal table, deliberately, and the one place in this file that is: the whole point is
-    // that these statuses cannot be derived from the source Scramble reads. Deriving them from
-    // the thing that produces them would mean reimplementing the renderer. Each row is asserted
-    // by a named feature test, listed beside it.
+    // A literal table, deliberately, and one of three places in this file that is - see
+    // $parameterCount and $allProsePaths below, which are literal for the opposite reason. The
+    // whole point of THIS literal is that these statuses cannot be derived from the source
+    // Scramble reads. Deriving them from the thing that produces them would mean reimplementing
+    // the renderer. Each row is asserted by a named feature test, listed beside it.
     $expected = [
         // LoginTest: "rejects a wrong password with 401 and no token"
         ['post', '/auth/login', '401'],
@@ -214,18 +215,37 @@ it('declares every error status the application itself raises', function (): voi
     // middleware or a FormRequest whose authorize() return type is not the literal true, 404
     // from a route-model-bound path parameter - while a status the application AUTHORS with
     // #[Response] is published inline, carrying its own description and schema. So "inline" is
-    // exactly "authored", and the two assertions in the loop above (a non-empty description, and
-    // a {message: string} body) are only possible for an inline response: a $ref response object
-    // has neither key.
+    // exactly "authored", and the description and body-shape checks in the loop above (a
+    // non-empty description, and a {message: string} body) are only possible for an inline
+    // response: a $ref response object has neither key.
     //
     // Measured at tandem-api@02f5418: the five inline non-2xx responses in the committed
     // document are exactly the five rows above, and the thirteen $ref ones are exactly the
     // inferred 401s, 422s and verify-email's authorize()-derived 403.
     //
     // This is the assertion that makes a Wave 2 endpoint shipped without its row fail here
-    // instead of passing quietly. Wave 2's 403s, 404s, 409s and 429s are all authored, because
-    // this codebase uses no can: middleware, no Policy classes and no route-model binding, so
-    // none of them is inferred.
+    // instead of passing quietly. What actually governs inference is the list two paragraphs up
+    // (middleware; a FormRequest's rules()/after()/non-true authorize(); an isModelId path
+    // parameter) PLUS one more: any throw or @throws of one of those exception classes anywhere
+    // in the route's call graph, because Scramble's own call-graph propagation
+    // (FunctionLikeAstDefinitionBuilder) copies a callee's exceptions onto every caller. Live
+    // today, not hypothetical: verify-email's one $ref 403 has two independent causes -
+    // VerifyEmailRequest::authorize() returning hasValidSignature() (not true), AND
+    // VerifyEmail::forSignedPayload()'s @throws AuthorizationException propagating up through
+    // VerifyEmailController. NOT "no can: middleware, no Policy classes, no route-model binding"
+    // - Wave 2 adds eight FormRequests, and an authorize() override or an @throws on a Plans use
+    // case reaches one of the two mechanisms above with no Policy class or route-model binding
+    // involved at all.
+    //
+    // What actually makes Wave 2's 403s, 404s, 409s and 429s authored, for a reason that
+    // survives every one of those eight FormRequests because it has nothing to do with
+    // FormRequests: each is a bare RuntimeException subclass mapped to a status by a render()
+    // closure in bootstrap/app.php, and the five ExceptionToResponseExtensions Scramble ships
+    // (vendor/dedoc/scramble/src/Support/ExceptionToResponseExtensions) know only
+    // Auth[orization|entication]Exception, ValidationException, RecordsNotFoundException (which
+    // ModelNotFoundException extends) and Symfony's HttpException - everything else maps to
+    // null and is filtered out of the generated document. A render()-mapped RuntimeException
+    // publishes nothing either way, so it has to be authored.
     //
     // Coverage disclosed, not assumed: $authored is built entirely by walking what openapi.json
     // ALREADY publishes for each route documentedRoutes() finds, so this proves every status
