@@ -37,4 +37,52 @@ class PlanMemberFactory extends Factory
             'joined_at' => null,
         ];
     }
+
+    /**
+     * status = active AND joined_at together, which is the invariant the members list depends
+     * on: plan_members.joined_at is NULLable and is the leading key of §6.3's members cursor,
+     * so an active row without one appears on page 1 and is then dropped from every page after
+     * it (a keyset predicate over a NULL evaluates to NULL). The application's writers always
+     * set it; this state is what stops a fixture being the exception.
+     */
+    public function active(): static
+    {
+        return $this->state(fn () => [
+            'status' => MemberStatus::Active->value,
+            'joined_at' => now(),
+        ]);
+    }
+
+    /**
+     * §8.3's LeavePlan: status = left, role untouched. A departing member keeps the role they
+     * held, because MemberStatus's docblock makes `left` the record of their own choice and
+     * §8.3 only demotes on the other path.
+     */
+    public function left(): static
+    {
+        return $this->state(fn () => [
+            'status' => MemberStatus::Left->value,
+            'joined_at' => now()->subDay(),
+        ]);
+    }
+
+    /**
+     * §8.3's RemoveMember: status = removed AND role demoted to member, both, because "a
+     * removed admin whose row still says admin is a row claiming authority its status denies".
+     * Chain ->role(...) after this one to override it deliberately; states apply in order.
+     */
+    public function removed(): static
+    {
+        return $this->state(fn () => [
+            'status' => MemberStatus::Removed->value,
+            'role' => MemberRole::Member->value,
+            'joined_at' => now()->subDay(),
+        ]);
+    }
+
+    /** The role as the enum, never as a literal, so a renamed case breaks here rather than seeding a value nothing recognises. */
+    public function role(MemberRole $role): static
+    {
+        return $this->state(fn () => ['role' => $role->value]);
+    }
 }

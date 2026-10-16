@@ -30,4 +30,18 @@ class PlanFactory extends Factory
             'visibility' => Visibility::InviteOnly->value,
         ];
     }
+
+    /**
+     * status AND archived_at, both, every time. DeleteAccount's archive branch
+     * (DeleteAccount.php:160-164) and §7.4's endpoint both write the pair, and the day-30
+     * purge reads `status = archived` while the feed and the ordering read archived_at - a
+     * fixture that sets one of them is a row neither path produces.
+     */
+    public function archived(): static
+    {
+        return $this->state(fn () => [
+            'status' => PlanStatus::Archived->value,
+            'archived_at' => now(),
+        ]);
+    }
 }
