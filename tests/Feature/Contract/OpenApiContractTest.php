@@ -207,6 +207,76 @@ it('declares every error status the application itself raises', function (): voi
         expect(data_get($response, 'content.application/json.schema.properties.message.type'))
             ->toBe('string', "{$method} {$path} {$status} must document the message body it returns");
     }
+
+    // The reverse direction, and what turns the table above from a list into a gate. Scramble
+    // publishes a status it INFERRED as a $ref into components.responses - 401 from auth/auth:*
+    // middleware, 422 from a FormRequest with rules() or after(), 403 from can:/Authorize
+    // middleware or a FormRequest whose authorize() return type is not the literal true, 404
+    // from a route-model-bound path parameter - while a status the application AUTHORS with
+    // #[Response] is published inline, carrying its own description and schema. So "inline" is
+    // exactly "authored", and the two assertions in the loop above (a non-empty description, and
+    // a {message: string} body) are only possible for an inline response: a $ref response object
+    // has neither key.
+    //
+    // Measured at tandem-api@02f5418: the five inline non-2xx responses in the committed
+    // document are exactly the five rows above, and the thirteen $ref ones are exactly the
+    // inferred 401s, 422s and verify-email's authorize()-derived 403.
+    //
+    // This is the assertion that makes a Wave 2 endpoint shipped without its row fail here
+    // instead of passing quietly. Wave 2's 403s, 404s, 409s and 429s are all authored, because
+    // this codebase uses no can: middleware, no Policy classes and no route-model binding, so
+    // none of them is inferred.
+    //
+    // Coverage disclosed, not assumed: $authored is built entirely by walking what openapi.json
+    // ALREADY publishes for each route documentedRoutes() finds, so this proves every status
+    // that is inline in the committed document has a table row - not that the table (or the
+    // document) covers every status the running application can actually produce. A status
+    // raised by code Scramble has no position for - the render() exception mapping or the
+    // throttle closure the header comment above names - publishes NOTHING at the route at all,
+    // neither inline nor $ref, so it is invisible to this loop exactly as it is invisible to
+    // Scramble, and still has to be added to $expected by hand, as those five rows already are.
+    // This closes the "authored but the table forgot it" gap; it does not and cannot close the
+    // "raised but never published anywhere" gap, which is why the five hand-asserted rows above
+    // remain load-bearing rather than becoming redundant with this loop.
+    $authored = [];
+
+    foreach (documentedRoutes() as [$method, $path, $route]) {
+        $responses = Arr::wrap(data_get(openApiDocument(), "paths.{$path}.{$method}.responses"));
+
+        foreach ($responses as $status => $response) {
+            // (string) for the same reason the envelope case casts: json_decode turns a numeric
+            // object key into an int, and "401" arrives here as 401.
+            $status = (string) $status;
+
+            if ($status === '' || $status[0] === '2') {
+                continue;
+            }
+
+            if (is_array($response) && array_key_exists('$ref', $response)) {
+                continue;
+            }
+
+            $authored[] = [$method, $path, $status];
+        }
+    }
+
+    // Compared as "{method} {path} {status}" strings, not as triples, and that is about the
+    // DIFF rather than about the comparison. ArrayComparator canonicalizes a list by sorting both
+    // sides and then pairing them BY INDEX, so one extra element shifts every later pair: the
+    // triple form prints each triple's three values alphabetically, collapses every matched row
+    // to the exporter's `[...]`, and reports a row as removed that was not touched. Measured.
+    // The string form prints one `+` line naming the exact triple.
+    $line = fn (array $triple): string => implode(' ', $triple);
+
+    expect(array_map($line, $authored))->toEqualCanonicalizing(
+        array_map($line, $expected),
+        'Every non-2xx response the application AUTHORS with #[Response] must appear in the '
+        .'table above, with the feature test that asserts it named beside it. A line here '
+        .'that is not in that table is a status shipped with nothing asserting it; a line in '
+        .'that table that is not here is a status the document has stopped declaring. Do not '
+        .'resolve a mismatch by pasting this list into the table - decide which side is wrong '
+        .'first, because the whole value of the table is that each row has a test behind it.',
+    );
 });
 
 it('wraps every success response in the data envelope', function (): void {
