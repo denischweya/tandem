@@ -41,17 +41,30 @@ describe('LOGIN_FIELDS', () => {
 });
 
 describe('REGISTER_FIELDS', () => {
-  it('is exactly RegisterSchema.shape', () => {
-    expect([...REGISTER_FIELDS].sort()).toEqual(Object.keys(RegisterSchema.shape).sort());
+  /**
+   * CORRECTED (Wave 1b final review, W3/D4/3.9). This used to assert REGISTER_FIELDS was
+   * EXACTLY `RegisterSchema.shape`, and a sibling test below asserted `isRegisterField
+   * ('timezone')` was `true` - the opposite of RESET_FIELDS's own `token` exclusion two
+   * describe blocks down. `timezone`'s Input is read-only; a 422 keyed `timezone` alone is
+   * now routed to the form-level `FormError` instead of a field nothing can correct, which
+   * also no longer suppresses that message - see `fields.ts`'s own corrected docblock.
+   */
+  it('is every RegisterSchema field EXCEPT timezone, not a hand-typed list', () => {
+    const schemaFields = Object.keys(RegisterSchema.shape);
+    expect(schemaFields).toContain('timezone');
+    expect([...REGISTER_FIELDS].sort()).toEqual(
+      schemaFields.filter((key) => key !== 'timezone').sort(),
+    );
   });
 
-  it('includes timezone - the one field this form renders read-only but still registers', () => {
-    // MEASURED reason this matters: SignUpForm.tsx's field-mapping loop has no special case
-    // for `timezone` - it relies on `isRegisterField('timezone')` being true so a 422 against
-    // it (an exotic zone IanaTimeZone rejects) still reaches the rendered Input via
-    // `form.setError`, rather than being silently dropped the way an array that forgot this
-    // entry would drop it.
-    expect(isRegisterField('timezone')).toBe(true);
+  it('deliberately excludes timezone - its Input is read-only and web has no Profile page to correct it from', () => {
+    expect(isRegisterField('timezone')).toBe(false);
+  });
+
+  it('accepts the three fields this form actually renders as editable', () => {
+    expect(isRegisterField('display_name')).toBe(true);
+    expect(isRegisterField('email')).toBe(true);
+    expect(isRegisterField('password')).toBe(true);
   });
 
   it('rejects a field neither this form nor the schema has', () => {

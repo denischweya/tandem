@@ -32,9 +32,30 @@ export function isLoginField(key: string): key is LoginField {
   return (LOGIN_FIELDS as readonly string[]).includes(key);
 }
 
-export const REGISTER_FIELDS = Object.keys(RegisterSchema.shape) as ReadonlyArray<
+/**
+ * `timezone` IS one of `RegisterSchema`'s fields, but it is excluded here deliberately
+ * (Wave 1b final review, W3/D4/3.9) - the same shape `token` already gets below for
+ * `RESET_FIELDS`, and for the identical reason. `SignUpForm.tsx` renders it `readOnly`: the
+ * visitor cannot correct it, so a 422 keyed `timezone` (a browser reporting a zone the API's
+ * `IanaTimeZone` list lacks) landing on it via `form.setError` is exactly as unreachable as
+ * one landing nowhere - except it ALSO suppresses the form-level `FormError` that would
+ * otherwise show the API's own message, because `matchedFieldErrors` counts it as "matched".
+ *
+ * CORRECTED: this file previously included `timezone` deliberately, arguing the opposite -
+ * that excluding it would be "the same decision made in one place and not its sibling" shape
+ * this wave had hit repeatedly, citing `tandem-mobile/src/features/auth/CreateAccountScreen.
+ * tsx`'s OWN exclusion of `timezone` from ITS rendered-field set as precedent for including
+ * it here. Mobile excluded it for exactly the "non-editable input" reason this paragraph
+ * states; web's prior reasoning cited the same principle to reach the opposite conclusion.
+ * And unlike mobile, web has no Profile page this cycle (`timezone.ts`'s own docblock) - so
+ * there is no OTHER surface for a visitor to correct a rejected zone from either. The two
+ * clients reached opposite conclusions from the same rule, and the one without a Profile
+ * page took the worse half.
+ */
+const REGISTER_SCHEMA_FIELDS = Object.keys(RegisterSchema.shape) as ReadonlyArray<
   keyof z.input<typeof RegisterSchema>
 >;
+export const REGISTER_FIELDS = REGISTER_SCHEMA_FIELDS.filter((key) => key !== 'timezone');
 export type RegisterField = (typeof REGISTER_FIELDS)[number];
 export function isRegisterField(key: string): key is RegisterField {
   return (REGISTER_FIELDS as readonly string[]).includes(key);

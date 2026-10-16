@@ -50,6 +50,7 @@ export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>;
  * (a 405's "Supported methods: GET, PATCH, DELETE.", a 404's route-not-found sentence, a bare
  * `abort(403)`'s empty string). Mirrors `tandem-mobile/src/api/errors.ts`'s
  * `AuthoredMessageStatus`.
+ *
  */
 export type AuthoredMessageStatus =
   // 401 - LoginController: "These credentials do not match our records." | the refresh/
@@ -76,6 +77,41 @@ function authorsItsOwnMessage(status: number): boolean {
 }
 
 /**
+ * 502 is deliberately NOT in `AuthoredMessageStatus` above, and this is a SEPARATE, narrower
+ * carve-out used by `userMessageFor` ALONE - not folded into the shared table, and not given
+ * to `fieldErrorsFor` (Wave 1b final review, W5/D1).
+ *
+ * WHY IT NEEDS ONE AT ALL: tandem-api never answers 502 - it is a status this BFF
+ * SYNTHESISES itself, at exactly two call sites in `handlers.ts`'s `relayFailure`, both of
+ * which pass a literal house-copy constant (`HOUSE_NETWORK_MESSAGE` for a transport failure,
+ * `HOUSE_SERVER_MESSAGE` for the unreachable `'ok'` branch kept exhaustive rather than
+ * asserted away) - NEVER `result.envelope.message` from the real API. So a 502's `message`
+ * is always already-safe, by construction, before `userMessageFor` ever sees it.
+ *
+ * WHY IT IS NOT IN THE SHARED TABLE: `AUTHORS_ITS_OWN_MESSAGE` also gates `fieldErrorsFor`,
+ * and unlike `message`, there is no legitimate scenario where a 502 envelope carries a REAL
+ * `errors` map - 502 is never a validation outcome. Adding 502 there would have widened
+ * `fieldErrorsFor`'s allowlist too, for a gate that must stay exactly as narrow as the
+ * original four - `errors.test.ts`'s own "gates on the SAME authored-status allowlist ...
+ * 502 ... never relays errors" sweep is what caught this while writing the fix, and is why
+ * `userMessageFor` gets its own narrower check instead of widening the one both functions
+ * share.
+ *
+ * MEASURED BUG this closes: `src/lib/auth/bffClient.ts`'s `describeFailureResponse` calls
+ * `userMessageFor` again, client-side, as a second, independent gate (deliberately
+ * belt-and-suspenders - see that file's own docblock). Before this existed, that second gate
+ * discarded `HOUSE_NETWORK_MESSAGE` - the exact sentence `relayFailure` had just authored for
+ * "we never reached the API at all" - and substituted `HOUSE_SERVER_MESSAGE` ("something went
+ * wrong on our end") instead: a connectivity problem told the user to blame the server, with
+ * nothing to act on. Both halves had their own tests (`handlers.test.ts:195` asserts the 502
+ * body; `bffClient.test.ts` and `ForgotPasswordForm.test.tsx` assert a DIFFERENT branch, the
+ * browser-to-Next fetch-throws path) - nothing tested the COMPOSITION, which is why it shipped.
+ */
+function isBffSynthesized502(status: number): boolean {
+  return status === 502;
+}
+
+/**
  * House copy for a status this API does not author a sentence for, and for a 2xx body that
  * fails to parse against the schema a handler expected (`handlers.ts`'s `parseEnvelopeData`
  * returning `null` - the contract and the server disagree). Never logged, never templated
@@ -97,20 +133,23 @@ export const HOUSE_NETWORK_MESSAGE =
  * The single source of user-facing error copy for the BFF (§135). Nothing in `handlers.ts`
  * builds an error string any other way.
  *
- * FOUR statuses pass through VERBATIM - an ALLOWLIST, not the status class - because this API
- * authors those four for users. Substituting house copy there would replace a sentence someone
- * wrote for a person with a sentence nobody wrote for anybody.
+ * FOUR BACKEND statuses pass through VERBATIM - an ALLOWLIST, not the status class - because
+ * this API authors those four for users. Substituting house copy there would replace a
+ * sentence someone wrote for a person with a sentence nobody wrote for anybody. 502 passes
+ * through too, for the DIFFERENT reason `isBffSynthesized502`'s own docblock states - it is
+ * never a backend status, always this BFF's own pre-authored constant.
  *
- * Everything else gets house copy: every other 4xx (framework text), 5xx (Laravel's generic
- * "Server Error"), and an allowlisted status whose message arrived blank (`abort(403)`, which
- * `ErrorEnvelopeSchema.message` happily parses as `''` - a bare `z.string()`, so the non-blank
- * guard below is load-bearing, not decoration).
+ * Everything else gets house copy: every other 4xx (framework text), every OTHER 5xx
+ * (Laravel's generic "Server Error" - 502 is excepted, nothing else is), and an allowlisted
+ * status whose message arrived blank (`abort(403)`, which `ErrorEnvelopeSchema.message`
+ * happily parses as `''` - a bare `z.string()`, so the non-blank guard below is load-bearing,
+ * not decoration).
  *
  * `envelope: null` happens when the body was not JSON (an HTML error page from a proxy) or did
  * not match the envelope shape at all - either way, nothing authored to show, so house copy.
  */
 export function userMessageFor(status: number, envelope: ErrorEnvelope | null): string {
-  if (envelope !== null && authorsItsOwnMessage(status)) {
+  if (envelope !== null && (authorsItsOwnMessage(status) || isBffSynthesized502(status))) {
     // `.trim()`, not `.length`: a whitespace-only message is as unusable to a reader as an
     // empty one, and both parse.
     const authored = envelope.message.trim();

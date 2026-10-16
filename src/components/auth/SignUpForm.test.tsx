@@ -296,6 +296,41 @@ describe('SignUpForm', () => {
     expect(screen.queryByRole('alert', { name: '' })).not.toHaveTextContent('Something went wrong');
   });
 
+  /**
+   * Wave 1b final review, W3/D4/3.9's break-and-restore proof. MEASURED REGRESSION this
+   * guards: before the fix, `isRegisterField('timezone')` was `true`, so a 422 keyed ONLY
+   * `timezone` (a browser reporting a zone the API's `IanaTimeZone` list lacks) attached its
+   * message to the read-only Timezone Input via `form.setError` - unreachable, since the
+   * visitor cannot edit it - AND suppressed the form-level `FormError` that would otherwise
+   * have shown the API's own message, because `matchedFieldErrors` counted it as "matched".
+   * A hard dead end on account creation with nothing on screen to act on, and web has no
+   * Profile page this cycle to correct it from either.
+   */
+  it('a 422 keyed only timezone falls back to a form-level message, not a silent dead end on a read-only field', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(422, {
+          message: 'The selected timezone is invalid.',
+          errors: { timezone: 'The selected timezone is invalid.' },
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+
+    render(<SignUpForm />);
+    await user.type(screen.getByLabelText('Name'), 'Ada Lovelace');
+    await user.type(screen.getByLabelText('Email'), 'ada@example.test');
+    await user.type(screen.getByLabelText('Password'), 'hunter2hunter2');
+    await user.click(screen.getByRole('button', { name: 'Create an account' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('The selected timezone is invalid.');
+    expect(screen.getByLabelText('Timezone')).not.toHaveAttribute('aria-invalid', 'true');
+    expect(replace).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it('a 429 (register is 5/hour/IP) renders as a form-level error with Retry-After', async () => {
     vi.stubGlobal(
       'fetch',

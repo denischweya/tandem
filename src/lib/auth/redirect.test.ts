@@ -85,4 +85,49 @@ describe('safeNextPath', () => {
   it('honours a custom fallback', () => {
     expect(safeNextPath('https://evil.example', '/signin')).toBe('/signin');
   });
+
+  /**
+   * Wave 1b final review, W1/2.2. All five shapes pass the leading-slash and leading-C0/
+   * leading-`//`/`\` checks above untouched (one leading slash, second character `.`), but
+   * the WHATWG URL Standard's own dot-segment removal collapses every one of them into a
+   * pathname beginning `//` once actually resolved - measured same-origin
+   * (`https://app.tandem.example//evil.example`), so the hazard is a hard
+   * `history.replaceState` `SecurityError` crash, not a redirect to the attacker's origin -
+   * but a crash on the first navigation after sign-in all the same. The class is five shapes,
+   * not the one literal `/..//` a narrower fix might have targeted.
+   */
+  it('rejects every dot-segment shape that collapses to a `//`-prefixed pathname', () => {
+    expect(safeNextPath('/..//evil.example')).toBe('/plans');
+    expect(safeNextPath('/.//evil.example')).toBe('/plans');
+    expect(safeNextPath('/../..//evil.example')).toBe('/plans');
+    expect(safeNextPath('/a/..//evil.example')).toBe('/plans');
+    expect(safeNextPath('/..//evil.example/x')).toBe('/plans');
+  });
+
+  it('rejects the %2F-encoded arrival of the dot-segment class the same way', () => {
+    // Not a separate case to enumerate - `URLSearchParams` decodes `%2F` before this function
+    // ever sees the candidate, so this arrives as the identical `/..//evil.example` string
+    // the test above already covers. Asserted through the real decode anyway (the way
+    // `redirect.test.ts`'s own %09 case already does), not hand-typed, per 4.16.
+    const decoded = new URLSearchParams('next=%2F..%2F%2Fevil.example').get('next');
+    expect(decoded).toBe('/..//evil.example');
+    expect(safeNextPath(decoded ?? undefined)).toBe('/plans');
+  });
+
+  /**
+   * Wave 1b final review, W2/2.3. The full U+0000..U+0020 sweep, not just the three
+   * (tab/LF/CR) the character-class check above explicitly names. MEASURED: before this
+   * sweep existed, 30 of these 33 were rejected only INCIDENTALLY (because the raw candidate
+   * does not start with `/` when a control character is its first byte) rather than
+   * deliberately - an untested incidental rejection for a hazard whose cost was already two
+   * fix rounds and ~2,371 measured candidates. This sweep is pinned against the BACKSTOP
+   * (`resolvesOffThisApp`), which is why it stays green even under the exact one-token
+   * mutation named below - see this file's own break-and-restore proof in the fix report.
+   */
+  it('rejects every one of U+0000..U+0020 immediately before a scheme-relative target', () => {
+    for (let codePoint = 0x0000; codePoint <= 0x0020; codePoint += 1) {
+      const candidate = String.fromCodePoint(codePoint) + '//evil.example';
+      expect(safeNextPath(candidate)).toBe('/plans');
+    }
+  });
 });

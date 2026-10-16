@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ErrorEnvelopeSchema,
   fieldErrorsFor,
+  HOUSE_NETWORK_MESSAGE,
   HOUSE_SERVER_MESSAGE,
   userMessageFor,
 } from './errors';
@@ -45,7 +46,8 @@ describe('userMessageFor', () => {
       // three application exceptions, so every other HttpException falls through to Laravel's
       // default handler and renders framework text - a 404's "The route … could not be found.",
       // a 405's "Supported methods: …", a 500's generic "Server Error". None of that may reach
-      // a user (blueprint §135).
+      // a user (blueprint §135). Deliberately excludes 502: tandem-api never answers it, and
+      // it is covered on its own below.
       expect(
         userMessageFor(status, { message: 'Some framework sentence nobody wrote for a user.' }),
       ).toBe(HOUSE_SERVER_MESSAGE);
@@ -54,6 +56,20 @@ describe('userMessageFor', () => {
 
   it('substitutes house copy when the envelope is null - a non-JSON body, e.g. a proxy error page', () => {
     expect(userMessageFor(502, null)).toBe(HOUSE_SERVER_MESSAGE);
+  });
+
+  /**
+   * Wave 1b final review, W5/D1. MEASURED REGRESSION this guards: before `isBffSynthesized502`
+   * existed, this exact call - `userMessageFor(502, {message: HOUSE_NETWORK_MESSAGE})`, which
+   * is precisely what `bffClient.ts`'s `describeFailureResponse` does with a transport-failure
+   * 502 from `relayFailure` - discarded the authored `HOUSE_NETWORK_MESSAGE` ("check your
+   * connection") and substituted `HOUSE_SERVER_MESSAGE` ("something went wrong on our end")
+   * instead: a connectivity problem told the user to blame the server. See
+   * `isBffSynthesized502`'s own docblock for why this is a narrower, separate carve-out from
+   * `AuthoredMessageStatus` rather than a fifth member of it.
+   */
+  it('passes HOUSE_NETWORK_MESSAGE through verbatim at 502, rather than re-substituting house copy over house copy', () => {
+    expect(userMessageFor(502, { message: HOUSE_NETWORK_MESSAGE })).toBe(HOUSE_NETWORK_MESSAGE);
   });
 
   it('substitutes house copy for an authored status whose message arrived blank', () => {

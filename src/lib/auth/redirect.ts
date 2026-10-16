@@ -56,11 +56,59 @@
  * SLASHES are themselves percent-encoded (`/%2f%2fevil.example` - `%2f` is a literal
  * three-character path segment to the URL parser; it is never decoded back into a real `/`
  * before the origin is determined, so this never becomes scheme-relative).
+ *
+ * FIX (Wave 1b final review, W1/2.2 and W2/2.3). Two further things measured true of the
+ * checks above, which is why a THIRD, independent check is added rather than widening either
+ * existing one again:
+ *
+ * W1 - THE DOT-SEGMENT CLASS. `/..//evil.example`, `/.//evil.example`, `/../..//evil.example`,
+ * `/a/..//evil.example` and a trailing-path variant all pass every check above untouched (one
+ * leading slash, no tab/LF/CR, second character `.` rather than `/` or `\`) - but the URL
+ * Standard's own dot-segment removal collapses EVERY one of them into a pathname beginning
+ * `//` once actually resolved, which is scheme-relative all the same. Measured same-origin
+ * (the attacker's origin is never reached directly), but `history.replaceState` later throws
+ * `SecurityError` on a `canonicalUrl` shaped this way - a hard crash on the first navigation
+ * after sign-in, from a crafted link.
+ *
+ * W2 - THE LEADING-C0 CLASS IS REJECTED ONLY INCIDENTALLY. All 33 of `U+0000..U+0020` followed
+ * by `//evil.example` resolve off-origin, and today's accept/reject split above happens to
+ * reject every one of them - but 30 of the 33 do so ONLY because the raw JS string does not
+ * start with `/` (the control character is the first character), a check written for
+ * `https://evil.example` and a bare host, not for this class at all; the tab/LF/CR check
+ * above deliberately covers only 3. MEASURED, the concrete hazard: changing the leading-slash
+ * check to `!candidate.trim().startsWith('/')` - a plausible, "be lenient about pasted
+ * whitespace" edit - reopens 3 of the 33 (U+000B, U+000C, plain SPACE) off-origin, with EVERY
+ * existing test in this file still green, because nothing here was pinned to the actual
+ * mechanism doing the rejecting.
+ *
+ * THE FIX, for both: resolve the candidate through the SAME WHATWG `URL` algorithm the browser
+ * will eventually use - which performs the C0/space trim, the tab/LF/CR strip, backslash-as-
+ * slash normalisation and dot-segment removal natively, so none of it needs predicting by
+ * hand - against a fixed, fake origin, and require that the result is still THIS origin with a
+ * pathname that does not itself begin `//`. This is deliberately a BACKSTOP, independent of
+ * the three checks above: it reads the real resolved result, not a prediction of what they
+ * will do to it, so it keeps rejecting the whole class even if a future edit to any one of
+ * them (such as the `.trim()` edit above) changes which earlier check was doing the work.
  */
+const SAME_ORIGIN_BASE = 'http://localhost';
+
+function resolvesOffThisApp(candidate: string): boolean {
+  let resolved: URL;
+  try {
+    resolved = new URL(candidate, SAME_ORIGIN_BASE);
+  } catch {
+    // Not a valid relative reference at all by the URL Standard's own parser - never a path
+    // this app would serve, so treat it the same as resolving off-origin.
+    return true;
+  }
+  return resolved.origin !== SAME_ORIGIN_BASE || resolved.pathname.startsWith('//');
+}
+
 export function safeNextPath(candidate: string | undefined, fallback = '/plans'): string {
   if (candidate === undefined || candidate.length === 0) return fallback;
   if (/[\t\n\r]/.test(candidate)) return fallback;
   if (!candidate.startsWith('/')) return fallback;
   if (candidate.startsWith('//') || candidate.startsWith('/\\')) return fallback;
+  if (resolvesOffThisApp(candidate)) return fallback;
   return candidate;
 }

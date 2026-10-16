@@ -125,12 +125,16 @@ export function SignUpForm({ next }: SignUpFormProps) {
 
     const { failure } = result;
     if (failure.fieldErrors !== null) {
-      // `isRegisterField` is the SAME derived-from-schema guard for every one of
-      // `RegisterSchema`'s fields, `timezone` included - this form registers an Input for
-      // every one of them (timezone's is read-only, but still `register()`-wired below, so
-      // `fieldState`/`setError` reach it exactly like any editable field). No special case:
-      // a special case is exactly the "same decision made in one place and not its sibling"
-      // shape this wave has hit repeatedly.
+      // CORRECTED (Wave 1b final review, W3/D4/3.9). This used to argue that `isRegisterField`
+      // should cover `timezone` too - "this form registers an Input for every field, so no
+      // special case" - citing "a special case is exactly the 'same decision made in one
+      // place and not its sibling' shape this wave has hit repeatedly" as the reason NOT to
+      // exclude it. `isRegisterField` (fields.ts) now DOES exclude `timezone`, deliberately,
+      // for the opposite reason: the Input it renders is read-only, the visitor cannot
+      // correct it, and web has no Profile page this cycle to correct it from either - a 422
+      // keyed `timezone` alone now falls through to the form-level `FormError` below instead
+      // of attaching to a field nothing can act on while simultaneously suppressing that
+      // message. See `fields.ts`'s own corrected docblock on `REGISTER_FIELDS`.
       //
       // FIX ROUND 1, Important 2: only return early when at least one entry actually matched
       // - see `matchedFieldErrors`'s own docblock. An `errors` map naming no field this form

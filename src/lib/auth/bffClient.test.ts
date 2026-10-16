@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { HOUSE_NETWORK_MESSAGE } from '@/server/errors';
+
 import { postJson, retryAfterSuffix, submitBff } from './bffClient';
 
 function jsonResponse(status: number, body: unknown, headers?: Record<string, string>): Response {
@@ -180,6 +182,29 @@ describe('submitBff / postJson', () => {
     if (result.kind !== 'failure') throw new Error('unreachable');
     expect(result.failure.message).toBe('Something went wrong on our end. Please try again.');
     expect(result.failure.message).not.toContain('SQLSTATE');
+  });
+
+  /**
+   * Wave 1b final review, W5/D1 - THE COMPOSITION TEST neither half of the original bug had.
+   * `handlers.test.ts` asserts the SERVER's 502 body (`relayFailure`'s transportFailure
+   * branch: `{message: HOUSE_NETWORK_MESSAGE}`); the "substitutes house copy for an
+   * unauthored status" test two above asserts this CLIENT's re-gate on a status it should
+   * NOT trust. Neither one, on its own, exercises what happens when THIS BFF's own authored
+   * 502 reaches THIS re-gate - which is exactly the composition that discarded
+   * `HOUSE_NETWORK_MESSAGE` and substituted `HOUSE_SERVER_MESSAGE` ("something went wrong on
+   * our end") for a connectivity problem, before the fix.
+   */
+  it('relays a 502 transport-failure body (the BFF own-authored message) verbatim, not house-copy-over-house-copy', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse(502, { message: HOUSE_NETWORK_MESSAGE })),
+    );
+
+    const result = await postJson('/api/auth/login', { email: 'a@b.test', password: 'x' });
+
+    expect(result.kind).toBe('failure');
+    if (result.kind !== 'failure') throw new Error('unreachable');
+    expect(result.failure.message).toBe(HOUSE_NETWORK_MESSAGE);
   });
 
   it('verify-email relay sends no body and no content-type - submitBff passes init through verbatim', async () => {
