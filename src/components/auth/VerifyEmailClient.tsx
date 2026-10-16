@@ -15,6 +15,13 @@ const VerifyEmailSuccessSchema = z.object({ user: UserSchema });
 
 type Phase = 'idle' | 'pending' | 'success' | 'error';
 
+/** The house sentence for a 403 here, matching
+ *  `tandem-mobile/src/features/auth/VerifyEmailScreen.tsx`'s `UNUSABLE_LINK_BODY` exactly
+ *  (Wave 1b final review, W6/D2) - see `handleVerify`'s own docblock on why the API's raw
+ *  403 sentence ("This action is unauthorized.") is not used here even though 403 is
+ *  normally on `userMessageFor`'s authored allowlist. */
+const UNUSABLE_LINK_BODY = 'It may have expired or been mistyped. Ask for a new one.';
+
 /**
  * The landing page for `EmailVerificationLink::for()`'s URL - `config/app.php` points
  * `web_url` at this app, so `tandem-web` is the ONLY place this link can land in Cycle 1.
@@ -65,7 +72,18 @@ export function VerifyEmailClient() {
     // address) with ONE message - and there is no resend endpoint, so EVERY failure here,
     // whatever its status, gets the same action: sign in, where a verified session can be
     // re-checked, rather than a "Request a new link" button with nothing behind it.
-    setMessage(result.failure.message);
+    //
+    // FIX (Wave 1b final review, W6/D2). This comment used to describe the "ONE message"
+    // intent while the code one line below did not implement it: `result.failure.message` IS
+    // the API's own 403 sentence, because 403 sits on `userMessageFor`'s authored allowlist
+    // (`src/server/errors.ts`) - a renderer the API DOES sometimes write copy for, correctly,
+    // in general. But Laravel's `AuthorizationException` default, "This action is
+    // unauthorized.", is not a sentence anyone wrote FOR THIS SCREEN's visitor, it is the
+    // single most likely verify-email outcome (an expired link), and §135's intent is exactly
+    // this. The sibling client already has the right sentence
+    // (`tandem-mobile/src/features/auth/VerifyEmailScreen.tsx`'s `UNUSABLE_LINK_BODY`) - house
+    // copy for THIS status at THIS call site, not an allowlist change.
+    setMessage(result.failure.status === 403 ? UNUSABLE_LINK_BODY : result.failure.message);
     setPhase('error');
   }
 

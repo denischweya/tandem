@@ -39,7 +39,53 @@ type Phase = 'pending' | 'failed';
  * a "you're signed out" message over intact cookies - the copy is the same neutral house
  * sentence `SessionErrorFallback` already uses for an unrelated failure, not a claim about
  * what went wrong.
+ *
+ * FIX (Wave 1b final review, W7/D3). The global constraints are explicit: a 401 from
+ * `POST /auth/refresh` is terminal - "discard both tokens, route to sign-in, show 'You were
+ * signed out. Sign in again.'" MEASURED, the dead end this closes: on a REAL 401,
+ * `refreshHandler` clears both cookies, but the comment above (correctly) never calls
+ * `refreshSession()` or `router.refresh()` again automatically on failure - that discipline
+ * is what round 1 fixed. Before this fix, the ONLY escape from the `failed` phase was the
+ * "Try again" button, which called `refreshSession()` again directly: on a terminal 401 that
+ * repeats identically forever (no cookie to present, same 401, same `false`), with no
+ * navigation to `/signin` ever reachable - "Try again" looped back to the same error state.
+ *
+ * `isNowSignedOut` below answers the one question that distinguishes terminal from transient
+ * without presenting the refresh token again (it is a plain `GET`, the same status endpoint
+ * `/plans/page.tsx`'s own server-side `getSession()` is built on): has a LATER read of the
+ * SAME cookies this browser now holds come back `signedOut`? That is true only once the
+ * cookies are actually gone, i.e. only after a genuine terminal 401 - a merely transient
+ * failure (429/500/503/transport) leaves both cookies untouched, so the SAME read comes back
+ * `expired` again, same as today, and this check changes nothing for that case. Not auto-
+ * retried - this performs no `/auth/refresh` POST of its own and triggers no further
+ * `refreshSession()` call, so it cannot become the auto-loop round 1's fix closed; it only
+ * ever runs once per already-failed attempt, gated behind the same manual retry discipline
+ * as before.
+ *
+ * Deliberately a direct `router.push`, not a `router.refresh()` relying on
+ * `/plans/page.tsx`'s own generic `signedOut` redirect: that redirect also fires for a
+ * visitor who was never signed in at all (nothing here distinguishes the two), and the
+ * review's own brief is explicit that "you were signed out" must never be shown to someone
+ * who never had a session to lose. Pushing directly from HERE, once THIS component has
+ * independently confirmed the session just ended, keeps the prescribed sentence scoped to
+ * the one path that actually earns it.
  */
+async function isNowSignedOut(): Promise<boolean> {
+  try {
+    const response = await fetch('/api/auth/session');
+    if (!response.ok) return false;
+    const json: unknown = await response.json();
+    return (
+      typeof json === 'object' &&
+      json !== null &&
+      'status' in json &&
+      (json as { status: unknown }).status === 'signedOut'
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function ExpiredSessionRefresh() {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>('pending');
@@ -47,13 +93,18 @@ export function ExpiredSessionRefresh() {
 
   useEffect(() => {
     let cancelled = false;
-    void refreshSession().then((refreshed) => {
+    void refreshSession().then(async (refreshed) => {
       if (cancelled) return;
       if (refreshed) {
         router.refresh();
         return;
       }
-      setPhase('failed');
+      if (await isNowSignedOut()) {
+        if (cancelled) return;
+        router.push('/signin?next=%2Fplans&reason=signedOut');
+        return;
+      }
+      if (!cancelled) setPhase('failed');
     });
     return () => {
       cancelled = true;

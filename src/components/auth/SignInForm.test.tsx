@@ -215,6 +215,18 @@ describe('SignInForm', () => {
     );
   });
 
+  /**
+   * Wave 1b final review, W7/D3. The hand-off `ExpiredSessionRefresh` pushes once it has
+   * confirmed a failed refresh was a genuine terminal 401, not just an echo of `copy.test.ts`
+   * - this is the end-to-end render path a visitor actually sees after that redirect.
+   */
+  it('shows the prescribed terminal-401 notice when reason=signedOut', () => {
+    render(<SignInForm reason="signedOut" />);
+    expect(screen.getByTestId('sign-in-notice')).toHaveTextContent(
+      'You were signed out. Sign in again.',
+    );
+  });
+
   it('never calls fetch for a client-side-invalid submission (empty email)', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);

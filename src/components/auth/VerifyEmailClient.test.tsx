@@ -81,7 +81,15 @@ describe('VerifyEmailClient', () => {
     expect(push).toHaveBeenCalledWith('/plans');
   });
 
-  it('a 403 (any of the four causes) shows ONE message with "Sign in and we\'ll help", not a dead resend button', async () => {
+  /**
+   * Wave 1b final review, W6/D2. MEASURED REGRESSION this guards: before the fix, this test
+   * asserted the alert showed "This action is unauthorized." - Laravel's
+   * `AuthorizationException` default, relayed verbatim because 403 sits on
+   * `userMessageFor`'s authored allowlist and is non-blank. That sentence was never written
+   * for this screen's visitor, and this is the production verification path (`config/app.php`
+   * points `web_url` here).
+   */
+  it('a 403 (any of the four causes) shows the house "may have expired" copy, not Laravel\'s framework text', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(jsonResponse(403, { message: 'This action is unauthorized.' })),
@@ -93,7 +101,8 @@ describe('VerifyEmailClient', () => {
     await user.click(screen.getByRole('button', { name: 'Verify email' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('This action is unauthorized.');
+    expect(alert).toHaveTextContent('It may have expired or been mistyped. Ask for a new one.');
+    expect(alert).not.toHaveTextContent('This action is unauthorized.');
     expect(screen.queryByText(/request a new link/i)).toBeNull();
 
     await user.click(screen.getByRole('button', { name: "Sign in and we'll help" }));
