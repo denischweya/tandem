@@ -9,6 +9,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\MassAssignmentException;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 
@@ -26,7 +27,7 @@ it('creates a persistable plan_invites row from the factory', function (): void 
 
 it('gives the row a uuid primary key rather than leaving it null', function (): void {
     // HasUuids, not a database default: plan_invites.id has no default, so a model without the
-    // trait sends NULL and Postgres refuses. 12 of 12 existing models carry the trait.
+    // trait sends NULL and Postgres refuses. Every model in this codebase carries the trait.
     $invite = PlanInvite::factory()->create();
 
     expect(Str::isUuid($invite->id))->toBeTrue();
@@ -55,10 +56,10 @@ it('refuses to mass-assign any attribute on PlanInvite', function (): void {
 });
 
 it('is refused by the database for a mixed-case email', function (): void {
-    // plan_invites_email_lowercase, measured in the migration at line 121. §10.4's invite
-    // request must normalise through EmailInput::normalize() or this is a reachable 500 on an
-    // endpoint, not a test failure. ConstraintTest proves the same CHECK through raw SQL; this
-    // proves it on the path Wave 2 actually writes through.
+    // plan_invites_email_lowercase, the CHECK constraint measured in the migration. §10.4's
+    // invite request must normalise through EmailInput::normalize() or this is a reachable 500
+    // on an endpoint, not a test failure. ConstraintTest proves the same CHECK through raw SQL;
+    // this proves it on the path Wave 2 actually writes through.
     //
     // Two details stop this passing for the wrong reason. toThrow()'s second argument is a
     // substring of the exception message - Pest runs assertStringContainsString with it before
@@ -77,9 +78,9 @@ it('is refused by the database for a mixed-case email', function (): void {
 
 it('keeps the invite row when the inviter is hard-deleted, and nulls invited_by', function (): void {
     // nullOnDelete, not cascade: "hard-deleting the sender must not delete the invite record".
-    // This is the reachable path that makes PlanInviteResource.invited_by_name nullable - the
-    // day-30 purge forceDelete()s the user and this column goes NULL under an invite that
-    // GET /plans/{plan}/invites still lists.
+    // This is the reachable path that will make the invite list resource's invited-by display
+    // name nullable, once that resource exists - the day-30 purge forceDelete()s the user and
+    // this column goes NULL under an invite that GET /plans/{plan}/invites still lists.
     $inviter = User::factory()->hasProfile()->create();
     $invite = PlanInvite::factory()->create(['invited_by' => $inviter->id]);
 

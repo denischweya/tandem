@@ -32,10 +32,10 @@ class PlanFactory extends Factory
     }
 
     /**
-     * status AND archived_at, both, every time. DeleteAccount's archive branch
-     * (DeleteAccount.php:160-164) and §7.4's endpoint both write the pair, and the day-30
-     * purge reads `status = archived` while the feed and the ordering read archived_at - a
-     * fixture that sets one of them is a row neither path produces.
+     * status AND archived_at, both, every time. DeleteAccount's no-successor archive branch and
+     * §7.4's endpoint both write the pair, and the day-30 purge reads `status = archived` while
+     * the feed and the ordering read archived_at - a fixture that sets one of them is a row
+     * neither path produces.
      */
     public function archived(): static
     {

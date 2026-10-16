@@ -13,8 +13,9 @@ use Illuminate\Support\Carbon;
 
 /**
  * plan_invites has existed since the Wave 0 freeze with no model, no factory and no writer -
- * one reference in app/, a comment in PurgeDeletedUsersCommand. This is the first writer's
- * model, and §10 is the whole of its behaviour.
+ * before this wave touched it, the only reference anywhere in app/ was a comment in
+ * PurgeDeletedUsersCommand. This is the first writer's model, and §10 is the whole of its
+ * behaviour.
  *
  * No $table property, deliberately, and the absence is worth a sentence because PlanActivity
  * next door declares one: Laravel's pluraliser maps PlanInvite to plan_invites, which is the
@@ -35,16 +36,31 @@ use Illuminate\Support\Carbon;
  * There is no invitedBy() and no acceptedBy() relation, for PlanActivity::actor()'s reason:
  * both columns are nullable with nullOnDelete, fired by the day-30 purge's forceDelete(), so a
  * relation would be a guaranteed-looking model that is null on a row GET /plans/{plan}/invites
- * still lists. The display name for a list is resolved by one left join in
- * EloquentInviteRepository, where the nullability is visible in the type.
+ * still lists. The display name for a list will be resolved by one left join in whichever
+ * repository implements the invite list, where the nullability can stay visible in the type -
+ * that repository does not exist yet.
  *
  * The class docblock's `@property-read Plan $plan` tag below is non-nullable deliberately, the
  * opposite call from the paragraph above: plan_id is NOT NULL with cascadeOnDelete, not
- * nullOnDelete, so a plan_invites row can never outlive its Plan. Without that tag, Larastan's
- * relation-magic-property extension infers `plan()`'s BelongsTo<Plan, $this> as Plan|null under
- * PHPStan level 8 - the same generic resolution that would apply to User::profile()'s HasOne if
- * that class's own `@property-read UserProfile $profile` were removed. This tag is that same
- * override, not a new pattern.
+ * nullOnDelete. Without that tag, Larastan's relation-magic-property extension infers `plan()`'s
+ * BelongsTo<Plan, $this> as Plan|null under PHPStan level 8. The analyser escape this tag takes
+ * is the one `User::profile()`'s own `@property-read UserProfile $profile` already takes for its
+ * HasOne - but the two are not the same claim, and this one is the stronger of the pair.
+ * `user_profiles.user_id` is UNIQUE NOT NULL, which guarantees at most one profile per user, not
+ * at least one: a persisted User with no profile row returns null for `->profile` (nothing
+ * forbids creating one without ->hasProfile()), and that invariant is registration's doing, not
+ * the schema's. `plan_invites.plan_id` is NOT NULL on PlanInvite's OWN row, not on the far side
+ * of the relation, so a persisted plan_invites row cannot exist without a satisfied foreign key
+ * - and Plan carries no soft-deletes and no global scope, so nothing can make the FK point past a
+ * row this relation would fail to find. There is no path where the FK stays satisfied and
+ * `->plan` resolves null, for a persisted row.
+ *
+ * "For a persisted row" is the tag's whole claim, not the whole truth about this property, and
+ * the gap is worth naming rather than leaving for the next reader to discover: `(new
+ * PlanInvite)->plan` on an unpersisted instance is null (plan_id is unset), and an in-memory
+ * instance holding a plan_id whose Plan was cascade-deleted by another connection after this one
+ * read the row is also null - the tag covers neither, silently, because PHPStan has no way to
+ * express "non-null only once saved."
  *
  * @property string $id
  * @property string $plan_id

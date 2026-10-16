@@ -15,9 +15,10 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 uses(RefreshDatabase::class);
 
 it('archives a Plan the way the application does, both fields', function (): void {
-    // DeleteAccount.php:160-164 and §7.4 both write status AND archived_at. A fixture that
-    // writes only status produces a shape no code path produces, and PlanTest.php:102 is
-    // exactly that fixture.
+    // DeleteAccount's no-successor archive branch and §7.4 both write status AND archived_at. A
+    // fixture that writes only status produces a shape no code path produces, and
+    // PlanTest.php's "still lets forceFill and the factories write those columns" is exactly
+    // that fixture.
     $plan = Plan::factory()->archived()->create();
 
     expect($plan->status)->toBe(PlanStatus::Archived->value);
@@ -32,10 +33,11 @@ it('never produces an active membership without a joined_at', function (): void 
     // too, and its default is 'joined_at' => null with 'status' => invited, so overriding only
     // `status` to active is how that row gets made by accident.
     //
-    // Every construction path this suite has, listed rather than discovered - and the test
-    // directly below is the tripwire that keeps this list honest: it derives the factory's
-    // state methods from the class itself and fails unless the set is exactly the four this
-    // list covers, so a fifth state cannot be added without an author reading these lines.
+    // Every construction path this suite has, listed rather than discovered - and
+    // 'covers every state PlanMemberFactory declares' (below, in this same file) is the
+    // tripwire that keeps this list honest: it derives the factory's state methods from the
+    // class itself and fails unless the set is exactly the four this list covers, so a fifth
+    // state cannot be added without an author reading these lines.
     $plan = Plan::factory()->create();
     $user = User::factory()->hasProfile()->create();
 
@@ -47,6 +49,16 @@ it('never produces an active membership without a joined_at', function (): void 
         'member() helper' => member($plan, $user, MemberRole::Member, '2026-01-01 10:00:00'),
     ];
 
+    // The `if` guard means this loop only asserts on the two rows whose status IS active
+    // ('active' and 'member() helper') - 'definition', 'left' and 'removed' run the loop body
+    // and assert nothing, by construction, because their status correctly is not active. That
+    // is deliberate, not slack: this test's job is "active implies joined_at", not "every row
+    // has a joined_at", so a status that is not active is correctly a no-op here. The gap it
+    // leaves is that a mutation making active() stop writing `status = active` would make the
+    // `if` never fire for that row too, and this loop alone would go GREEN on a broken
+    // active() rather than red - 'writes the status each state names, and demotes role only
+    // where the endpoint does' (below) is what actually pins active()'s status, and the two
+    // tests are a pair for that reason, not by accident.
     foreach ($rows as $label => $row) {
         if ($row->status === MemberStatus::Active->value) {
             expect($row->joined_at)->not->toBeNull($label);
@@ -55,12 +67,13 @@ it('never produces an active membership without a joined_at', function (): void 
 });
 
 it('covers every state PlanMemberFactory declares', function (): void {
-    // The $rows list in the test above is maintained by hand, which is the kind of enumeration
-    // this project has previously let drift from the thing it enumerates. This is the tripwire.
-    // The set of states is DERIVED - PlanMemberFactory's public methods, minus the ones the
-    // Illuminate Factory base class already declares, minus definition() - and compared against
-    // the states $rows constructs a row from. A fifth state turns THIS test red, which is where
-    // its author learns that the test above needs a row for it.
+    // The $rows list in 'never produces an active membership without a joined_at' (above, in
+    // this same file) is maintained by hand, which is the kind of enumeration this project has
+    // previously let drift from the thing it enumerates. This is the tripwire. The set of
+    // states is DERIVED - PlanMemberFactory's public methods, minus the ones the Illuminate
+    // Factory base class already declares, minus definition() - and compared against the
+    // states $rows constructs a row from. A fifth state turns THIS test red, which is where its
+    // author learns that the test named above needs a row for it.
     //
     // Measured, before step A11 adds the states:
     //
@@ -81,6 +94,16 @@ it('covers every state PlanMemberFactory declares', function (): void {
     // PlanFactory is deliberately not covered here. Its one state carries no cross-page
     // invariant, while PlanMemberFactory's states are what keep S-37's
     // `status = active, joined_at = NULL` row out of every fixture in the suite.
+    //
+    // Nor is PlanInviteFactory, and that gap is wider and worth naming rather than leaving
+    // silent: its five states (expired(), revoked(), accepted(), linkOnly(), forToken()) have
+    // zero call sites anywhere in app/ or tests/ as of this task - none of them back a cross-row
+    // invariant the way PlanMemberFactory's four do, so there is no S-37-shaped drift for a
+    // tripwire here to catch yet. forToken() is the one exception worth flagging by name: its
+    // contract is that hash('sha256', $plainToken) here must agree with whatever the real token
+    // issuer hashes, and that pairing is unprovable until the task that writes the issuer
+    // exists - this task inherits no obligation to prove it, but whichever task ships the
+    // issuer does.
     $declared = array_values(array_diff(
         get_class_methods(PlanMemberFactory::class),
         get_class_methods(Factory::class),
