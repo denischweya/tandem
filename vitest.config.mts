@@ -68,7 +68,9 @@ export default defineConfig({
     // under a `.test.ts`-only glob is not reported as skipped - it is never collected at
     // all, so the suite goes green and the count simply never mentions it. Task 10's handler
     // tests are `.test.ts`, so deleting passWithNoTests does not cover this on its own.
-    // src/architecture/runner.test.ts pins this glob so a narrowing fails loudly.
+    // src/test/runner.test.ts (moved from src/architecture/ in Wave 1b final review, W4 -
+    // that directory now holds a real architecture gate; this is a toolchain sentinel, not
+    // one) pins this glob so a narrowing fails loudly.
     include: ['src/**/*.test.{ts,tsx}'],
     // Registers `@testing-library/jest-dom`'s matchers and an `afterEach(cleanup)` for every
     // test file, regardless of environment - see src/test/setup.ts's own docblock for why
@@ -77,8 +79,8 @@ export default defineConfig({
     // NO passWithNoTests. It was in this file for exactly as long as this repo had no test:
     // it makes `npm run test` - and therefore `npm run verify` - pass over zero assertions,
     // which is the failure mode the Global Constraints forbid, bounded only by a human
-    // remembering to delete it. src/architecture/runner.test.ts is what replaced that bound
-    // with a mechanical one: the runner now has a real test to run, so vitest exits non-zero
-    // if the suite ever becomes empty again.
+    // remembering to delete it. src/test/runner.test.ts is what replaced that bound with a
+    // mechanical one: the runner now has a real test to run, so vitest exits non-zero if the
+    // suite ever becomes empty again.
   },
 });

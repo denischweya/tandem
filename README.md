@@ -240,18 +240,28 @@ changing it:
   task that writes the first render test**, not before.
 - **`include: ['src/**/*.test.{ts,tsx}']` — `{ts,tsx}`, not `ts`.** A `.test.tsx` file under a
   `.test.ts`-only glob is not reported as skipped; it is **never collected at all**, so the
-  suite goes green and the count simply never mentions it. `src/architecture/runner.test.ts`
-  pins this glob by reading the config file as text, so narrowing it fails loudly.
+  suite goes green and the count simply never mentions it. `src/test/runner.test.ts` pins
+  this glob by reading the config file as text, so narrowing it fails loudly.
 - **There is no `passWithNoTests`, and adding one back is forbidden.** It was in this file for
   exactly as long as the repo had no test, and it makes `npm run test` — and therefore
-  `npm run verify` — pass over **zero assertions**. `src/architecture/runner.test.ts` is the
+  `npm run verify` — pass over **zero assertions**. `src/test/runner.test.ts` is the
   mechanical bound that replaced it: the runner now always has real work, so Vitest exits
   non-zero if the suite ever becomes empty again.
 
-`src/architecture/runner.test.ts` is this repo's **architecture gate**, not an ordinary test.
-It asserts the runner executes a real assertion, that the `@` alias from `vitest.config.mts`
-resolves, and that the config still collects `.tsx`. If it goes red, read it before working
-around it.
+`src/test/runner.test.ts` is this repo's **toolchain sentinel** (moved out of
+`src/architecture/` in Wave 1b's final review — see below for what that directory actually
+holds now). It asserts the runner executes a real assertion, that the `@` alias from
+`vitest.config.mts` resolves, and that the config still collects `.tsx`. If it goes red, read
+it before working around it.
+
+`src/architecture/` holds this repo's first real **architecture gate**,
+`envOwnership.test.ts`: `process.env` is read only in `src/server/env.ts`, and the
+`NEXT_PUBLIC_` identifier — Next's own client-bundle-inlining prefix, and the exact class
+`src/lib/env.ts`'s deletion fixed (review finding m6) — appears nowhere else in the tree.
+Before this file existed, nothing stopped a future change from re-adding a
+`NEXT_PUBLIC_API_BASE_URL` read and silently reopening that leak. It is a deliberately narrow
+gate, not a port of `tandem-mobile`'s eight-gate suite — see the file's own docblock for what
+it does not cover and why.
 
 ### End-to-end — Playwright, `e2e/`
 
@@ -289,7 +299,7 @@ src/
 │   ├── globals.css
 │   ├── api/auth/*/route.ts   eight three-line handlers, each re-exporting src/server/handlers.ts
 │   └── invite/[token]/       the guest-invite page (spec §11, screen 3j)
-├── architecture/             the runner gate (see above)
+├── architecture/             envOwnership.test.ts - the real architecture gate (see above)
 ├── components/
 │   ├── invite/               InviteHeader, PlanSummary, RsvpResponse, SignupPrompt
 │   └── ui/                   Avatar, Button
@@ -304,8 +314,10 @@ src/
 ├── lib/
 │   ├── session/               refreshSession() (the browser's one refresh initiator),
 │   │                          useSession()/SessionProvider, the query client
+│   ├── auth/                  fields, redirect, copy, timezone, the BFF's browser-side client
 │   ├── format-list.ts
 │   └── invite/                fixture + formatting
+├── test/                     runner.test.ts (the toolchain sentinel), fixtures, setup
 e2e/                          Playwright specs
 ```
 
