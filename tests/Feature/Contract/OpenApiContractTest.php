@@ -173,11 +173,17 @@ it('declares every error status the application itself raises', function (): voi
     // absent from the contract - including /auth/refresh's 401, which is the one spec §17
     // criterion 11's "refresh on 401" is built on.
     //
-    // A literal table, deliberately, and one of three places in this file that is - see
-    // $parameterCount and $allProsePaths below, which are literal for the opposite reason. The
-    // whole point of THIS literal is that these statuses cannot be derived from the source
-    // Scramble reads. Deriving them from the thing that produces them would mean reimplementing
-    // the renderer. Each row is asserted by a named feature test, listed beside it.
+    // A literal table, deliberately - and not the only literal pin in this file, though it is
+    // the only one here for THIS reason. Other literal pins exist for the opposite reason: an
+    // anti-vacuity floor on a walk that CAN be derived from the document, pinned to catch the
+    // walk going silent rather than because nothing could be derived at all. $parameterCount
+    // and $allProsePaths below are two examples, not an enumeration - this file is a Modify
+    // target for nearly every task in the wave, so a count written here would be the same
+    // self-referential liability the sentence this replaced turned out to be, just one digit
+    // later. The whole point of THIS literal is that these statuses cannot be derived from the
+    // source Scramble reads. Deriving them from the thing that produces them would mean
+    // reimplementing the renderer. Each row is asserted by a named feature test, listed beside
+    // it.
     $expected = [
         // LoginTest: "rejects a wrong password with 401 and no token"
         ['post', '/auth/login', '401'],
