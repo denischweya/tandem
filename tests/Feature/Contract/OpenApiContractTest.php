@@ -456,48 +456,95 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // B37a: the two checks above name five positions by hand and excuse three more as
     // authored. Both leave the sixth position described above - and any position nobody here
     // has thought to name - completely unwatched: a string landing there moves neither
-    // $parameterCount nor $prose, so the mutation that proves it (a `//` comment above a future
-    // 'next_cursor' => $page->nextCursor) would leave both green and the byte gate would
-    // reproduce the leak forever. This closes that at the only level a blind-spot-by-definition
-    // CAN be closed at - not by naming the position, which would make it not a blind spot - but
-    // by counting every description/summary in the WHOLE document, at any depth, by key name
-    // alone, and pinning the total. It proves nothing about WHERE a new one landed or WHETHER it
-    // is deliberate - that is $prose's job for the positions it knows how to name - only that
-    // the total the two checks above account for has not silently grown somewhere neither of
-    // them looked.
-    $allProseStrings = 0;
+    // $parameterCount nor $prose. Two independent shapes of that leak, same consequence either
+    // way: a `//` comment above a future 'next_cursor' => $page->nextCursor (a sibling position
+    // to the sixth), or a `//` comment one level deeper than $prose's own properties walk goes -
+    // inside a Resource field that is itself an object, e.g. a Resource publishing a field as
+    // {value: {description: ...}} instead of a bare scalar. Either would leave $parameterCount
+    // and $prose green and the byte gate would reproduce the leak forever. This closes that at
+    // the only level a blind-spot-by-definition CAN be closed at - not by naming the position,
+    // which would make it not a blind spot - but by walking every description/summary in the
+    // WHOLE document, at any depth, by key name alone, and pinning the full PATH SET.
+    //
+    // A bare integer COUNT was tried first and rejected, on a demonstrated false negative: an
+    // integer cannot distinguish "nothing changed" from "one authored path vanished and one
+    // leaked path appeared", and both move the document by zero net strings. Delete one
+    // authored paths./me.get.responses.200.description in the same commit that adds a leak
+    // elsewhere and the total stays unchanged - the exact leak class this check exists to
+    // catch, surviving the fix. A path SET cannot be fooled that way: toEqualCanonicalizing's
+    // diff shows the vanished path and the added path by name, and the leaked path is the one a
+    // reviewer sees, not an integer that quietly cancelled out.
+    //
+    // Matching on the KEY NAME alone, at any depth, is also wider than $prose in a way worth
+    // disclosing rather than assuming away: a `description` or `summary` key inside an
+    // `example` or `default` payload - not a Scramble-authored schema position at all - would
+    // appear in this list too, reading as a leaked docblock when it is neither. Wave 2 writes no
+    // such payload today (checked: none of the 26 paths below sits under `example` or
+    // `default`), so this is a disclosed false-positive risk, not an observed one.
+    //
+    // Any task adding a new deliberate position (client-facing prose the way verify-email's
+    // #[Endpoint] text already is) must add its path to BOTH this list and $prose's allow-list
+    // in the same commit, and say which path was added in its report - the same obligation
+    // Amendment 2 states for $parameterCount, extended to this literal by the same ruling
+    // (controller-amendments.md Amendment 2).
+    $allProsePaths = [];
 
-    $walkAllProse = function (mixed $node) use (&$walkAllProse, &$allProseStrings): void {
+    $walkAllProse = function (mixed $node, string $path) use (&$walkAllProse, &$allProsePaths): void {
         if (! is_array($node)) {
             return;
         }
 
         foreach ($node as $key => $value) {
+            $childPath = $path === '' ? (string) $key : "{$path}.{$key}";
+
             if (($key === 'description' || $key === 'summary') && is_string($value) && $value !== '') {
-                $allProseStrings++;
+                $allProsePaths[] = $childPath;
             } else {
-                $walkAllProse($value);
+                $walkAllProse($value, $childPath);
             }
         }
     };
 
-    $walkAllProse(openApiDocument());
+    $walkAllProse(openApiDocument(), '');
 
-    // 26 today, measured by running this exact walk against the committed document and listing
-    // every position it found: 14 paths.*.*.responses.*.description + 7 components.responses.*
-    // (description, plus the nested message/errors property descriptions) + 2 info.description /
-    // servers.0.description + 2 paths./auth/verify-email.post.{summary,description} + 1
-    // components.schemas.RegisterRequest.properties.timezone.description - the last three of
-    // which $prose above already names and pins by content, not just by count.
-    expect($allProseStrings)->toBe(
-        26,
-        'The document now publishes a different number of description/summary strings, in a '
-        .'position neither $prose nor $parameterCount names above. Find it (walk the document '
-        .'for every description/summary key and print the full path, the way this number was '
-        .'first measured), then either add it to $prose\'s allow-list as deliberate client-facing '
-        .'prose, or trace and remove the docblock comment that leaked it - and update this '
-        .'number either way. It is not meant to catch up silently.',
-    );
+    // Every description/summary path in today's document, found by running this exact walk and
+    // listing the result - not derived by arithmetic. The first three are the ones $prose above
+    // already names and pins by content; the other 23 are the authored strings $prose
+    // deliberately does not walk by name (14 responses.*.description + 7 components.responses.*
+    // + 2 info/servers).
+    expect($allProsePaths)->toEqualCanonicalizing([
+        'paths./auth/verify-email.post.summary',
+        'paths./auth/verify-email.post.description',
+        'components.schemas.RegisterRequest.properties.timezone.description',
+        'info.description',
+        'servers.0.description',
+        'paths./auth/forgot-password.post.responses.429.description',
+        'paths./auth/login.post.responses.200.description',
+        'paths./auth/login.post.responses.401.description',
+        'paths./auth/login.post.responses.429.description',
+        'paths./auth/logout.post.responses.204.description',
+        'paths./me.get.responses.200.description',
+        'paths./me.patch.responses.200.description',
+        'paths./me.delete.responses.204.description',
+        'paths./auth/refresh.post.responses.200.description',
+        'paths./auth/refresh.post.responses.401.description',
+        'paths./auth/register.post.responses.201.description',
+        'paths./auth/register.post.responses.429.description',
+        'paths./auth/reset-password.post.responses.204.description',
+        'paths./auth/verify-email.post.responses.200.description',
+        'components.responses.ValidationException.description',
+        'components.responses.ValidationException.content.application/json.schema.properties.message.description',
+        'components.responses.ValidationException.content.application/json.schema.properties.errors.description',
+        'components.responses.AuthorizationException.description',
+        'components.responses.AuthorizationException.content.application/json.schema.properties.message.description',
+        'components.responses.AuthenticationException.description',
+        'components.responses.AuthenticationException.content.application/json.schema.properties.message.description',
+    ], 'The document now publishes a different set of description/summary paths than were last '
+        .'enumerated here, in a position neither $prose nor $parameterCount names above. The '
+        .'diff names the exact path that was added, removed or changed - add it to $prose\'s '
+        .'allow-list if it is deliberate client-facing prose, or trace and remove the docblock '
+        .'comment that leaked it, and update this list either way in the same commit (say which '
+        .'path was added, in your report - controller-amendments.md Amendment 2).');
 });
 
 it('publishes no component schema without properties, so no native enum reaches the document', function (): void {
@@ -524,9 +571,14 @@ it('publishes no component schema without properties, so no native enum reaches 
     // cause that has nothing to do with whatever was added. Catching it here names the real one.
     $schemas = Arr::wrap(data_get(openApiDocument(), 'components.schemas'));
 
-    expect($schemas === [])->toBeFalse(
-        'components.schemas is empty, so this traversal checked nothing. The document has at '
-        .'least eight component schemas.',
+    // >= 8, not merely non-empty: a document that dropped from eight schemas to one would still
+    // pass a bare not-empty check while this traversal verified almost nothing, which is the
+    // same "a floor left behind is slack" shape plan-corrections.md objects to elsewhere in this
+    // plan. 8 today (measured: count($schemas)).
+    expect(count($schemas))->toBeGreaterThanOrEqual(
+        8,
+        'components.schemas published fewer than the eight schemas this traversal expects to '
+        .'check, so most of them were skipped rather than verified.',
     );
 
     foreach ($schemas as $name => $schema) {
