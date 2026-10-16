@@ -4,64 +4,11 @@ declare(strict_types=1);
 
 use App\Domain\Shared\PageCursor;
 use App\Http\Rules\ValidCursor;
-use Illuminate\Contracts\Translation\Translator;
-use Illuminate\Translation\PotentiallyTranslatedString;
 
-/**
- * Illuminate\Contracts\Validation\ValidationRule::validate()'s $fail parameter is PHPDoc-typed
- * as Closure(string, ?string=): PotentiallyTranslatedString, not Closure(string): void - the
- * real validator's $fail is chainable (->translate()), so its return value is never void. A
- * void-returning closure is a `void` vs `PotentiallyTranslatedString` return-type mismatch at
- * level 8 (argument.type), measured rather than assumed from the brief's own closure shape.
- *
- * PotentiallyTranslatedString's own source leaves its $translator constructor parameter
- * untyped, but Larastan's stub for it narrows that to Illuminate\Contracts\Translation\
- * Translator, so `null` is rejected even though the real constructor would accept it. The
- * stub below implements the interface and is never called - ->translate() and
- * ->translateChoice() are the only methods that touch it, and neither runs in this suite - so
- * constructing it needs no booted container, staying inside the Unit suite's "boots no
- * application" rule, same as instantiating Illuminate\Http\Request directly does elsewhere in
- * this new tests/Unit/Http/ subtree.
- *
- * @param  array<int, string>  $failures
- */
-function recordingFailClosure(array &$failures): Closure
-{
-    $translator = new class implements Translator
-    {
-        /** @param array<array-key, string> $replace */
-        public function get($key, array $replace = [], $locale = null)
-        {
-            throw new LogicException('not used: this test never calls translate()');
-        }
-
-        /**
-         * @param  Countable|int|float|array<array-key, mixed>  $number
-         * @param  array<array-key, string>  $replace
-         */
-        public function choice($key, $number, array $replace = [], $locale = null)
-        {
-            throw new LogicException('not used: this test never calls translateChoice()');
-        }
-
-        public function getLocale()
-        {
-            throw new LogicException('not used: this test never calls translate()');
-        }
-
-        public function setLocale($locale)
-        {
-            throw new LogicException('not used: this test never calls translate()');
-        }
-    };
-
-    return function (string $message, ?string $translation = null) use (&$failures, $translator): PotentiallyTranslatedString {
-        $failures[] = $translation ?? $message;
-
-        return new PotentiallyTranslatedString($message, $translator);
-    };
-}
-
+// recordingFailClosure() moved to tests/Pest.php in fix round 1: a file-scope function is
+// process-global the moment Pest loads it, and this one's name was generic enough that a
+// future ValidationRule unit test could plausibly redeclare it, which is a fatal, not a test
+// failure. See its docblock there for why the closure needs this shape at all.
 it('accepts a cursor this API issued', function (): void {
     $failures = [];
     $encoded = PageCursor::fromKeys(

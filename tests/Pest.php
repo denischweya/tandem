@@ -3,18 +3,22 @@
 declare(strict_types=1);
 use App\Domain\Plans\MemberRole;
 use App\Domain\Plans\MemberStatus;
+use App\Http\Requests\Concerns\ReadsPageQuery;
 use App\Infrastructure\Auth\EmailVerificationLink;
 use App\Infrastructure\Notifications\Mail\ResetPasswordMail;
 use App\Infrastructure\Outbox\OutboxDispatcher;
 use App\Models\Plan;
 use App\Models\PlanMember;
 use App\Models\User;
+use Illuminate\Contracts\Translation\Translator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Testing\PendingCommand;
+use Illuminate\Translation\PotentiallyTranslatedString;
 use Monolog\Handler\TestHandler;
 use Monolog\Logger;
 use Monolog\LogRecord;
@@ -303,4 +307,89 @@ function runArtisan(string $command, array $parameters = []): PendingCommand
     }
 
     return $pending;
+}
+
+/**
+ * The resources section's App\Http\Requests\Concerns\ReadsPageQuery has no consumer yet - the
+ * three list FormRequests that will `use` it belong to later tasks - and with none, PHPStan's
+ * trait.unused rule fires on the trait's own file. This class is what resolves that: a NAMED
+ * subclass, not an anonymous one, because PHPStan narrows an anonymous class's own type only
+ * from a return EXPRESSION, not through a helper function's declared return type (tried first;
+ * typing that function `: Request` hid the trait's method again, and a trait cannot be named
+ * in a PHPDoc intersection type either - `return.unresolvableType`).
+ *
+ * Illuminate\Http\Request's query-string methods (string(), integer()) need no booted
+ * container, so constructing this stays inside the Unit suite's "boots no application" rule.
+ *
+ * Declared here, not in the one test file that introduced it (fix round 1, Important 5): a
+ * class declared in any test file is process-global the moment Pest loads it - loading every
+ * file into one global namespace is how tests/Pest.php's own docblock states the "shared
+ * helper" rule - and this name is the one a future task adding its own ReadsPageQuery-using
+ * FormRequest unit test would naturally reach for too. tests/Pest.php is Pest's one
+ * exactly-once-per-run file, so it is the only place a second, differently-shaped declaration
+ * of this name cannot happen by accident.
+ */
+final class PageQueryTestRequest extends Request
+{
+    use ReadsPageQuery;
+}
+
+/**
+ * Illuminate\Contracts\Validation\ValidationRule::validate()'s $fail parameter is PHPDoc-typed
+ * as Closure(string, ?string=): PotentiallyTranslatedString, not Closure(string): void - the
+ * real validator's $fail is chainable (->translate()), so its return value is never void. A
+ * void-returning closure is a `void` vs `PotentiallyTranslatedString` return-type mismatch at
+ * level 8 (argument.type), measured rather than assumed from an earlier draft's closure shape.
+ *
+ * PotentiallyTranslatedString's own source leaves its $translator constructor parameter
+ * untyped, but Larastan's stub for it narrows that to Illuminate\Contracts\Translation\
+ * Translator, so `null` is rejected even though the real constructor would accept it. The
+ * stub below implements the interface and is never called - ->translate() and
+ * ->translateChoice() are the only methods that touch it, and neither runs in any test that
+ * uses this helper - so constructing it needs no booted container, staying inside the Unit
+ * suite's "boots no application" rule, same as instantiating Illuminate\Http\Request directly
+ * does elsewhere in the tests/Unit/Http/ subtree.
+ *
+ * Declared here, not in ValidCursorTest.php (fix round 1, Important 5): same reasoning as
+ * PageQueryTestRequest above - "recordingFailClosure" is generic enough that a future
+ * ValidationRule unit test (this app has two more: ValidEmail, IanaTimeZone, neither tested
+ * this way yet) could plausibly declare the same name, which is a fatal, not a test failure.
+ *
+ * @param  array<int, string>  $failures
+ */
+function recordingFailClosure(array &$failures): Closure
+{
+    $translator = new class implements Translator
+    {
+        /** @param array<array-key, string> $replace */
+        public function get($key, array $replace = [], $locale = null)
+        {
+            throw new LogicException('not used: this helper never calls translate()');
+        }
+
+        /**
+         * @param  Countable|int|float|array<array-key, mixed>  $number
+         * @param  array<array-key, string>  $replace
+         */
+        public function choice($key, $number, array $replace = [], $locale = null)
+        {
+            throw new LogicException('not used: this helper never calls translateChoice()');
+        }
+
+        public function getLocale()
+        {
+            throw new LogicException('not used: this helper never calls translate()');
+        }
+
+        public function setLocale($locale)
+        {
+            throw new LogicException('not used: this helper never calls translate()');
+        }
+    };
+
+    return function (string $message, ?string $translation = null) use (&$failures, $translator): PotentiallyTranslatedString {
+        $failures[] = $translation ?? $message;
+
+        return new PotentiallyTranslatedString($message, $translator);
+    };
 }

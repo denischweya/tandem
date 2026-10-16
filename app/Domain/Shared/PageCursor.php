@@ -88,8 +88,20 @@ final class PageCursor
         // what DATE_RFC3339_EXTENDED produces, i.e. what a client reading a rendered
         // created_at would try - parses with no error and re-encodes as '…11:22:33.123000'.
         // Two spellings of one boundary is two page sequences. Comparing the re-encoding
-        // against the input makes fromString(toString()) the only accepted spelling, and it
-        // also rejects the padded and standard-base64 spellings of the same bytes.
+        // against the input makes fromString(toString()) the only accepted spelling - this is
+        // the millisecond case tested and red-proved in PageCursorTest.
+        //
+        // What it does NOT do, measured rather than assumed (see PageCursorTest's last case,
+        // ":86-95" as of that file): reject a padded or standard-alphabet spelling of THESE
+        // bytes. Every valid cursor's payload is exactly 69 bytes - 32 for the fixed-width
+        // timestamp (this FORMAT's `P` offset is always 6 characters) + 1 pipe + 36 for the
+        // uuid - and 69 % 3 === 0, so standard base64 of any issued cursor needs zero padding
+        // characters: appending `=` always breaks the base64 LENGTH invariant and is caught by
+        // the base64url check above, before this comparison ever runs. The same 69-byte,
+        // restricted-ASCII payload also never produces a `+` or `/` character to swap for `-`
+        // or `_` in the first place. An earlier version of this comment claimed this check
+        // closed both gaps; it does not, and the only thing it is measured to catch is the
+        // millisecond-precision case above it.
         if ($cursor->toString() !== $encoded) {
             throw new InvalidArgumentException('Cursor is not in canonical form.');
         }

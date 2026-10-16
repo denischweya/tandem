@@ -48,6 +48,26 @@ it('distinguishes two rows written one microsecond apart', function (): void {
     );
 });
 
+it('distinguishes two rows that tie on the sort key, by id', function (): void {
+    // The mirror of the test above: there, same id, timestamps a microsecond apart; here,
+    // same timestamp, different ids. Both halves of "the keyset predicate is (timestamp, id)"
+    // need their own proof - a cursor that dropped the id from its payload would pass the
+    // test above (different timestamps still differ) while failing this one, and vice versa
+    // for a cursor that dropped the timestamp. The three lists this task feeds break a tie on
+    // created_at/updated_at/joined_at exactly this way (D-R5's row-comparison predicate), so an
+    // undetected tie here would silently merge or drop a row at every page boundary that ties.
+    $timestamp = new DateTimeImmutable('2026-10-10 11:22:33.123456+00:00');
+
+    $first = PageCursor::fromKeys($timestamp, '0192f0a1-b2c3-7d4e-8f90-1a2b3c4d5e6f');
+    $second = PageCursor::fromKeys($timestamp, '0192f0a1-b2c3-7d4e-8f90-1a2b3c4d5e70');
+
+    expect($first->toString())->not->toBe(
+        $second->toString(),
+        'a tie on the sort key must still be broken by id, or two distinct rows sharing a '
+        .'timestamp would collapse onto the same page boundary'
+    );
+});
+
 it('rejects a payload that is not base64url', function (): void {
     expect(fn () => PageCursor::fromString('!!!'))
         ->toThrow(InvalidArgumentException::class, 'Cursor is not base64url.');
