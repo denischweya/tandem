@@ -77,8 +77,8 @@ final readonly class EloquentPlanRepository implements PlanRepository
                 ->where('plan_members.user_id', $actorId)
                 ->where('plan_members.status', MemberStatus::Active->value)
                 ->whereIn('plan_members.role', self::roleValues()))
-            // plans.updated_at is NULLABLE - timestampsTz(6) makes both timestamps
-            // ->nullable() (Blueprint.php:1349) - and this cursor leads on it. Postgres sorts
+            // plans.updated_at is NULLABLE - Blueprint::timestampsTz() declares both of the
+            // columns it creates ->nullable() - and this cursor leads on it. Postgres sorts
             // NULLs FIRST on DESC, and a keyset predicate over a NULL evaluates to NULL, so
             // such a row would arrive on page 1 and be dropped from every page after it.
             // Excluding it is consistent rather than intermittent; Eloquent fills both
@@ -195,8 +195,14 @@ final readonly class EloquentPlanRepository implements PlanRepository
     }
 
     /**
-     * Null when the actor has no membership row, or a role or status no case recognises, or a
-     * status that does not grant access - the four cases §5.1 collapses into one answer.
+     * Null when the actor has no membership row for this Plan, when the row's role or status is
+     * a value no enum case recognises, or when the status does not grant access.
+     *
+     * That list is this method's own refusal causes, not §5.1's. §5.1 names a malformed id and
+     * an unknown Plan as well, and neither ever reaches here - findVisibleTo() refuses both
+     * before it calls this method - while the unrecognised-value cause is in no §5.1 list at
+     * all, because corrupt data is not a case the spec contemplates. What §5.1 collapses into
+     * one answer is the exception; see PlanNotVisible, which is where that argument lives.
      *
      * tryFrom(), not from(), and the conversion is here rather than in an Eloquent cast on the
      * model. Two measurements behind that: Scramble harvests a native enum's CLASS docblock

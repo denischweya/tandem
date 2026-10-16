@@ -106,6 +106,27 @@ it('refuses a malformed plan id without reaching Postgres', function (): void {
         ->toThrow(PlanNotVisible::class);
 });
 
+it('refuses a malformed actor id on both read paths, and reaches Postgres on neither', function (): void {
+    // The $actorId twin of the test above, which asserts only the $planId half. Both methods
+    // put the raw actor string in front of plan_members.user_id - findVisibleTo() through
+    // withViewer()'s two subselects, listForActor() through its whereHas - so with either shape
+    // check gone this is SQLSTATE[22P02] and a 500 where a 404 or an empty page belongs.
+    //
+    // Two guards in two methods, and each was mutation-proved on its own: a single mutation
+    // spanning both would show only that one of them fires.
+    $plan = Plan::factory()->create();
+
+    expect(fn () => app(PlanRepository::class)->findVisibleTo($plan->id, 'not-a-uuid'))
+        ->toThrow(PlanNotVisible::class);
+
+    // No exception on this path, deliberately: listForActor() has no 404 and no 403, the result
+    // set is the authorization, so a malformed actor is an empty page rather than a refusal.
+    $page = app(PlanRepository::class)->listForActor('not-a-uuid', PlanStatus::Active, new PageQuery(25, null));
+
+    expect($page->items)->toBe([]);
+    expect($page->nextCursor)->toBeNull();
+});
+
 it('refuses a Plan that does not exist with the same exception', function (): void {
     $actor = User::factory()->hasProfile()->create();
 
@@ -345,6 +366,32 @@ it('caps the page size at PageQuery::MAX_LIMIT', function (): void {
     // The cap has to be visible in the SQL, not only in the row count: three rows come back
     // either way, so a row-count assertion here would pass with no cap at all.
     expect(implode(' ', $queries))->toContain('limit '.(PageQuery::MAX_LIMIT + 1));
+});
+
+it('clamps a limit of 0 up to one row rather than returning an empty page', function (): void {
+    // pageSize()'s max(1, ...) arm, which every other case in this file misses: they pass 2, 25
+    // or 5000. Amendment 7 measured what pageQuery() does with the raw input - absent yields
+    // DEFAULT_LIMIT, but '' and null both yield 0 (intval(null)), 'abc' yields 0 and '-5'
+    // yields -5 - so 0 and negatives are values this method can really be handed whenever the
+    // limit rule one layer out is missing or marked nullable. Without the arm, min(MAX_LIMIT, 0)
+    // makes this limit(1) with take(0): an empty page AND a null cursor for an actor who does
+    // have Plans, which a client reads as "no Plans" rather than as a clamp.
+    $actor = User::factory()->hasProfile()->create();
+
+    foreach (range(1, 2) as $index) {
+        $plan = Plan::factory()->create(['title' => "Plan {$index}"]);
+        member($plan, $actor, MemberRole::Member, '2026-01-01 10:00:00');
+        // Explicit updated_at for the same reason the paging test writes one: two rows stamped
+        // in the same millisecond make "which row is first" a coin toss.
+        DB::table('plans')->where('id', $plan->id)->update(['updated_at' => "2026-02-0{$index} 10:00:00.000000+00"]);
+    }
+
+    $page = app(PlanRepository::class)->listForActor($actor->id, PlanStatus::Active, new PageQuery(0, null));
+
+    expect(titlesOf($page))->toBe(['Plan 2']);
+    // The cursor matters as much as the row: a page of one with no way forward is still a dead
+    // end for the other Plan.
+    expect($page->nextCursor)->not->toBeNull();
 });
 
 it('finds a Plan with no membership check, and refuses a malformed id', function (): void {
