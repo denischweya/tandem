@@ -103,3 +103,107 @@ arch('value objects and domain services are final')
 arch('strict types everywhere')
     ->expect(['App', 'Database', 'Tests'])
     ->toUseStrictTypes();
+
+// Spec §11.2: RecordActivity is the only class that inserts into plan_activity, and the hazard
+// is not a bad insert - it is a tenth use case writing one inline and getting created_at wrong,
+// because PlanActivity has $timestamps = false and the column is NOT NULL with no default.
+//
+// What this rule actually enforces, honestly (a vacuous-guard review on 2026-10-16, B5d, found
+// the line that used to sit here - "a class that cannot name the model cannot write to it, so
+// this rule is the mechanism" - false): toOnlyBeUsedIn() walks `use` statements and class
+// references to App\Models\PlanActivity, so it stops anyone who NAMES the model. It does
+// nothing against a class that never names it - EloquentPlanActivityRepository, allowed below,
+// reads the feed through `DB::table('plan_activity')` and imports no model symbol at all, which
+// makes its entry on this list permanently inert: this rule could never have flagged it even if
+// it tried to abuse the model, because it is not abusing the model, it is going around it. A
+// tenth use case doing the same - `DB::table('plan_activity')->insert(['created_at' => now()])`
+// - would be invisible to this rule, to PHPStan and to Pint, which is exactly the hazard the
+// rule exists to prevent. The plain-text scan below is the mechanism for THAT vector; this rule
+// is the mechanism for the model-symbol vector, and neither substitutes for the other.
+//
+// Four names are allowed and each is load-bearing: RecordActivity is the writer;
+// EloquentPlanActivityRepository is the only reader (the feed); DeleteAccount is §9.3 step 4's
+// anonymisation UPDATE, which nulls actor_id and removes nothing (DeleteAccount.php:59, Wave 1a,
+// already shipped); PlanActivityFactory is the test seed. Note what the rule does NOT cover: an
+// update or a delete issued from one of those four. There is no mechanical guard for that, and
+// the gate for it is ActivityFeedTest's "publishes no write route for the activity feed".
+//
+// Composer::userNamespaces() filters out anything under tests/, so a test file naming
+// PlanActivity - DeleteAccountTest imports it at :13 and calls PlanActivity::create() at :271
+// and :275 - is not a violation of this rule.
+arch('only the activity writer, the activity reader, account deletion and the factory touch the plan_activity model')
+    ->expect('App\Models\PlanActivity')
+    ->toOnlyBeUsedIn([
+        'App\Application\Plans\RecordActivity',
+        'App\Application\Users\DeleteAccount',
+        'App\Infrastructure\Persistence\Eloquent\EloquentPlanActivityRepository',
+        'Database\Factories\PlanActivityFactory',
+    ]);
+
+// The third entry above, EloquentPlanActivityRepository, names a class a later task in this
+// wave creates - it does not exist yet. Listing it is harmless: Blueprint::expectToOnlyBeUsedIn()
+// applies each allowed name with Layer::excludeByNameStart(), a string-prefix filter that
+// matches nothing when the class is absent. (A vacuous-guard review on 2026-10-16, B5d, found an
+// earlier note here mis-attributed this to the FOURTH entry, PlanActivityFactory - wrong twice:
+// PlanActivityFactory already exists, predating Wave 2 entirely
+// (database/factories/PlanActivityFactory.php), and the entry still missing today is the third,
+// not the fourth.)
+
+// B5d (vacuous-guard review, 2026-10-16): the companion to the rule above, closing the vector it
+// cannot see. Not an arch() rule because pest-plugin-arch's dependency walker inspects `use`
+// statements and class references, not string literals inside a method body - it has no
+// primitive for "does this file's source contain this substring", so a plain content scan is
+// the only way to see a bare `DB::table('plan_activity')` call that imports no model.
+//
+// Deliberately lexical, not semantic, and that is a limitation worth stating rather than
+// hiding: this scan cannot tell a real write from a comment that merely mentions the table
+// name, so a file that legitimately discusses plan_activity in prose has to go on the allow-list
+// too, exactly like a file that writes to it. It also cannot tell an INSERT from a SELECT - the
+// allow-list below includes the one known reader (EloquentPlanActivityRepository) for that
+// reason. What it buys back is coverage the rule above cannot offer at all: nothing under app/
+// may reference the literal table name except these three files, named or not.
+//
+// The allow-list is exactly three, by file path relative to app/: the model itself (it must
+// name its own table), the one writer this task creates, and the one reader a later task
+// creates (listed before it exists, harmless for the same reason as the arch rule above - the
+// scan below only ever matches files that exist today, so an absent allow-listed path changes
+// nothing about what passes). The positive assertion after the scan - that it actually found
+// the one match guaranteed to exist - exists so this test cannot pass by matching nothing: a
+// typo'd needle would make $offenders always [] and this guard would never have been exercised.
+it('allows the literal table name "plan_activity" only where it already belongs', function (): void {
+    // No uses() binding exists for tests/Architecture (tests/Pest.php:26 binds only Feature),
+    // so this suite never boots the application - app_path() and the File facade both resolve
+    // against a bare Illuminate\Container\Container with no "path" or "files" binding and fail.
+    // Plain SPL recursion against a path computed from __DIR__ needs none of that.
+    $appDirectory = dirname(__DIR__, 2).'/app';
+
+    $allowed = [
+        'Models/PlanActivity.php',
+        'Application/Plans/RecordActivity.php',
+        'Infrastructure/Persistence/Eloquent/EloquentPlanActivityRepository.php',
+    ];
+
+    $offenders = [];
+
+    $files = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($appDirectory, FilesystemIterator::SKIP_DOTS),
+    );
+
+    foreach ($files as $file) {
+        if ($file->getExtension() !== 'php') {
+            continue;
+        }
+
+        $contents = file_get_contents($file->getPathname());
+
+        if ($contents !== false
+            && (str_contains($contents, "'plan_activity'") || str_contains($contents, '"plan_activity"'))) {
+            $offenders[] = str_replace('\\', '/', substr($file->getPathname(), strlen($appDirectory) + 1));
+        }
+    }
+
+    sort($offenders);
+
+    expect($offenders)->toContain('Models/PlanActivity.php')
+        ->and(array_diff($offenders, $allowed))->toBe([]);
+});
