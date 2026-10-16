@@ -152,11 +152,27 @@ final readonly class EloquentPlanMemberRepository implements PlanMemberRepositor
             $displayName = $row->getAttribute('display_name');
             $joinedAt = $row->joined_at;
 
-            // Both checks narrow a type for PHPStan level 8, and both are written as throws
-            // rather than coercions on purpose. Registration is the only path that creates a
-            // user and it writes the user_profiles row in the same breath, and the query above
-            // excludes a NULL joined_at - so neither is reachable through the application.
-            // Coercing instead would publish an empty display_name for a real member.
+            // Two throws rather than two coercions, for one reason; held open by two DIFFERENT
+            // forces, and they are not interchangeable. An earlier version of this comment said
+            // both narrowed a type for PHPStan level 8, which is measurably false of one of
+            // them - and a reader who believes a guard is held open by something that is not
+            // holding it will delete it on the next tidy-up.
+            //
+            // The is_string throw is held open by a TEST and by nothing else: getAttribute()
+            // returns mixed, and mixed-into-string is a level-NINE check, so deleting this
+            // throw leaves the analyser at errors: 0 and reds 'refuses to publish a member
+            // whose profile row is missing'.
+            //
+            // The joined_at throw below is the other way round: it is held open by the ANALYSER,
+            // because PlanMemberView::$joinedAt is a non-nullable Carbon while $row->joined_at
+            // is Carbon|null. Deleting it is one argument.type error at level 8 with every test
+            // in the file still green. Both measured, both ways.
+            //
+            // The shared reason for throwing is not a type reason at all: registration is the
+            // only path that creates a user and it writes the user_profiles row in the same
+            // breath, and the query above excludes a NULL joined_at - so neither case is
+            // reachable through the application, and coercing instead would publish an empty
+            // display_name for a real member.
             //
             // The constraints are not what makes the first one unreachable, and a reader who
             // believes they are will skip this check somewhere it is load-bearing:

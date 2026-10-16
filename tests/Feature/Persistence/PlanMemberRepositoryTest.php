@@ -81,7 +81,7 @@ it('refuses a user who is not an active member of this Plan', function (): void 
     }
 });
 
-it('refuses a malformed user id and a malformed plan id without reaching Postgres', function (): void {
+it('answers a malformed user id and a malformed plan id without reaching Postgres', function (): void {
     // §5.1: "Three identifiers need the same treatment - {plan}, {user} and {invite} - each in
     // its own repository, each with its own test." Without the shape check this is
     // SQLSTATE[22P02] and a 500.
@@ -89,6 +89,12 @@ it('refuses a malformed user id and a malformed plan id without reaching Postgre
     // Both halves of activeMemberQuery()'s `||` are asserted, and each is proved by deleting
     // its own disjunct: deleting the whole condition reds both at once and would show only
     // that one of the two fires.
+    //
+    // listActiveMembers() has a shape guard of its own and answers the same malformed id
+    // DIFFERENTLY, deliberately: a list has no 404 to raise - the result set is the answer - so
+    // a malformed $planId is an empty page. Same hazard, different answer, which is why it
+    // needs its own assertion and its own mutation rather than riding on the two above.
+    // findMembership()'s third answer for the same input, null, is in the next test.
     $plan = Plan::factory()->create();
     $user = User::factory()->hasProfile()->create();
     member($plan, $user, MemberRole::Member, '2026-01-01 10:00:00');
@@ -99,6 +105,11 @@ it('refuses a malformed user id and a malformed plan id without reaching Postgre
         ->toThrow(PlanMemberNotFound::class);
     expect(fn () => $repository->findActiveMember('not-a-uuid', $user->id))
         ->toThrow(PlanMemberNotFound::class);
+
+    $page = $repository->listActiveMembers('not-a-uuid', new PageQuery(25, null));
+
+    expect($page->items)->toBe([]);
+    expect($page->nextCursor)->toBeNull();
 });
 
 it('returns a left or removed membership row so a re-join can reuse it', function (): void {
@@ -147,12 +158,15 @@ it('refuses every transfer target DeleteAccount::successorFor would refuse', fun
     // SoftDeletes global scope, which whereHas() is what applies.
     //
     // Deleting the whole whereHas line loses BOTH account conditions at once - there is then no
-    // `users` subquery to carry either - so that mutation proves neither half on its own.
-    // Isolating them takes two: ->whereHas('user') with no closure keeps the scope and drops
-    // the suspension check, and withTrashed() inside the closure keeps the suspension check and
-    // drops the scope. Measured both ways, and the soft-delete half needed $deleted moved to
-    // the front of this loop to observe at all, because Pest stops a test at its first failing
-    // expectation and a later case is never evaluated.
+    // `users` subquery to carry either - so that mutation proves neither half on its own. It is
+    // also the one mutation here that needs this loop reordered to read at all: it reds at
+    // $suspended, and Pest stops a test at its first failing expectation, so what it does to
+    // $deleted is silence until $deleted is moved ahead of $suspended.
+    //
+    // Isolating the halves takes two mutations and neither needs a reorder: ->whereHas('user')
+    // with no closure keeps the scope and drops the suspension check, and reds at $suspended;
+    // withTrashed() inside the closure keeps the suspension check and drops the scope, and reds
+    // at $deleted with every earlier case still refused. Measured all three ways.
     $repository = app(PlanMemberRepository::class);
 
     $plan = Plan::factory()->create();
@@ -201,6 +215,17 @@ it('lists active members in joined_at ASC, id ASC order with their display names
 
     $ejected = User::factory()->hasProfile(['display_name' => 'Ejected'])->create();
     PlanMember::factory()->removed()->create(['plan_id' => $plan->id, 'user_id' => $ejected->id]);
+
+    // A fourth row that must not appear, for a different reason and at a different layer: an
+    // `active` member in good standing, of a DIFFERENT Plan. §17.3's IDOR row, and on this
+    // method it is a cross-Plan READ rather than a 500 - listActiveMembers() is the one method
+    // here that publishes other people's display names, ids and roles. Every list fixture in
+    // this file was single-tenant until this row existed, which left
+    // ->where('plan_members.plan_id', $planId) with no red anywhere in the suite. Its joined_at
+    // is later than both real members', so the scope's absence appends a name rather than
+    // reordering the page.
+    $elsewhere = User::factory()->hasProfile(['display_name' => 'Elsewhere'])->create();
+    member(Plan::factory()->create(), $elsewhere, MemberRole::Owner, '2026-01-03 10:00:00');
 
     $page = app(PlanMemberRepository::class)->listActiveMembers($plan->id, new PageQuery(25, null));
 

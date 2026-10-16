@@ -56,6 +56,12 @@ interface PlanMemberRepository
      * owner deleting their account leaves a persisted Plan whose every membership row is
      * `left` until the day-30 purge hard-deletes it.
      *
+     * A malformed $planId is an EMPTY PAGE, not an exception and not null - a third answer for
+     * the same input, and deliberately different from the two above. There is no 404 on a list:
+     * the result set is the answer, so there is nothing for a refusal to say that an empty page
+     * does not already say. §5.1's shape check still has to happen, because without it
+     * `where plan_id = 'not-a-uuid'` against a uuid column is Postgres 22P02 and a 500.
+     *
      * $query->limit is clamped to PageQuery::MAX_LIMIT. $query->cursor is always either null or
      * a PageCursor this API itself issued - a value it did not issue is a 422 before this method
      * is ever called (the resources section's ValidCursor rule), the same guarantee
