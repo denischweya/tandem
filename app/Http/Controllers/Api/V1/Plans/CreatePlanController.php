@@ -28,6 +28,13 @@ final class CreatePlanController
     {
         $user = $this->requireAuthenticatedUser($request->user(), 'POST /plans');
 
+        // $request->string()/->has(), not ->validated(): the INPUT bag, not the validated
+        // subset. Safe here only because CreatePlanRequest::rules() leaves no reachable
+        // non-scalar for either field to read: an empty 'description' becomes null through
+        // the global ConvertEmptyStringsToNull before 'sometimes'+'required' 422s it, and
+        // 'string' rejects an array before this line ever runs. That safety is entirely a
+        // property of the rule set above, not of anything here - a later relaxation of
+        // rules() (an array rule added to either field, say) would silently remove it.
         $context = $createPlan->execute(
             $user,
             $request->string('title')->toString(),

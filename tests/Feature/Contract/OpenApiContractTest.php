@@ -212,7 +212,7 @@ it('declares every error status the application itself raises', function (): voi
         expect($response)->not->toBeNull("openapi.json must declare {$status} for {$method} {$path}");
 
         // A description, because a status with no prose tells a client the number and nothing
-        // about what to do with it - and all six of these are conditions a client must handle
+        // about what to do with it - and all eight of these are conditions a client must handle
         // differently from each other.
         $description = data_get($response, 'description');
 

@@ -112,6 +112,22 @@ class AppServiceProvider extends ServiceProvider
         // METHOD call in the same position does not hit that code path. getAuthIdentifier()
         // is Authenticatable's own contract method and returns $this->{getAuthIdentifierName()},
         // which for App\Models\User is $this->id (no override of getKeyName()) - the same uuid.
+        //
+        // And PHPStan is RIGHT to flag it, not merely consistent: `??` already applies isset
+        // semantics to its whole left operand, so `$request->user()->id ?? ...` and
+        // `$request->user()?->id ?? ...` are the same value AND the same lack of warning for a
+        // null object - measured (`$f()->b ?? 'fallback'` for a function returning null emits
+        // no "Attempt to read property" warning). The nullsafe buys nothing `??` was not
+        // already providing for THIS combination; it is the method-call form that is kept,
+        // not the property-fetch form restored, and only because it keeps the nullability of
+        // $request->user() visible in the source once the property access no longer carries
+        // its own `?->` to say so.
+        //
+        // The ip()/unknown fallback chain is unreachable on this route for the same reason
+        // $request->user() is non-null above - recorded for Task 36, which owns the limiter
+        // registry: RateLimiter::for() registers 'plans-create' globally, so Limit::by() must
+        // always receive a string regardless of which route ever calls into this closure, and
+        // the fallback is what guarantees that rather than something this route currently uses.
         RateLimiter::for('plans-create', fn (Request $request) => Limit::perHour(30)->by($request->user()?->getAuthIdentifier() ?? $request->ip() ?? 'unknown'));
 
         // No named 'auth-login' limiter here (and so no throttle:auth-login on the route):

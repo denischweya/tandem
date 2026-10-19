@@ -2,16 +2,19 @@
 
 declare(strict_types=1);
 
+use App\Application\Plans\RecordActivity;
 use App\Domain\Plans\ActivityType;
 use App\Domain\Plans\MemberRole;
 use App\Domain\Plans\MemberStatus;
 use App\Domain\Plans\PlanStatus;
 use App\Domain\Plans\Visibility;
+use App\Domain\Shared\Clock;
 use App\Models\Plan;
 use App\Models\PlanActivity;
 use App\Models\PlanMember;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 
 use function Pest\Laravel\postJson;
 use function Pest\Laravel\withToken;
@@ -68,6 +71,54 @@ it('writes the Plan, the owner active membership and one plan.created row', func
     expect($activity->subject_id)->toBeNull();
     expect($activity->metadata)->toBe([]);
     expect($activity->created_at)->not->toBeNull('plan_activity.created_at is NOT NULL and $timestamps = false');
+});
+
+it('rolls back the Plan and PlanMember writes when the activity write fails', function (): void {
+    // T16-1: "three writes in one transaction" is a claim about ATOMICITY, and nothing above
+    // this test can tell a transactional CreatePlan from a non-transactional one - the happy
+    // path asserts three rows exist, and every refusal path asserts zero rows for a request
+    // that never reached the use case at all. A mutation that corrupts RecordActivity's own
+    // call ARGUMENTS reds identically whether or not DB::transaction() is there, because the
+    // cause of the failure - not the absence of a transaction - is what the status code and
+    // the row counts see. This test instead makes the REAL RecordActivity throw partway
+    // through its own body, with CreatePlan's write calls completely untouched, so the only
+    // variable left is whether the two writes that already happened are rolled back.
+    //
+    // RecordActivity is `final` with no interface, so there is nothing to subclass and the
+    // suite mocks nothing anyway (Mockery itself refuses a final class - see OutboxWriter).
+    // The double is a genuine RecordActivity instance, built by hand with a Clock double
+    // swapped in through the container for this one dependency only: CreatePlan's own
+    // injected Clock keeps resolving the untouched SystemClock binding, so its own
+    // `$now = $this->clock->now();` and both `->save()` calls succeed exactly as in the
+    // happy path, and the throw happens only where RecordActivity::execute() reaches its own
+    // `$this->clock->now()` while building plan_activity's created_at - after the Plan and
+    // PlanMember rows already exist in this request's own connection.
+    app()->bind(RecordActivity::class, fn (): RecordActivity => new RecordActivity(
+        new class implements Clock
+        {
+            public function now(): DateTimeImmutable
+            {
+                throw new RuntimeException('T16-1 double: RecordActivity never reaches its INSERT.');
+            }
+        },
+    ));
+
+    $user = userWithPassword();
+    [, , $access] = signIn($user);
+
+    withToken($access)->postJson('/api/v1/plans', [
+        'title' => 'Dinner in Nairobi',
+        'timezone' => 'Africa/Nairobi',
+    ])->assertStatus(500);
+
+    // The standing proof of atomicity. Delete DB::transaction() from CreatePlan::execute()
+    // and these two counts come back 1, not 0, while every other test in this file - the
+    // happy path included - stays green, because nothing else in the suite exercises a
+    // failure after the Plan and PlanMember writes. See task-16-report.md's round-1 section
+    // for that mutation's observed output.
+    expect(Plan::query()->count())->toBe(0, 'the Plan write must roll back when the activity write fails');
+    expect(PlanMember::query()->count())->toBe(0, 'the PlanMember write must roll back when the activity write fails');
+    expect(PlanActivity::query()->count())->toBe(0, 'RecordActivity threw before its own INSERT ever ran');
 });
 
 it('stores a null description when none is sent', function (): void {
@@ -136,9 +187,15 @@ it('rejects a missing title, an over-long title, a blank title and a non-IANA ti
     // 7 of the kernel's 8), not members of the `api` group - measured, because the `api` group
     // is [SubstituteBindings] and nothing else. So no prepareForValidation() of ours is
     // involved, and none should be added.
+    //
+    // assertJsonValidationErrors(), not assertJsonValidationErrorFor(): the weaker form only
+    // asks whether `title` has ANY error, which `string` or `max` would satisfy just as well
+    // as `required` - it cannot tell the stated mechanism apart from any other failing rule.
+    // Pinning the `required` message is what proves the whitespace value actually arrived as
+    // null rather than, say, failing `string` for some unrelated reason.
     withToken($access)->postJson('/api/v1/plans', ['title' => '   ', 'timezone' => 'Europe/London'])
         ->assertStatus(422)
-        ->assertJsonValidationErrorFor('title');
+        ->assertJsonValidationErrors(['title' => 'The title field is required.']);
 
     withToken($access)->postJson('/api/v1/plans', ['title' => 'Dinner', 'timezone' => 'Mars/Olympus_Mons'])
         ->assertStatus(422)
@@ -177,7 +234,23 @@ it('limits one user to thirty an hour and leaves a second user on the same IP al
     $first = userWithPassword();
     [, , $firstAccess] = signIn($first);
 
-    for ($i = 1; $i <= 30; $i++) {
+    withToken($firstAccess)->postJson('/api/v1/plans', [
+        'title' => 'Plan 1',
+        'timezone' => 'Europe/London',
+    ])->assertCreated();
+
+    // T16-5: the test above this one (and the comment at the top of this file) pin
+    // PER-USER keying, which a key of $user->email would also satisfy - the suite would
+    // stay green right up until Task 36 relocates this limiter and needs to know the exact
+    // shape it is relocating. This pins the real key itself: ThrottleRequests hashes
+    // $limiterName.$limit->key unconditionally (self::$shouldHashKeys = true), so the key
+    // this one request wrote to is exactly md5('plans-create'.$userId), and RateLimiter::hit()
+    // writes straight to that string with no further transformation - measured against the
+    // real ArrayStore CACHE_STORE=array pins for this suite, which applies no prefix of its
+    // own. Value 1, not merely present, because hit() begins at 0 and increments once per call.
+    expect(Cache::get(md5('plans-create'.$first->id)))->toBe(1, 'one request must hit exactly this key, once');
+
+    for ($i = 2; $i <= 30; $i++) {
         withToken($firstAccess)->postJson('/api/v1/plans', [
             'title' => "Plan {$i}",
             'timezone' => 'Europe/London',
