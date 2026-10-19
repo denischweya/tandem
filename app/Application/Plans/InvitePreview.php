@@ -17,8 +17,11 @@ namespace App\Application\Plans;
  * than the whole preview disappearing (S-3, the same nullability PlanInviteView rests on).
  *
  * memberCount counts status = active rows only, matching GET /plans/{plan}/members. It is
- * computed by this repository's own query rather than reused from elsewhere, and that is a
- * disclosed duplication, not an oversight - see findPreviewByToken()'s own docblock.
+ * computed by this repository's own query rather than reused from elsewhere - the THIRD
+ * independent "count a Plan's active members" implementation in this codebase, alongside the
+ * Plan repository's own existence-oracle count and its authenticated member-count aggregate.
+ * That is a disclosed duplication, not an oversight - see findPreviewByToken()'s own docblock
+ * for which places a future ruling about member eligibility would need to change together.
  */
 final readonly class InvitePreview
 {

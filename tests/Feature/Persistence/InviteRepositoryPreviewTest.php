@@ -15,10 +15,12 @@ uses(RefreshDatabase::class);
 // §10.3's preview, deliberately separate from InviteRepositoryTest.php (Task 10's own file) -
 // this task's Files list names the two apart. planId, planTitle and inviterName below are three
 // mutually distinguishable values (a uuid, 'Camping trip', 'Ada Lovelace'), not the null/null
-// shape Task 10 shipped wrong for a sibling pair (task-14-context.md §1c): a named-argument
-// swap of planId<->planTitle or planTitle<->inviterName inside findPreviewByToken()'s
-// `new InvitePreview(...)` call is provable against this fixture - see this file's break-step
-// record in task-14-report.md.
+// shape Task 10 shipped wrong for a sibling pair on PlanInviteView::fromInvite(): a
+// named-argument swap of planId<->planTitle or planTitle<->inviterName inside
+// findPreviewByToken()'s `new InvitePreview(...)` call is provable against this fixture - each
+// was mutated in findPreviewByToken()'s own body and run against this test during development,
+// confirming a full swap reddens the earliest assertion it reaches and a narrowed restore (one
+// side fixed, the other still swapped) reddens the next one.
 it('finds a preview by token, with the inviter\'s name and the active member count', function (): void {
     $plan = Plan::factory()->create(['title' => 'Camping trip']);
     $inviter = User::factory()->hasProfile(['display_name' => 'Ada Lovelace'])->create();
@@ -32,11 +34,11 @@ it('finds a preview by token, with the inviter\'s name and the active member cou
     // R6: plaintext in - the repository hashes internally, so the test never forms the hash.
     $preview = app(InviteRepository::class)->findPreviewByToken($token);
 
-    // G6 (plan-corrections.md Part G, item 5): expect(...)->not->toBeNull() does not narrow a
-    // nullable for PHPStan, and findPreviewByToken() returns ?InvitePreview - the brief's own
-    // bare $preview->planId trips `property.nonObject` at level 8. The explicit throw is the
-    // shipped pattern PlanRepositoryTest and PlanMemberRepositoryTest already use for the same
-    // narrowing, and it is real control-flow narrowing, not a cast or an annotation.
+    // expect(...)->not->toBeNull() does not narrow a nullable for PHPStan, and
+    // findPreviewByToken() returns ?InvitePreview - the brief's own bare $preview->planId trips
+    // `property.nonObject` at level 8. The explicit throw is the shipped pattern
+    // PlanRepositoryTest and PlanMemberRepositoryTest already use for the same narrowing, and it
+    // is real control-flow narrowing, not a cast or an annotation.
     if ($preview === null) {
         throw new RuntimeException('findPreviewByToken() must find the invite this test just created.');
     }
@@ -54,12 +56,12 @@ it('renders inviter_name null rather than disappearing, for a purged inviter (S-
 
     $preview = app(InviteRepository::class)->findPreviewByToken($token);
 
-    // Same G6 narrowing as the case above, and a deliberate change from the brief's own
+    // Same narrowing as the case above, and a deliberate change from the brief's own
     // expect(...)->not->toBeNull($message) here: that form does not narrow $preview for
-    // PHPStan, and the brief's own leftJoin-break-step wording (E.11) is pinned to the
+    // PHPStan, and the brief's own leftJoin-break-step wording is pinned to the
     // Pest-negated-expectation phrasing that form produces. Throwing changes BOTH the
-    // mechanism (real control-flow narrowing) and the break step's observed failure text -
-    // see task-14-report.md for the re-measured wording.
+    // mechanism (real control-flow narrowing) and the break step's observed failure text,
+    // which this task's own break step re-measured rather than transcribed.
     if ($preview === null) {
         throw new RuntimeException(
             'a purged inviter must leave the preview reachable with inviter_name null, not make the '

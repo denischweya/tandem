@@ -20,8 +20,8 @@ use Illuminate\Support\Carbon;
 // A bare `new PlanInvite` plus forceFill(), never fill() and never PlanInvite::factory(): the
 // model's $guarded is ['*'] (totallyGuarded()), so fill() throws MassAssignmentException on the
 // first supplied key, and PlanInvite::factory()->make() drags Plan::factory() and
-// User::factory() into resolution regardless of make() versus create() (task-14-context.md
-// §1a) - neither matters here, since this fixture needs no Plan and no User row at all,
+// User::factory() into resolution regardless of make() versus create() - neither matters here,
+// since this fixture needs no Plan and no User row at all,
 // id/email/role/expires_at/accepted_at/revoked_at being everything fromInvite() reads.
 function planInviteFixtureForIssuedInvite(): PlanInvite
 {
@@ -40,14 +40,15 @@ function planInviteFixtureForIssuedInvite(): PlanInvite
 }
 
 // Eight separate expect() calls, not a chained expression and not a single toBe() against a
-// second IssuedInvite: task-14-context.md §1c names three same-typed pairs on this class that a
-// named-argument swap inside fromInvite()'s `new self(...)` call exchanges invisibly -
-// acceptedAt/revokedAt (both ?Carbon), id/token (both string), email/invitedByName (both
-// ?string) - and Pest aborts a test at its first failing assertion
-// (plan-corrections.md [[H1]]), so a single chained expression would only ever prove the first
-// clause a mutation reaches. Every value below is distinguishable from every other value of the
-// same type, including from the other member of its own pair, so each swap is individually
-// provable - see this file's break-step record in task-14-report.md.
+// second IssuedInvite: IssuedInvite carries three same-typed pairs that a named-argument swap
+// inside fromInvite()'s `new self(...)` call exchanges invisibly - acceptedAt/revokedAt (both
+// ?Carbon), id/token (both string), email/invitedByName (both ?string) - and Pest aborts a test
+// at its first failing assertion, so a single chained expression would only ever prove the
+// first clause a mutation reaches. Every value below is distinguishable from every other value
+// of the same type, including from the other member of its own pair, so each swap is
+// individually provable: each pair was mutated in fromInvite()'s own body and run against this
+// test during development, confirming a full swap reddens the earliest assertion it reaches and
+// a narrowed restore (one side fixed, the other still swapped) reddens the next one.
 it('maps every field of a PlanInvite onto the matching IssuedInvite field, with token and invitedByName passed through unchanged', function (): void {
     $invite = planInviteFixtureForIssuedInvite();
 

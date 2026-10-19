@@ -12,11 +12,12 @@ use App\Models\PlanInvite;
  * case's own transaction, and §10.7's UniqueConstraintViolationException catch has to sit
  * around that transaction.
  *
- * All three token lookups take the PLAINTEXT token, not a hash: every caller (§10.3's preview,
- * §10.7 step 1's claim, and findPreviewByToken() below) holds nothing but the plaintext
- * straight off the request, and hash('sha256', $plainToken) runs inside this class rather than
- * at each call site - unlike ResetPassword::execute()'s PasswordResetToken lookup, which hashes
- * before calling. plan_invites.token_hash is UNIQUE, so every lookup still hits a unique index.
+ * All three token lookups take the PLAINTEXT token, not a hash: findByToken(),
+ * findByTokenForUpdate() and findPreviewByToken() below each hold nothing but the plaintext
+ * straight off their caller's request, and hash('sha256', $plainToken) runs inside this class
+ * rather than at each call site - unlike ResetPassword::execute()'s PasswordResetToken lookup,
+ * which hashes before calling. plan_invites.token_hash is UNIQUE, so every lookup still hits a
+ * unique index.
  */
 interface InviteRepository
 {
@@ -33,8 +34,12 @@ interface InviteRepository
     public function findForPlan(string $planId, string $inviteId): PlanInvite;
 
     /**
-     * §10.3's preview: no lock, because it writes nothing and the caller is unauthenticated.
-     * Takes the plaintext token and hashes it internally - see the interface docblock.
+     * §10.7's unlocked read of the full model: no lock, because it writes nothing. NOT §10.3's
+     * preview - that route is findPreviewByToken() below, which returns the blueprint
+     * §126-shaped minimum rather than this method's full PlanInvite (token_hash and the
+     * invitee's own email included), precisely because the preview's caller has proved
+     * nothing yet. Takes the plaintext token and hashes it internally - see the interface
+     * docblock.
      */
     public function findByToken(string $plainToken): ?PlanInvite;
 
@@ -58,11 +63,12 @@ interface InviteRepository
      * policy.
      *
      * The active-member count inside InvitePreview is computed by this method's own query,
-     * independently of the Plan repository's own active-member count, rather than delegated to
-     * it - the two filter identically today (plan id, status = active), so there is no bug, but
-     * nothing links them: a future ruling about a suspended or otherwise-unreachable member
-     * would need to be applied in both places, and this is the one an unauthenticated caller
-     * can see.
+     * independently of the other two places this codebase counts a Plan's active members (the
+     * Plan repository's own existence-oracle count, and the Plan repository's authenticated
+     * member-count aggregate behind GET /plans and GET /plans/{plan}) - all three filter
+     * identically today (a Plan's id, status = active), so there is no bug, but nothing links
+     * them. A future ruling about a suspended or otherwise-unreachable member would need to be
+     * applied in all three places or none; this is the one an unauthenticated caller can see.
      */
     public function findPreviewByToken(string $plainToken): ?InvitePreview;
 

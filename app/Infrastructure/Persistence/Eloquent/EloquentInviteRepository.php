@@ -69,8 +69,9 @@ final readonly class EloquentInviteRepository implements InviteRepository
                 'plans.title as plan_title',
                 'user_profiles.display_name as inviter_name',
             )
-            // A correlated count, not the Plan repository's own active-member count: see
-            // InvitePreview's and this interface's own docblocks for the disclosed duplication.
+            // A correlated count, not either of the Plan repository's own two active-member
+            // counts: see InvitePreview's and InviteRepository's own docblocks for the
+            // disclosed three-way duplication.
             ->selectSub(
                 fn ($query) => $query->selectRaw('count(*)')
                     ->from('plan_members')

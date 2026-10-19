@@ -26,7 +26,8 @@ use Illuminate\Support\Carbon;
 // accepted_at and revoked_at below are two DIFFERENT non-null timestamps, not both null: both
 // are typed ?Carbon on every DTO in this file, and a fixture leaving them equal (null or
 // otherwise) cannot tell a correct mapping from one that swapped the two - exactly the shape
-// Task 10 shipped wrong and twelve passing tests never caught (task-14-context.md §1c).
+// Task 10 shipped wrong on PlanInviteView::fromInvite(), where twelve passing tests never
+// caught it because that fixture left both null.
 it('renders PlanInviteResource with no token key at all', function (): void {
     $summary = new PlanInviteView(
         id: '0192f0a1-0000-7000-8000-000000000005',
@@ -41,10 +42,11 @@ it('renders PlanInviteResource with no token key at all', function (): void {
     $rendered = (new PlanInviteResource($summary))->toArray(new Request);
 
     expect($rendered)->not->toHaveKey('token');
-    // Milliseconds, not the brief's literal: DATE_RFC3339_EXTENDED is 'Y-m-d\TH:i:s.vP' and
-    // measured (resources-inherited-rules.md D-R4 probe) to always render three millisecond
-    // digits, even for a zero-microsecond instant - '...T00:00:00+00:00' (no .000) is not a
-    // string this format call can produce.
+    // Milliseconds, not the brief's literal: DATE_RFC3339_EXTENDED is 'Y-m-d\TH:i:s.vP', and
+    // measured directly against this exact zero-microsecond instant
+    // (DateTimeImmutable('2026-10-20 00:00:00+00:00')->format(DATE_RFC3339_EXTENDED) returns
+    // '2026-10-20T00:00:00.000+00:00') to always render three millisecond digits - so
+    // '...T00:00:00+00:00' (no .000) is not a string this format call can produce.
     expect($rendered)->toBe([
         'id' => '0192f0a1-0000-7000-8000-000000000005',
         'email' => 'invitee@example.test',
@@ -80,7 +82,8 @@ it('renders invited_by_name null for an invite with no resolvable inviter (S-3)'
 //
 // Every one of IssuedInvite's eight properties gets its own, obviously distinguishable value:
 // id vs. token (both string), email vs. invitedByName (both ?string), and acceptedAt vs.
-// revokedAt (both ?Carbon) - task-14-context.md §1c's three pairs for this class. A single
+// revokedAt (both ?Carbon) - the three same-typed pairs on this class a named-argument swap
+// inside fromInvite() would exchange invisibly otherwise. A single
 // toBe() over the whole rendered array is still one assertion, but PHPUnit's array comparator
 // diffs every differing key at once - measured directly against this project's own PHPUnit, by
 // running a scratch comparison of two same-shaped arrays differing in two keys: the failure

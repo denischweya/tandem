@@ -18,8 +18,9 @@ use Illuminate\Support\Carbon;
  * use case will return and what PlanInviteCreatedResource renders - it is not auth and it is
  * not infrastructure. The shipped codebase already draws this line for the same subsystem:
  * App\Infrastructure\Auth\IssuedAccessToken and ...\IssuedRefreshToken are themselves `Issued*`
- * value objects kept inside Infrastructure\Auth, and a grep over app/ and tests/ finds no
- * reference to either outside that one directory - they never cross a layer boundary. What
+ * value objects kept inside Infrastructure\Auth, and neither is ever used as a type (a `use`
+ * import, a type-hint, an instantiation) outside that one directory - they never cross a layer
+ * boundary in code, this docblock's own prose mention of their names notwithstanding. What
  * DOES cross, for the same subsystem, is App\Application\Auth\Session, which
  * RefreshTokenIssuer::issue(): IssuedRefreshToken is mapped into before Http ever sees it. The
  * invite-issuing use case is expected to follow the same pattern when it is written.
