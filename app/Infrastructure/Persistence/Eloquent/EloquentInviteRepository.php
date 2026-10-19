@@ -78,16 +78,30 @@ final readonly class EloquentInviteRepository implements InviteRepository
             // fromInvite(), not new PlanInviteView($row, ...): the view is seven typed scalars,
             // so the model stops here and nothing downstream can reach through it.
             //
-            // is_string() rather than a cast, for two forces - and NOT because a bare (string)
-            // on a null here would warn: (string) null is silent and yields '', so neither an
-            // E_WARNING nor a 500 is reachable on a leftJoin miss. (That hazard is real for
+            // is_string() rather than a cast - and NOT because a bare (string) on a null here
+            // would warn: (string) null is silent and yields '', so neither an E_WARNING nor a
+            // 500 is reachable on a leftJoin miss. (That hazard is real for
             // AppServiceProvider::boot()'s 'auth-forgot-password' closure, but what reaches it
             // is an ARRAY from request input, not a null from a join - a different value, not
             // the same pattern.)
-            //   1. getAttribute() returns mixed, so this is what narrows it to ?string before
-            //      PlanInviteView::fromInvite() can accept it - held open by PHPStan level 8.
-            //   2. A (string) cast would publish '' where baseline S-3 requires null, silently
-            //      collapsing the exact case the hard-deleted-inviter test exists to prove.
+            //
+            // Measured, not assumed: deleting this check and passing $name straight into
+            // fromInvite()'s ?string parameter is errors: 0 at this project's PHPStan level 8,
+            // both file-scoped and project-wide - phpstan.neon enables no checkExplicitMixed and
+            // no strict-rules/bleeding-edge extension, so level 8 here does not hold a mixed
+            // value passed into a typed parameter open at all, despite getAttribute() genuinely
+            // returning mixed (\PHPStan\dumpType() on $name confirms that half). It is also
+            // behaviourally identical to today's check for every row this query can produce -
+            // invited_by_name is always string|null (a LEFT JOIN on a NOT NULL display_name
+            // column), and a null passed through raw is still null - and the whole focused test
+            // file passes either way.
+            //
+            // What this check actually holds open: against a bare (string) cast, not against
+            // passing $name through unchecked, it is load-bearing. (string) $name collapses a
+            // missing profile's null to '', where baseline S-3 requires null, and that is
+            // exactly what the hard-deleted-inviter test catches ("Failed asserting that '' is
+            // null."). Read this as documentation that forecloses a future cast, not as
+            // something an analyser or today's behaviour requires.
             $views[] = PlanInviteView::fromInvite($row, is_string($name) ? $name : null);
         }
 
