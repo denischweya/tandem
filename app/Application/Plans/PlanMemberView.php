@@ -6,7 +6,9 @@ namespace App\Application\Plans;
 
 use App\Domain\Plans\MemberRole;
 use App\Domain\Plans\MemberStatus;
+use App\Models\PlanMember;
 use Illuminate\Support\Carbon;
+use RuntimeException;
 
 /**
  * One row of §8.1's member list: the five scalars PlanMemberResource publishes - userId,
@@ -39,4 +41,32 @@ final readonly class PlanMemberView
         public MemberStatus $status,
         public Carbon $joinedAt,
     ) {}
+
+    /**
+     * Takes the raw model plus a display name rather than a composite view type, so this
+     * factory depends on nothing the repositories task might reshape later. Used by
+     * PlanMemberResourceTest and by any future single-member read; listActiveMembers() builds
+     * its views directly from its joined row and never calls this.
+     */
+    public static function fromMember(PlanMember $member, string $displayName): self
+    {
+        if ($member->joined_at === null) {
+            // D-R8 / baseline S-37: status = 'active' => joined_at IS NOT NULL is an
+            // application invariant with no database CHECK behind it (freeze). Coalescing to
+            // "now" or to the member row's created_at would publish a joined_at Wave 2 never
+            // wrote, which is worse than failing loudly here.
+            throw new RuntimeException(
+                'PlanMember carried a NULL joined_at for an active row. The invariant '
+                .'status = active => joined_at IS NOT NULL was violated upstream (baseline S-37).'
+            );
+        }
+
+        return new self(
+            userId: $member->user_id,
+            displayName: $displayName,
+            role: MemberRole::from($member->role),
+            status: MemberStatus::from($member->status),
+            joinedAt: $member->joined_at,
+        );
+    }
 }
