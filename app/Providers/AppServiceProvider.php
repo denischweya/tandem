@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Application\Plans\InviteRepository;
 use App\Application\Plans\PlanMemberRepository;
 use App\Application\Plans\PlanRepository;
 use App\Domain\Shared\Clock;
@@ -14,6 +15,7 @@ use App\Infrastructure\Notifications\Mail\ResetPasswordMail;
 use App\Infrastructure\Notifications\Mail\VerifyEmailMail;
 use App\Infrastructure\OpenApi\PasswordRuleTransformer;
 use App\Infrastructure\Outbox\OutboxHandlers;
+use App\Infrastructure\Persistence\Eloquent\EloquentInviteRepository;
 use App\Infrastructure\Persistence\Eloquent\EloquentPlanMemberRepository;
 use App\Infrastructure\Persistence\Eloquent\EloquentPlanRepository;
 use App\Models\PersonalAccessToken;
@@ -37,6 +39,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->bind(Clock::class, SystemClock::class);
         $this->app->bind(PlanRepository::class, EloquentPlanRepository::class);
         $this->app->bind(PlanMemberRepository::class, EloquentPlanMemberRepository::class);
+        $this->app->bind(InviteRepository::class, EloquentInviteRepository::class);
         $this->app->singleton(OutboxHandlers::class);
 
         // Scramble documents the string rule `min:12` but ships nothing that understands
