@@ -12,11 +12,11 @@ use App\Models\PlanInvite;
  * case's own transaction, and §10.7's UniqueConstraintViolationException catch has to sit
  * around that transaction.
  *
- * The two token lookups take the PLAINTEXT token, not a hash: both callers (§10.3's preview and
- * §10.7 step 1's claim) hold nothing but the plaintext straight off the request, and
- * hash('sha256', $plainToken) runs inside this class rather than at each call site - unlike
- * ResetPassword::execute()'s PasswordResetToken lookup, which hashes before calling.
- * plan_invites.token_hash is UNIQUE, so both lookups still hit a unique index.
+ * All three token lookups take the PLAINTEXT token, not a hash: every caller (§10.3's preview,
+ * §10.7 step 1's claim, and findPreviewByToken() below) holds nothing but the plaintext
+ * straight off the request, and hash('sha256', $plainToken) runs inside this class rather than
+ * at each call site - unlike ResetPassword::execute()'s PasswordResetToken lookup, which hashes
+ * before calling. plan_invites.token_hash is UNIQUE, so every lookup still hits a unique index.
  */
 interface InviteRepository
 {
@@ -44,6 +44,27 @@ interface InviteRepository
      * ResetPassword's precedent, and it is only meaningful inside the caller's transaction.
      */
     public function findByTokenForUpdate(string $plainToken): ?PlanInvite;
+
+    /**
+     * §10.3's preview: the one lookup an unauthenticated caller reaches, before proving
+     * anything. Returns the blueprint §126-shaped minimum rather than the PlanInvite model -
+     * the Plan's title, the inviter's display name, and a count - not the model this
+     * interface's other lookups return, because that model carries token_hash and the
+     * invitee's own email, neither of which is the unauthenticated clicker's business.
+     *
+     * Does not check expiry, revocation or acceptance - that is InvitePolicy::decide()'s job,
+     * one layer up. Spec §10.3 shows a preview for an expired or already-accepted invite too,
+     * with a different message, not a 404; mixing that decision in here would duplicate the
+     * policy.
+     *
+     * The active-member count inside InvitePreview is computed by this method's own query,
+     * independently of the Plan repository's own active-member count, rather than delegated to
+     * it - the two filter identically today (plan id, status = active), so there is no bug, but
+     * nothing links them: a future ruling about a suspended or otherwise-unreachable member
+     * would need to be applied in both places, and this is the one an unauthenticated caller
+     * can see.
+     */
+    public function findPreviewByToken(string $plainToken): ?InvitePreview;
 
     /**
      * §10.8's list: every invite of the Plan, including accepted and revoked ones, ordered

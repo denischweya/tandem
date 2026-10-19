@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Persistence\Eloquent;
 
+use App\Application\Plans\InvitePreview;
 use App\Application\Plans\InviteRepository;
 use App\Application\Plans\PlanInviteNotFound;
 use App\Application\Plans\PlanInviteView;
+use App\Domain\Plans\MemberStatus;
 use App\Models\PlanInvite;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 final readonly class EloquentInviteRepository implements InviteRepository
@@ -48,6 +51,45 @@ final readonly class EloquentInviteRepository implements InviteRepository
             ->where('token_hash', hash('sha256', $plainToken))
             ->lockForUpdate()
             ->first();
+    }
+
+    public function findPreviewByToken(string $plainToken): ?InvitePreview
+    {
+        $row = DB::table('plan_invites')
+            ->join('plans', 'plans.id', '=', 'plan_invites.plan_id')
+            // leftJoin, never join: S-3. invited_by is SET NULL by the day-30 purge, and an
+            // inner join would make a purged invite's preview disappear instead of rendering
+            // inviter_name: null - the wrong failure for an unauthenticated caller who followed
+            // an otherwise still-valid link.
+            ->leftJoin('user_profiles', 'user_profiles.user_id', '=', 'plan_invites.invited_by')
+            // R6: plaintext-in, hashed inside the repository - no caller ever forms the hash.
+            ->where('plan_invites.token_hash', '=', hash('sha256', $plainToken))
+            ->select(
+                'plans.id as plan_id',
+                'plans.title as plan_title',
+                'user_profiles.display_name as inviter_name',
+            )
+            // A correlated count, not the Plan repository's own active-member count: see
+            // InvitePreview's and this interface's own docblocks for the disclosed duplication.
+            ->selectSub(
+                fn ($query) => $query->selectRaw('count(*)')
+                    ->from('plan_members')
+                    ->whereColumn('plan_members.plan_id', 'plans.id')
+                    ->where('plan_members.status', MemberStatus::Active->value),
+                'member_count',
+            )
+            ->first();
+
+        if ($row === null) {
+            return null;
+        }
+
+        return new InvitePreview(
+            planId: $row->plan_id,
+            planTitle: $row->plan_title,
+            inviterName: $row->inviter_name,
+            memberCount: (int) $row->member_count,
+        );
     }
 
     public function listForPlan(string $planId): array
