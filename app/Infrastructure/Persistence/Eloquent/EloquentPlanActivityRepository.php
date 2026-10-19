@@ -27,11 +27,13 @@ final readonly class EloquentPlanActivityRepository implements PlanActivityRepos
 {
     public function listForPlan(string $planId, PageQuery $query): CursorPage
     {
+        $size = self::pageSize($query->limit);
+
         $builder = DB::table('plan_activity')
             ->where('plan_id', '=', $planId)
             ->orderByDesc('created_at')
             ->orderByDesc('id')
-            ->limit($query->limit + 1);
+            ->limit($size + 1);
 
         if ($query->cursor !== null) {
             // Row-comparison form over (created_at, id) - baseline Q5b / C-5. Q5's OR form
@@ -44,8 +46,8 @@ final readonly class EloquentPlanActivityRepository implements PlanActivityRepos
         }
 
         $rows = $builder->get();
-        $hasMore = $rows->count() > $query->limit;
-        $page = $hasMore ? $rows->slice(0, $query->limit) : $rows;
+        $hasMore = $rows->count() > $size;
+        $page = $hasMore ? $rows->slice(0, $size) : $rows;
 
         // Baseline §11.3: batch the page's distinct non-null actor_ids in one whereIn, rather
         // than a per-row user_profiles lookup - the obvious implementation runs once per row
@@ -86,10 +88,15 @@ final readonly class EloquentPlanActivityRepository implements PlanActivityRepos
                 // E_WARNING for an undefined array key, promoted to an ErrorException by
                 // Illuminate\Foundation\Bootstrap\HandleExceptions, which this suite's kernel
                 // bootstrap installs before the test body runs. So the force holding this
-                // guard open is the test alone, not the analyser - the opposite pairing from
-                // EloquentPlanMemberRepository's two guards for one invariant, where one is
-                // held by a test alone and the other by the analyser alone; this one is a
-                // third shape, not a copy of either.
+                // guard open is the test alone, not the analyser.
+                //
+                // EloquentPlanMemberRepository::listActiveMembers() carries two guards for one
+                // invariant whose own shipped comment there states they are held open by
+                // different forces - one by a test alone, one by the analyser alone (its
+                // is_string($displayName) and joined_at === null checks respectively). That
+                // attribution is transcribed from that file's own comment, not re-measured
+                // here, and is cited only to say this guard is a third, distinct force
+                // profile - not a copy of either of that pair.
                 actorName: $row->actor_id === null ? null : ($names[$row->actor_id] ?? null),
                 subjectType: $row->subject_type,
                 subjectId: $row->subject_id,
@@ -101,13 +108,28 @@ final readonly class EloquentPlanActivityRepository implements PlanActivityRepos
         $last = $hasMore ? $page->last() : null;
         // ->toImmutable(), not a bare Carbon::parse(): PageCursor::fromKeys() is typed
         // DateTimeImmutable, and Carbon::parse() returns the mutable Illuminate\Support\Carbon
-        // (it extends DateTime, not DateTimeImmutable) - a brief defect measured here, not in
-        // the context file, by this call raising "Argument #1 ($timestamp) must be of type
-        // DateTimeImmutable, Illuminate\Support\Carbon given" the first time D.12 ran against
-        // a case with a real next page. Matches EloquentPlanRepository::listForActor()'s and
+        // (it extends DateTime, not DateTimeImmutable) - measured here by this call raising
+        // "Argument #1 ($timestamp) must be of type DateTimeImmutable, Illuminate\Support\
+        // Carbon given" the first time a test case with a real next page ran against the
+        // brief's own literal line. Matches EloquentPlanRepository::listForActor()'s and
         // EloquentPlanMemberRepository::listActiveMembers()'s own ->toImmutable() calls.
         $nextCursor = $last === null ? null : PageCursor::fromKeys(Carbon::parse($last->created_at)->toImmutable(), $last->id)->toString();
 
         return new CursorPage($items, $nextCursor);
+    }
+
+    /**
+     * §6.2 caps a page at 100, matching both sibling repositories' own pageSize() - the
+     * repository is what would issue the unbounded query. limit = 0 is reachable unvalidated:
+     * a whitespace-only ?limit= skips every non-implicit validation rule on that field, and
+     * (int) ' ' is 0. Without the max(1, ...) arm, a Plan with real activity would return a
+     * page of zero rows and a null cursor instead of one row and a cursor to the rest - the
+     * same defect PlanMemberRepositoryTest's own
+     * "clamps a limit of 0 up to one row rather than returning an empty page" case pins for
+     * its sibling.
+     */
+    private static function pageSize(int $limit): int
+    {
+        return max(1, min(PageQuery::MAX_LIMIT, $limit));
     }
 }

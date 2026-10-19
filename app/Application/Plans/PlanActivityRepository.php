@@ -13,13 +13,20 @@ interface PlanActivityRepository
      * of the table name DomainPurityTest's content scan would otherwise have to allow-list.
      * The row-comparison predicate form, not the OR form - D-R5.
      *
-     * Unlike PlanRepository::listForActor() and PlanMemberRepository::listActiveMembers(),
-     * this implementation does NOT clamp $query->limit - there is no private pageSize() here.
-     * The upper bound is enforced only by ListPlanActivityRequest::rules()'s
-     * 'max:'.PageQuery::MAX_LIMIT (a 422, not a silent clamp), so a caller that builds a
-     * PageQuery outside that validation can hand this method an out-of-range or zero limit
-     * unchanged. Recorded as a divergence from its two siblings, not fixed here: the task that
-     * created this interface owns no change to either of them.
+     * $query->limit is clamped to PageQuery::MAX_LIMIT, matching both sibling interfaces: an
+     * unclamped limit = 0 - reachable unvalidated, since a whitespace-only ?limit= skips every
+     * non-implicit validation rule and (int) ' ' is 0 - would otherwise return an empty page
+     * and a null cursor for a Plan that does have activity, the same defect
+     * PlanMemberRepositoryTest's own clamp case pins for its sibling.
+     *
+     * Unlike all three sibling repository methods (PlanRepository::findVisibleTo() /
+     * listForActor(), PlanMemberRepository's own *Query() helpers), this method carries no
+     * Str::isUuid($planId) shape check. A malformed $planId reaches Postgres as 22P02, which
+     * is not in bootstrap/app.php's exception mapping and renders as an unrendered 500. This is
+     * deferred, not overlooked: the brief for this interface omits the guard too, and guard
+     * reconciliation across the four repositories is Ruling A's, assigned to a later task with
+     * an explicit instruction not to retro-fit it here. A caller must not assume this method
+     * rejects a malformed id on its own.
      *
      * @return CursorPage<PlanActivitySummary>
      */

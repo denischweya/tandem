@@ -10,7 +10,9 @@ use App\Infrastructure\Persistence\Eloquent\EloquentPlanActivityRepository;
 use App\Models\Plan;
 use App\Models\PlanActivity;
 use App\Models\User;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 
 uses(RefreshDatabase::class);
 
@@ -76,13 +78,13 @@ it('renders actor_name null for a non-null actor_id with no matching user_profil
 });
 
 it('maps actor_id, actor_name, subject_type and subject_id without transposing any of them', function (): void {
-    // Context file §2: PlanActivitySummary has three invisible same-typed swap pairs -
+    // PlanActivitySummary's constructor has three invisible same-typed swap pairs -
     // actorId<->actorName, subjectType<->subjectId, actorId<->subjectId - none of which the
-    // four cases above disambiguate: every one of them leaves subject_type/subject_id null
-    // (PlanActivityFactory's definition() sets neither), and the actor_id case above never
-    // sets subject_id either, so an actorId<->subjectId transposition would pass all four
-    // cases above with a null on both sides - exactly the shape that let Task 10 ship an
-    // undetected swap of two ?Carbon fields. This fixture gives every one of the five
+    // other cases in this file disambiguate: PlanActivityFactory's definition() sets neither
+    // subject_type nor subject_id, so every other fixture here leaves both null, and the
+    // actor_id case above never sets subject_id either. A transposition touching subject_id
+    // would therefore pass with a null on both sides - exactly the shape that let Task 10 ship
+    // an undetected swap of two ?Carbon fields. This fixture gives every one of the five
     // string-shaped fields a value no other field in the row could be confused with: a uuid
     // and a name (pair 1), a type string and a different uuid (pair 2), and two DIFFERENT
     // uuids for actor_id and subject_id (pair 3, the one the brief's own D.1 fixture also
@@ -141,7 +143,7 @@ it('paginates with the DESC cursor over (created_at, id)', function (): void {
     expect($firstPage->nextCursor)->not->toBeNull();
 
     // CursorPage::$nextCursor is ?string and Pest's ->not->toBeNull() above does not narrow
-    // that for the analyser (G5) - it is a runtime assertion PHPStan cannot see through. Real
+    // that for the analyser - it is a runtime assertion PHPStan cannot see through. Real
     // control-flow narrowing, not a cast and not an annotation, matching the shipped precedent
     // in PlanRepositoryTest and PlanMemberRepositoryTest.
     $cursor = $firstPage->nextCursor;
@@ -154,4 +156,81 @@ it('paginates with the DESC cursor over (created_at, id)', function (): void {
 
     expect($secondPage->items)->toHaveCount(1);
     expect($secondPage->nextCursor)->toBeNull();
+});
+
+it('clamps a limit of 0 up to one row rather than returning an empty page', function (): void {
+    // pageSize()'s max(1, ...) arm, which every other case in this file misses: they pass 1, 2
+    // or 25. A limit of 0 is a value this method can really be handed - the global
+    // ConvertEmptyStringsToNull middleware turns `?limit=` into a present null, and (int) null
+    // is 0 - so without the arm, min(MAX_LIMIT, 0) makes this limit(1) with slice(0, 0): an
+    // empty page AND a null cursor for a Plan that does have activity, which a client reads as
+    // "no activity" rather than as a clamp. Mirrors PlanMemberRepositoryTest's own
+    // "clamps a limit of 0 up to one row rather than returning an empty page" case.
+    $plan = Plan::factory()->create();
+    PlanActivity::factory()->create(['plan_id' => $plan->id, 'actor_id' => null, 'created_at' => '2026-10-01 09:00:00+00:00']);
+    PlanActivity::factory()->create(['plan_id' => $plan->id, 'actor_id' => null, 'created_at' => '2026-10-02 09:00:00+00:00']);
+
+    $page = app(PlanActivityRepository::class)->listForPlan($plan->id, new PageQuery(0, null));
+
+    expect($page->items)->toHaveCount(1);
+    // The cursor matters as much as the row: a page of one with no way forward is still a dead
+    // end for the other row. CursorPage's own docblock says the cursor is non-null exactly when
+    // the repository read one row more than the page size - this is the first case in this file
+    // where that claim is checked against a limit the clamp has to rewrite, rather than against
+    // a limit that was already a real page size.
+    expect($page->nextCursor)->not->toBeNull();
+});
+
+it('resolves actor_name for a page of distinct actors in two queries total, not an N+1', function (): void {
+    // Baseline §11.3: the batched whereIn, not a per-row lookup. A page with only ONE actor
+    // would pass a query-count assertion by accident even with the lookup moved inside the
+    // per-row loop, because one row needs one lookup either way - two DISTINCT actors is the
+    // minimum fixture that actually separates "one query total" from "one query per row".
+    // Instrument copied from PlanMemberRepositoryTest's own
+    // "reads a page of members in exactly one query" case, not invented: register DB::listen
+    // after the fixture exists, and assert the row count before the query count, so the query
+    // count cannot pass by matching an empty result.
+    $plan = Plan::factory()->create();
+    $first = User::factory()->hasProfile(['display_name' => 'First Actor'])->create();
+    $second = User::factory()->hasProfile(['display_name' => 'Second Actor'])->create();
+
+    PlanActivity::factory()->create(['plan_id' => $plan->id, 'actor_id' => $first->id, 'created_at' => '2026-10-01 09:00:00+00:00']);
+    PlanActivity::factory()->create(['plan_id' => $plan->id, 'actor_id' => $second->id, 'created_at' => '2026-10-02 09:00:00+00:00']);
+
+    $queries = [];
+    DB::listen(function (QueryExecuted $event) use (&$queries): void {
+        $queries[] = $event->sql;
+    });
+
+    $page = app(PlanActivityRepository::class)->listForPlan($plan->id, new PageQuery(25, null));
+
+    expect($page->items)->toHaveCount(2);
+    expect($queries)->toHaveCount(2);
+});
+
+it('reads the keyset page with the row-comparison predicate, not the OR form', function (): void {
+    // D-R5 / baseline Q5b vs Q5: the OR form reads 74 rows to return 26 and loses the ordered
+    // index scan; both forms return the same rows, so only the SQL text itself can tell them
+    // apart. Instrument copied from PlanMemberRepositoryTest's own
+    // "caps the member page size at PageQuery::MAX_LIMIT" case (a toContain on SQL shape for a
+    // property a row count cannot see), aimed at the predicate instead of the limit value.
+    $plan = Plan::factory()->create();
+    PlanActivity::factory()->create(['plan_id' => $plan->id, 'actor_id' => null, 'created_at' => '2026-10-01 09:00:00+00:00']);
+    PlanActivity::factory()->create(['plan_id' => $plan->id, 'actor_id' => null, 'created_at' => '2026-10-02 09:00:00+00:00']);
+
+    $firstPage = app(PlanActivityRepository::class)->listForPlan($plan->id, new PageQuery(1, null));
+    $cursor = $firstPage->nextCursor;
+
+    if ($cursor === null) {
+        throw new RuntimeException('fixture must produce a next cursor to exercise the keyset predicate.');
+    }
+
+    $queries = [];
+    DB::listen(function (QueryExecuted $event) use (&$queries): void {
+        $queries[] = $event->sql;
+    });
+
+    app(PlanActivityRepository::class)->listForPlan($plan->id, new PageQuery(1, PageCursor::fromString($cursor)));
+
+    expect(implode(' ', $queries))->toContain('(created_at, id) <');
 });
