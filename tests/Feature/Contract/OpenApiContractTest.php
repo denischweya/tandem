@@ -9,6 +9,7 @@ use App\Http\Requests\Api\V1\Auth\RegisterRequest;
 use App\Http\Requests\Api\V1\Auth\ResetPasswordRequest;
 use App\Http\Requests\Api\V1\Auth\VerifyEmailRequest;
 use App\Http\Requests\Api\V1\Plans\CreatePlanRequest;
+use App\Http\Requests\Api\V1\Plans\UpdatePlanRequest;
 use App\Http\Requests\Api\V1\UpdateProfileRequest;
 use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Arr;
@@ -204,6 +205,18 @@ it('declares every error status the application itself raises', function (): voi
         // CreatePlanTest: "limits one user to thirty an hour and leaves a second user on the
         // same IP alone"
         ['post', '/plans', '429'],
+        // UpdatePlanTest: "lets an admin edit and refuses a plain member with 403"
+        ['patch', '/plans/{plan}', '403'],
+        // UpdatePlanTest: "answers 404 to a non-member"
+        ['patch', '/plans/{plan}', '404'],
+        // UpdatePlanTest: "refuses an archived Plan with 409 and writes nothing"
+        ['patch', '/plans/{plan}', '409'],
+        // DeletePlanTest: "refuses an admin and a plain member with 403, and a non-member with 404"
+        ['delete', '/plans/{plan}', '403'],
+        ['delete', '/plans/{plan}', '404'],
+        // ArchivePlanTest: "refuses an admin and a plain member with 403, and a non-member with 404"
+        ['post', '/plans/{plan}/archive', '403'],
+        ['post', '/plans/{plan}/archive', '404'],
     ];
 
     foreach ($expected as [$method, $path, $status]) {
@@ -365,12 +378,14 @@ it('wraps every success response in the data envelope', function (): void {
     }
 
     // Counted, so this cannot go vacuous again if the traversal ever stops finding anything.
-    // Eight enveloped success responses today (register, login, refresh, verify-email, GET /me,
-    // PATCH /me, GET /plans/{plan}, POST /plans) and four bodyless ones (logout, DELETE /me,
-    // reset-password, forgot-password). Task 15 added the seventh enveloped response -
-    // GET /plans/{plan} -> 200. Task 16 adds the eighth - POST /plans -> 201 - and no bodyless
-    // one.
-    expect([$enveloped, $bodyless])->toBe([8, 4]);
+    // Ten enveloped success responses today (register, login, refresh, verify-email, GET /me,
+    // PATCH /me, GET /plans/{plan}, POST /plans, PATCH /plans/{plan}, POST /plans/{plan}/archive)
+    // and five bodyless ones (logout, DELETE /me, reset-password, forgot-password,
+    // DELETE /plans/{plan}). Task 15 added the seventh enveloped response - GET /plans/{plan} ->
+    // 200. Task 16 added the eighth - POST /plans -> 201 - and no bodyless one. Task 17 adds the
+    // ninth and tenth enveloped responses - PATCH /plans/{plan} -> 200 and
+    // POST /plans/{plan}/archive -> 200 - plus the fifth bodyless one, DELETE /plans/{plan} -> 204.
+    expect([$enveloped, $bodyless])->toBe([10, 5]);
 });
 
 it('publishes both session expiries as date-time, not as a bare string', function (): void {
@@ -401,6 +416,7 @@ it('publishes required-versus-optional exactly as the rules state it', function 
         'ResetPasswordRequest' => ResetPasswordRequest::class,
         'UpdateProfileRequest' => UpdateProfileRequest::class,
         'CreatePlanRequest' => CreatePlanRequest::class,
+        'UpdatePlanRequest' => UpdatePlanRequest::class,
     ];
 
     foreach ($classes as $schemaName => $class) {
@@ -539,14 +555,18 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
 
     // Counted, for the reason the envelope case above is counted: a traversal that stopped
     // finding parameter objects would build an empty $prose and pass while watching nothing.
-    // Five today: four on POST /auth/verify-email, plus one for GET /plans/{plan} (+1 - the
-    // first Wave 2 route to add a path parameter). A Wave 2 route with a path or query
-    // parameter moves this number, and is meant to: any task that adds one must update this
-    // literal in the same commit and state the arithmetic it contributes (+1, +2, ...) in its
-    // report. Task 39 re-derives the final absolute count from the regenerated document
-    // rather than trusting any task's arithmetic forward.
+    // Eight today: four on POST /auth/verify-email, one for GET /plans/{plan} (Task 15, the
+    // first Wave 2 route to add a path parameter), and three more for Task 17's three
+    // parameterised routes - PATCH /plans/{plan}, DELETE /plans/{plan} and
+    // POST /plans/{plan}/archive each carry the one {plan} path parameter (+3, measured by
+    // counting the `parameters` arrays in the regenerated document, not assumed from the route
+    // count). A Wave 2 route with a path or query parameter moves this number, and is meant to:
+    // any task that adds one must update this literal in the same commit and state the
+    // arithmetic it contributes (+1, +2, ...) in its report. Task 39 re-derives the final
+    // absolute count from the regenerated document rather than trusting any task's arithmetic
+    // forward.
     expect($parameterCount)->toBe(
-        5,
+        8,
         'The parameter walk above visited a different number of parameter objects than the '
         .'document publishes. Either a route gained or lost a parameter - in which case this '
         .'number moves with it (update the literal here in the same commit, and say by how much '
@@ -624,14 +644,22 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
 
     // Every description/summary path in today's document, found by running this exact walk and
     // listing the result - not derived by arithmetic. The first four are the ones $prose above
-    // already names and pins by content; the other 28 are the authored strings $prose
-    // deliberately does not walk by name (19 responses.*.description + 7 components.responses.*
-    // + 2 info/servers). Task 15 added two of the 19: GET /plans/{plan}'s 200
-    // (Scramble's own inferred description for the PlanResource return type, not authored
-    // prose) and its 404 (the #[Response] attribute on GetPlanController). Task 16 added three
-    // more: POST /plans's 201 (Scramble's own inferred description, not authored prose), and
-    // its 403 and 429 (the #[Response] attributes on CreatePlanController) - plus the fourth
-    // $prose entry, CreatePlanRequest.timezone.
+    // already names and pins by content; the other 38 are the authored strings $prose
+    // deliberately does not walk by name (29 responses.*.description + 7 components.responses.*
+    // + 2 info/servers). Task 15 added two of the responses.*.description rows:
+    // GET /plans/{plan}'s 200 (Scramble's own inferred description for the PlanResource return
+    // type, not authored prose) and its 404 (the #[Response] attribute on GetPlanController).
+    // Task 16 added three more: POST /plans's 201 (Scramble's own inferred description, not
+    // authored prose), and its 403 and 429 (the #[Response] attributes on
+    // CreatePlanController) - plus the fourth $prose entry, CreatePlanRequest.timezone. Task 17
+    // adds ten more, all authored the same two ways - one inferred 200 description per route
+    // that returns a PlanResource, and one #[Response] attribute per declared non-2xx status:
+    // PATCH /plans/{plan}'s 200 (inferred), 403, 404 and 409 (each a #[Response] attribute on
+    // UpdatePlanController, the first bootstrap/app.php render()-closure status this walk has
+    // seen); POST /plans/{plan}/archive's 200 (inferred), 403 and 404 (#[Response] on
+    // ArchivePlanController); and DELETE /plans/{plan}'s 204 (no body, so no inferred
+    // description - the two #[Response]s on DeletePlanController are the only prose at that
+    // path), 403 and 404.
     expect($allProsePaths)->toEqualCanonicalizing([
         'paths./auth/verify-email.post.summary',
         'paths./auth/verify-email.post.description',
@@ -658,6 +686,16 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         'paths./plans.post.responses.201.description',
         'paths./plans.post.responses.403.description',
         'paths./plans.post.responses.429.description',
+        'paths./plans/{plan}.patch.responses.200.description',
+        'paths./plans/{plan}.patch.responses.403.description',
+        'paths./plans/{plan}.patch.responses.404.description',
+        'paths./plans/{plan}.patch.responses.409.description',
+        'paths./plans/{plan}.delete.responses.204.description',
+        'paths./plans/{plan}.delete.responses.403.description',
+        'paths./plans/{plan}.delete.responses.404.description',
+        'paths./plans/{plan}/archive.post.responses.200.description',
+        'paths./plans/{plan}/archive.post.responses.403.description',
+        'paths./plans/{plan}/archive.post.responses.404.description',
         'components.responses.ValidationException.description',
         'components.responses.ValidationException.content.application/json.schema.properties.message.description',
         'components.responses.ValidationException.content.application/json.schema.properties.errors.description',
@@ -681,15 +719,21 @@ it('publishes no group_id on the Plan write surface', function (): void {
     // A literal list rather than a derivation from rules(): the test two screens up already
     // derives the published fields FROM rules(), so it agrees with any rules() - including one
     // that grew a group_id. This is the assertion that does not.
-    $properties = array_keys(Arr::wrap(data_get(
-        openApiDocument(),
-        'components.schemas.CreatePlanRequest.properties',
-    )));
+    //
+    // Both write schemas, not just CreatePlanRequest: UpdatePlanRequest is the Plan write
+    // surface's second schema (Task 17), and §12.2's refusal binds a PATCH exactly as it binds a
+    // POST.
+    foreach (['CreatePlanRequest', 'UpdatePlanRequest'] as $schemaName) {
+        $properties = array_keys(Arr::wrap(data_get(
+            openApiDocument(),
+            "components.schemas.{$schemaName}.properties",
+        )));
 
-    expect($properties)->toEqualCanonicalizing(
-        ['title', 'description', 'timezone'],
-        'CreatePlanRequest must publish exactly title, description and timezone - §12.2 makes group_id absent, and spec §15 keeps cover_image_path unwritable',
-    );
+        expect($properties)->toEqualCanonicalizing(
+            ['title', 'description', 'timezone'],
+            "{$schemaName} must publish exactly title, description and timezone - §12.2 makes group_id absent, and spec §15 keeps cover_image_path unwritable",
+        );
+    }
 });
 
 it('publishes no component schema without properties, so no native enum reaches the document', function (): void {
@@ -716,16 +760,17 @@ it('publishes no component schema without properties, so no native enum reaches 
     // cause that has nothing to do with whatever was added. Catching it here names the real one.
     $schemas = Arr::wrap(data_get(openApiDocument(), 'components.schemas'));
 
-    // >= 10, not merely non-empty: a document that dropped from ten schemas to one would still
-    // pass a bare not-empty check while this traversal verified almost nothing, which is the
-    // same "a floor left behind is slack" shape this test objects to elsewhere. 10 today
-    // (measured: count($schemas)) - PlanResource was the ninth (Task 15); CreatePlanRequest is
-    // the tenth (Task 16), and the floor is raised in the same commit that added it: a floor
-    // left at 9 would have let a dropped CreatePlanRequest clear it silently, which is exactly
-    // the slack this comment warns against.
+    // >= 11, not merely non-empty: a document that dropped from eleven schemas to one would
+    // still pass a bare not-empty check while this traversal verified almost nothing, which is
+    // the same "a floor left behind is slack" shape this test objects to elsewhere. 11 today
+    // (measured: count($schemas)) - PlanResource was the ninth (Task 15); CreatePlanRequest was
+    // the tenth (Task 16); UpdatePlanRequest is the eleventh (Task 17), and the floor is raised
+    // in the same commit that added it: a floor left at 10 would have let a dropped
+    // UpdatePlanRequest clear it silently, which is exactly the slack this comment warns
+    // against.
     expect(count($schemas))->toBeGreaterThanOrEqual(
-        10,
-        'components.schemas published fewer than the ten schemas this traversal expects to '
+        11,
+        'components.schemas published fewer than the eleven schemas this traversal expects to '
         .'check, so most of them were skipped rather than verified.',
     );
 

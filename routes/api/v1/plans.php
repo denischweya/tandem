@@ -2,8 +2,11 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\V1\Plans\ArchivePlanController;
 use App\Http\Controllers\Api\V1\Plans\CreatePlanController;
+use App\Http\Controllers\Api\V1\Plans\DeletePlanController;
 use App\Http\Controllers\Api\V1\Plans\GetPlanController;
+use App\Http\Controllers\Api\V1\Plans\UpdatePlanController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('auth:sanctum')->group(function (): void {
@@ -36,4 +39,21 @@ Route::middleware('auth:sanctum')->group(function (): void {
     // for writing the exemption and its reason in the route file is routes/api/v1/me.php's
     // DELETE /me comment.
     Route::get('/plans/{plan}', GetPlanController::class)->name('plans.show');
+
+    // `verified`: PATCH creates state other members see (the edit itself, and a plan.updated row
+    // in a feed every member reads), which is the line spec §7.5 draws.
+    Route::patch('/plans/{plan}', UpdatePlanController::class)
+        ->middleware('verified')
+        ->name('plans.update');
+
+    // `verified`: archiving ends the Plan for every member, which is as far from a read as a
+    // Plan action gets (spec §7.5).
+    Route::post('/plans/{plan}/archive', ArchivePlanController::class)
+        ->middleware('verified')
+        ->name('plans.archive');
+
+    // `verified`: deleting removes the Plan for every member, and the data is not recoverable.
+    Route::delete('/plans/{plan}', DeletePlanController::class)
+        ->middleware('verified')
+        ->name('plans.destroy');
 });

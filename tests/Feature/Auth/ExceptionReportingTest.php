@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Application\Auth\InvalidCredentials;
 use App\Application\Auth\InvalidPasswordResetToken;
 use App\Application\Auth\InvalidRefreshToken;
+use App\Application\Plans\PlanNotEditable;
 use App\Application\Plans\PlanNotVisible;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 
@@ -56,12 +57,13 @@ it('does not report the three expected auth failures, but still reports a genuin
  * the behaviour under test is bootstrap/app.php's dontReport() list and the container-bound
  * ExceptionHandler that reads it.
  */
-it('does not report a Plan that was not visible', function (): void {
+it('does not report a Plan that was not visible or was archived', function (): void {
     $handler = app(ExceptionHandler::class);
 
     $logs = captureLogs();
 
     $handler->report(new PlanNotVisible);
+    $handler->report(new PlanNotEditable);
 
-    expect(capturedLogRecords($logs))->toBe([], 'PlanNotVisible must be in dontReport()');
+    expect(capturedLogRecords($logs))->toBe([], 'PlanNotVisible and PlanNotEditable must both be in dontReport()');
 });

@@ -3,6 +3,7 @@
 use App\Application\Auth\InvalidCredentials;
 use App\Application\Auth\InvalidPasswordResetToken;
 use App\Application\Auth\InvalidRefreshToken;
+use App\Application\Plans\PlanNotEditable;
 use App\Application\Plans\PlanNotVisible;
 use Illuminate\Auth\Middleware\EnsureEmailIsVerified;
 use Illuminate\Foundation\Application;
@@ -61,6 +62,9 @@ return Application::configure(basePath: dirname(__DIR__))
             // with traffic, not with bugs, and reporting them at ERROR drowns the Log::warning()
             // security lines on the same channel.
             PlanNotVisible::class,
+            // A client acting on a Plan that was archived while its screen was open. Expected
+            // control flow, and its volume scales with traffic rather than with bugs.
+            PlanNotEditable::class,
         ]);
 
         $exceptions->render(fn (InvalidCredentials $e) => new JsonResponse(
@@ -94,5 +98,13 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (PlanNotVisible $e) => new JsonResponse(
             ['message' => 'Plan not found.'],
             404,
+        ));
+
+        // 409, not 403 and not 404: the refusal is about the Plan's STATE, so the owner of an
+        // archived Plan is refused exactly as a member is, and a 404 would contradict the 200
+        // the same path still answers for GET. Encoded compactly like the closures above.
+        $exceptions->render(fn (PlanNotEditable $e) => new JsonResponse(
+            ['message' => 'This Plan has been archived.'],
+            409,
         ));
     })->create();
