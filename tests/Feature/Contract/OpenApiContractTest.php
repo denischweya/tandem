@@ -530,13 +530,12 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
 
     // Counted, for the reason the envelope case above is counted: a traversal that stopped
     // finding parameter objects would build an empty $prose and pass while watching nothing.
-    // Five today: four on POST /auth/verify-email, plus GET /plans/{plan}'s one path parameter
-    // (+1, Task 15, controller-amendments.md Amendment 2 - the first Wave 2 route to add a
-    // path parameter). A Wave 2 route with a path or query parameter moves this number, and is
-    // meant to: any task that adds one must update this literal in the same commit and state
-    // the arithmetic it contributes (+1, +2, ...) in its report. Task 39 re-derives the final
-    // absolute count from the regenerated document rather than trusting any task's arithmetic
-    // forward.
+    // Five today: four on POST /auth/verify-email, plus one for GET /plans/{plan} (+1 - the
+    // first Wave 2 route to add a path parameter). A Wave 2 route with a path or query
+    // parameter moves this number, and is meant to: any task that adds one must update this
+    // literal in the same commit and state the arithmetic it contributes (+1, +2, ...) in its
+    // report. The task that owns the contract's final literals re-derives the absolute count
+    // from the regenerated document rather than trusting any task's arithmetic forward.
     expect($parameterCount)->toBe(
         5,
         'The parameter walk above visited a different number of parameter objects than the '

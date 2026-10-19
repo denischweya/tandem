@@ -123,14 +123,14 @@ it('requires authentication', function (): void {
 });
 
 /**
- * HUMAN RULING, 2026-10-19 (task-15-context.md §2, not in the original brief): Str::isUuid() is
+ * HUMAN RULING, 2026-10-19: a non-canonical-case {plan} uuid must 404. Str::isUuid() is
  * case-insensitive and Postgres normalises the uuid column, so an uppercase spelling of a real,
  * visible Plan's id would otherwise still reach that Plan. One canonical URL per Plan, and it
  * makes a path id agree with PageCursor's id pattern, which already accepts lowercase only.
  *
- * Enforced at findVisibleTo() - EloquentPlanRepositoryTest covers the guard directly; this is
- * the one HTTP-level proof that the seam actually refuses the request rather than merely the
- * unit under it, using an owner who really can see the Plan in every other respect.
+ * Enforced at findVisibleTo() - see EloquentPlanRepository's own comment on the check. This is
+ * the one test of it: an owner who really can see the Plan in every other respect (the
+ * lowercase id is asserted to work first), refused only once the id's case changes.
  */
 it('answers 404 for a non-canonical-case uuid, even though the Plan is real and visible to the actor', function (): void {
     $owner = userWithPassword();
