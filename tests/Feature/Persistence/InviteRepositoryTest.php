@@ -55,6 +55,7 @@ it('refuses an invite that belongs to a different Plan', function (): void {
 it('refuses an unknown and a malformed invite id without reaching Postgres', function (): void {
     // §5.1's third identifier. Without the shape check this is SQLSTATE[22P02] and a 500.
     $plan = Plan::factory()->create();
+    $invite = PlanInvite::factory()->create(['plan_id' => $plan->id]);
     $repository = app(InviteRepository::class);
 
     expect(fn () => $repository->findForPlan($plan->id, '019a0b7e-7c2a-7f3e-8b10-2f6c4d5e6a7b'))
@@ -62,6 +63,13 @@ it('refuses an unknown and a malformed invite id without reaching Postgres', fun
     expect(fn () => $repository->findForPlan($plan->id, 'not-a-uuid'))
         ->toThrow(PlanInviteNotFound::class);
     expect(fn () => $repository->findForPlan('not-a-uuid', 'not-a-uuid'))
+        ->toThrow(PlanInviteNotFound::class);
+    // T10-2: the expectation above passes 'not-a-uuid' in BOTH positions, so
+    // ! Str::isUuid($inviteId) alone satisfies it - deleting only the $planId half of the
+    // guard's `||` left every other expectation in this test green, because none of them
+    // pairs a malformed plan id with a WELL-FORMED invite id. This is the one that can't be
+    // satisfied by the $inviteId clause alone.
+    expect(fn () => $repository->findForPlan('not-a-uuid', $invite->id))
         ->toThrow(PlanInviteNotFound::class);
 });
 
@@ -81,6 +89,13 @@ it('locks the row it reads for the acceptance path', function (): void {
     // deterministically". A concurrency test cannot see the lock from one connection, so this
     // asserts the statement itself, which is falsifiable: remove lockForUpdate() and the SQL
     // no longer carries it.
+    //
+    // T10-4: equality against the one captured statement, not toContain() over an imploded
+    // haystack of however many queries ran. toContain() can't tell "the lock sits on the row
+    // I expected" from "some other statement in the batch happened to carry the words 'for
+    // update'", and toHaveCount(1) first closes the companion hole in the other test below -
+    // an empty $queries array has no element [0] to compare, so this errors rather than
+    // passing vacuously.
     $token = bin2hex(random_bytes(32));
     PlanInvite::factory()->forToken($token)->create();
 
@@ -91,12 +106,19 @@ it('locks the row it reads for the acceptance path', function (): void {
 
     app(InviteRepository::class)->findByTokenForUpdate($token);
 
-    expect(implode(' ', $queries))->toContain('for update');
+    expect($queries)->toHaveCount(1);
+    expect($queries[0])->toBe('select * from "plan_invites" where "token_hash" = ? limit 1 for update');
 });
 
 it('does not lock the row it reads for the preview path', function (): void {
     // §10.3's preview is unauthenticated and throttled, and takes no lock: it writes nothing,
     // and a lock taken by an unauthenticated read is a lock an unauthenticated caller can hold.
+    //
+    // T10-4: not->toContain('for update') on an imploded haystack passes on an EMPTY haystack
+    // too - a findByToken() that ran no query at all would satisfy it just as well as one that
+    // ran the right query without a lock. Asserting the one captured statement by equality
+    // closes that hole: there is no way to pass this without emitting exactly the query this
+    // method is meant to run.
     $token = bin2hex(random_bytes(32));
     PlanInvite::factory()->forToken($token)->create();
 
@@ -107,7 +129,8 @@ it('does not lock the row it reads for the preview path', function (): void {
 
     app(InviteRepository::class)->findByToken($token);
 
-    expect(implode(' ', $queries))->not->toContain('for update');
+    expect($queries)->toHaveCount(1);
+    expect($queries[0])->toBe('select * from "plan_invites" where "token_hash" = ? limit 1');
 });
 
 it('lists a Plan invites newest first with every view field resolved through the invite', function (): void {
@@ -159,6 +182,30 @@ it('lists a Plan invites newest first with every view field resolved through the
     expect($view->acceptedAt?->toDateTimeString())->toBe($acceptedAt);
     expect($view->revokedAt?->toDateTimeString())->toBe($revokedAt);
     expect($view->invitedByName)->toBe('Ada Lovelace');
+});
+
+it('breaks a created_at tie by id DESC', function (): void {
+    // T10-3: the test above gives its two rows DISTINCT created_at values, so
+    // orderByDesc('plan_invites.id') never had an observed red - InviteRepository's own
+    // docblock claims "created_at DESC, id DESC (§6.3)" with only the first half proven. This
+    // fixture ties created_at on purpose, so the tiebreak is the only thing that can decide
+    // the order; $expected is computed from the two ids themselves (string-compared the same
+    // way Postgres orders a uuid column, left to right, since the canonical textual form puts
+    // hyphens at the same fixed positions in every id), not assumed from creation order.
+    $plan = Plan::factory()->create();
+
+    $first = PlanInvite::factory()->create(['plan_id' => $plan->id]);
+    $second = PlanInvite::factory()->create(['plan_id' => $plan->id]);
+
+    DB::table('plan_invites')->whereIn('id', [$first->id, $second->id])
+        ->update(['created_at' => '2026-02-06 10:00:00.000000+00']);
+
+    $expected = [$first->id, $second->id];
+    usort($expected, fn (string $a, string $b): int => strcmp($b, $a));
+
+    $views = app(InviteRepository::class)->listForPlan($plan->id);
+
+    expect(array_map(fn (PlanInviteView $view) => $view->id, $views))->toBe($expected);
 });
 
 it('lists an invite whose inviter has been hard-deleted, with a null name', function (): void {

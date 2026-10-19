@@ -76,11 +76,18 @@ final readonly class EloquentInviteRepository implements InviteRepository
             $name = $row->getAttribute('invited_by_name');
 
             // fromInvite(), not new PlanInviteView($row, ...): the view is seven typed scalars,
-            // so the model stops here and nothing downstream can reach through it. is_string()
-            // rather than a cast for the joined column, for the reason AppServiceProvider::
-            // boot()'s 'auth-forgot-password' rate limiter closure documents for the same
-            // pattern - a bare (string) on a null from a leftJoin is an E_WARNING promoted to
-            // an ErrorException, i.e. a reachable 500 on this route.
+            // so the model stops here and nothing downstream can reach through it.
+            //
+            // is_string() rather than a cast, for two forces - and NOT because a bare (string)
+            // on a null here would warn: (string) null is silent and yields '', so neither an
+            // E_WARNING nor a 500 is reachable on a leftJoin miss. (That hazard is real for
+            // AppServiceProvider::boot()'s 'auth-forgot-password' closure, but what reaches it
+            // is an ARRAY from request input, not a null from a join - a different value, not
+            // the same pattern.)
+            //   1. getAttribute() returns mixed, so this is what narrows it to ?string before
+            //      PlanInviteView::fromInvite() can accept it - held open by PHPStan level 8.
+            //   2. A (string) cast would publish '' where baseline S-3 requires null, silently
+            //      collapsing the exact case the hard-deleted-inviter test exists to prove.
             $views[] = PlanInviteView::fromInvite($row, is_string($name) ? $name : null);
         }
 
