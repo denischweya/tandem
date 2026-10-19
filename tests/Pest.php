@@ -278,6 +278,26 @@ function member(Plan $plan, User $user, MemberRole $role, string $joinedAt): Pla
     ]);
 }
 
+/**
+ * A Plan plus its owner's ACTIVE plan_members row, which is the shape every Plan endpoint
+ * assumes: spec §9.1's invariant is that an active Plan has exactly one active owner row whose
+ * user_id equals plans.owner_id, and PlanFactory writes plans.owner_id without the membership.
+ * A Plan created by the factory alone therefore has an owner who is not a member of it, and
+ * findVisibleTo() answers 404 for them - which is a confusing way for a Plan test to fail.
+ *
+ * In tests/Pest.php and not in a test file, for the reason this file's header gives: Pest loads
+ * each test file into the global namespace, so a file-scope helper is process-global and a
+ * second file wanting its own of the same name gets a fatal "Cannot redeclare".
+ */
+function ownedPlan(User $owner): Plan
+{
+    $plan = Plan::factory()->create(['owner_id' => $owner->id]);
+
+    member($plan, $owner, MemberRole::Owner, '2026-01-01T00:00:00+00:00');
+
+    return $plan;
+}
+
 /** A user soft-deleted $days ago, which is what the day-30 purge selects on. */
 function softDeletedDaysAgo(int $days): User
 {

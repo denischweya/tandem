@@ -35,6 +35,21 @@ final readonly class EloquentPlanRepository implements PlanRepository
             throw new PlanNotVisible;
         }
 
+        // HUMAN RULING, 2026-10-19: a non-canonical-case {plan} uuid must 404. Str::isUuid()
+        // above is case-insensitive and Postgres normalises the uuid column, so an uppercase
+        // id would otherwise still reach the real Plan - not a leak on its own (membership is
+        // still enforced below), but it multiplies every Plan's canonical URL for routing,
+        // caching and analytics, and it disagrees with PageCursor::ID_PATTERN, which is
+        // already lowercase-only. A second, independent check rather than a tightening of the
+        // line above: Tasks 9, 10 and 13 were each told to leave their own Str::isUuid() guard
+        // alone, and this is a different rule (canonical spelling), not a narrower version of
+        // "is this a uuid at all". $actorId is never checked this way - it is never read from
+        // a path parameter, only from the authenticated $actor->id this application itself
+        // issued, which newUniqueId() always generates lowercase.
+        if ($planId !== strtolower($planId)) {
+            throw new PlanNotVisible;
+        }
+
         $plan = $this->withViewer($actorId)->whereKey($planId)->first();
 
         if ($plan === null) {

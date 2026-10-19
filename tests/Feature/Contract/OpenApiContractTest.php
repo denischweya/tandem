@@ -195,6 +195,9 @@ it('declares every error status the application itself raises', function (): voi
         ['post', '/auth/register', '429'],
         // CredentialLifetimeTest: "holds the forgot-password throttle for the whole hour..."
         ['post', '/auth/forgot-password', '429'],
+        // GetPlanTest: "answers one byte-identical 404 for a non-member, an unknown Plan and a
+        // malformed id"
+        ['get', '/plans/{plan}', '404'],
     ];
 
     foreach ($expected as [$method, $path, $status]) {
@@ -356,9 +359,11 @@ it('wraps every success response in the data envelope', function (): void {
     }
 
     // Counted, so this cannot go vacuous again if the traversal ever stops finding anything.
-    // Six enveloped success responses today (register, login, refresh, verify-email, GET /me,
-    // PATCH /me) and four bodyless ones (logout, DELETE /me, reset-password, forgot-password).
-    expect([$enveloped, $bodyless])->toBe([6, 4]);
+    // Seven enveloped success responses today (register, login, refresh, verify-email, GET /me,
+    // PATCH /me, GET /plans/{plan}) and four bodyless ones (logout, DELETE /me, reset-password,
+    // forgot-password). Task 15 (GetPlanTest) adds the seventh enveloped response - GET
+    // /plans/{plan} -> 200 - and no bodyless one.
+    expect([$enveloped, $bodyless])->toBe([7, 4]);
 });
 
 it('publishes both session expiries as date-time, not as a bare string', function (): void {
@@ -525,13 +530,15 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
 
     // Counted, for the reason the envelope case above is counted: a traversal that stopped
     // finding parameter objects would build an empty $prose and pass while watching nothing.
-    // Four today, all four on POST /auth/verify-email. A Wave 2 route with a path or query
-    // parameter moves this number, and is meant to: any task that adds one must update this
-    // literal in the same commit and state the arithmetic it contributes (+1, +2, ...) in its
-    // report (controller-amendments.md Amendment 2). Task 39 re-derives the final absolute count
-    // from the regenerated document rather than trusting any task's arithmetic forward.
+    // Five today: four on POST /auth/verify-email, plus GET /plans/{plan}'s one path parameter
+    // (+1, Task 15, controller-amendments.md Amendment 2 - the first Wave 2 route to add a
+    // path parameter). A Wave 2 route with a path or query parameter moves this number, and is
+    // meant to: any task that adds one must update this literal in the same commit and state
+    // the arithmetic it contributes (+1, +2, ...) in its report. Task 39 re-derives the final
+    // absolute count from the regenerated document rather than trusting any task's arithmetic
+    // forward.
     expect($parameterCount)->toBe(
-        4,
+        5,
         'The parameter walk above visited a different number of parameter objects than the '
         .'document publishes. Either a route gained or lost a parameter - in which case this '
         .'number moves with it (update the literal here in the same commit, and say by how much '
@@ -605,9 +612,11 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
 
     // Every description/summary path in today's document, found by running this exact walk and
     // listing the result - not derived by arithmetic. The first three are the ones $prose above
-    // already names and pins by content; the other 23 are the authored strings $prose
-    // deliberately does not walk by name (14 responses.*.description + 7 components.responses.*
-    // + 2 info/servers).
+    // already names and pins by content; the other 25 are the authored strings $prose
+    // deliberately does not walk by name (16 responses.*.description + 7 components.responses.*
+    // + 2 info/servers). Task 15 (GetPlanTest) added two of the 16: GET /plans/{plan}'s 200
+    // (Scramble's own inferred description for the PlanResource return type, not authored
+    // prose) and its 404 (the #[Response] attribute on GetPlanController).
     expect($allProsePaths)->toEqualCanonicalizing([
         'paths./auth/verify-email.post.summary',
         'paths./auth/verify-email.post.description',
@@ -628,6 +637,8 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         'paths./auth/register.post.responses.429.description',
         'paths./auth/reset-password.post.responses.204.description',
         'paths./auth/verify-email.post.responses.200.description',
+        'paths./plans/{plan}.get.responses.200.description',
+        'paths./plans/{plan}.get.responses.404.description',
         'components.responses.ValidationException.description',
         'components.responses.ValidationException.content.application/json.schema.properties.message.description',
         'components.responses.ValidationException.content.application/json.schema.properties.errors.description',
