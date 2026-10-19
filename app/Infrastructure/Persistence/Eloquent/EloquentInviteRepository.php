@@ -77,9 +77,10 @@ final readonly class EloquentInviteRepository implements InviteRepository
 
             // fromInvite(), not new PlanInviteView($row, ...): the view is seven typed scalars,
             // so the model stops here and nothing downstream can reach through it. is_string()
-            // rather than a cast for the joined column, for the reason D-R3 records about
-            // AppServiceProvider.php:55-60 - a bare (string) on a null from a leftJoin is an
-            // E_WARNING promoted to an ErrorException, i.e. a reachable 500 on this route.
+            // rather than a cast for the joined column, for the reason AppServiceProvider::
+            // boot()'s 'auth-forgot-password' rate limiter closure documents for the same
+            // pattern - a bare (string) on a null from a leftJoin is an E_WARNING promoted to
+            // an ErrorException, i.e. a reachable 500 on this route.
             $views[] = PlanInviteView::fromInvite($row, is_string($name) ? $name : null);
         }
 
