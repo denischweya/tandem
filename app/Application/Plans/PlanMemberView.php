@@ -55,6 +55,20 @@ final readonly class PlanMemberView
             // application invariant with no database CHECK behind it (freeze). Coalescing to
             // "now" or to the member row's created_at would publish a joined_at Wave 2 never
             // wrote, which is worse than failing loudly here.
+            //
+            // Held open by BOTH the analyser and a test, measured by deleting it: `make stan`
+            // moves from errors: 0 to errors: 1 (argument.type - $member->joined_at is
+            // Carbon|null, $joinedAt below is a non-nullable Carbon), AND
+            // PlanMemberResourceTest's own throw case then fails too, because the constructor
+            // raises a native TypeError ("Argument #5 ($joinedAt) must be of type
+            // Illuminate\Support\Carbon, null given") instead of this RuntimeException - a
+            // different throwable with a different message, which toThrow(RuntimeException::
+            // class, ...) does not accept. That is NOT EloquentPlanMemberRepository's own
+            // joined_at throw, whose comment names the analyser alone: that method's own tests
+            // never pass it a null joined_at at all (the query's whereNotNull makes the branch
+            // unreachable by any row a real test can construct), so nothing there is left to
+            // fail once the guard is gone. This one has a direct test naming the branch, so the
+            // test is a second, independent force holding it open.
             throw new RuntimeException(
                 'PlanMember carried a NULL joined_at for an active row. The invariant '
                 .'status = active => joined_at IS NOT NULL was violated upstream (baseline S-37).'

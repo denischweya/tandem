@@ -42,9 +42,9 @@ it('renders every published field', function (): void {
 // 'plan_id' => Plan::factory() and 'user_id' => User::factory(), both left at their
 // definition() default because this fixture only overrides status and joined_at. Measured:
 // running the brief's literal line in this file - alone, under --testsuite=Unit, and under the
-// full suite - fails identically with "A facade root has not been set." from
-// database/factories/UserFactory.php:35, before this test's own assertions ever run. G6's class
-// of defect, one file over from where it was last found on this wave.
+// full suite - fails identically with "A facade root has not been set.", thrown from
+// UserFactory::definition()'s own Hash::make('password') call. G6's class of defect, one file
+// over from where it was last found on this wave.
 //
 // The fix is a bare `new PlanMember`, never fill()'d or factory()'d: PlanMember::$guarded is
 // ['*'] (totallyGuarded()), so fill() throws MassAssignmentException on the first supplied key,
@@ -56,7 +56,16 @@ it('renders every published field', function (): void {
 // resolver. Needed only for this one throw case, where joined_at must be null anyway.
 it('throws building the DTO from a member with no joined_at, rather than publishing a lie', function (): void {
     $member = new PlanMember;
+    $member->user_id = '0192f0a1-0000-7000-8000-000000000002';
     $member->status = MemberStatus::Active->value;
+    $member->role = MemberRole::Member->value;
+    // user_id and role are set too, deliberately, even though the guard this test targets reads
+    // only joined_at: the constructor's own argument type-check runs in PARAMETER order
+    // (userId first, joinedAt last) over already-evaluated values, so if the joined_at guard
+    // were ever deleted, a null user_id or a null role would TypeError first and mask it -
+    // measured, see task-12-report.md's break step, where leaving either unset did exactly
+    // that before this fixture was widened. H1's corollary: an expectation only one clause can
+    // satisfy, with every OTHER input left well-formed.
 
     expect(fn () => PlanMemberView::fromMember($member, 'Ada Lovelace'))
         ->toThrow(RuntimeException::class, 'PlanMember carried a NULL joined_at for an active row. '
