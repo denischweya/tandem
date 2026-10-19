@@ -31,7 +31,7 @@ function validatedListPlansRequest(array $query): ListPlansRequest
     // PHP's property-visibility rules, independent of anything in ListPlansRequest.php.
     // Validating the local $validator (an Illuminate\Validation\Validator, not a FormRequest)
     // is the fix: its own validate() throws ValidationException directly on failure
-    // (Validator::validate(), vendor/laravel/framework/.../Validation/Validator.php:608-615)
+    // (Illuminate\Validation\Validator::validate(), which is `if ($this->fails()) throw …;`)
     // with no FormRequest, container or redirector involved - the exact mechanism the brief
     // was reaching for, reached without the broken property hop.
     $validator->validate();
@@ -102,4 +102,38 @@ it('defaults status to active for a present-but-null status query parameter, not
     // App\Domain\Plans\PlanStatus before being restored.
     expect(validatedListPlansRequest(['status' => null])->status())
         ->toBe(PlanStatus::Active, 'a present null ?status= must default the same way an absent key does');
+});
+
+// T11-1 (fix round 1): the present-null fix above does not cover a whitespace-only value, which
+// is a DIFFERENT shape surviving a DIFFERENT exact-match gap. ConvertEmptyStringsToNull's own
+// transform() is `$value === '' ? null : $value` - exact match only - so `?status=%20` decodes
+// to the single-character string ' ', which is not '' and so is never turned into null, and a
+// bare `?? PlanStatus::Active->value` in status() would still hand it straight to
+// PlanStatus::from(), since ' ' !== null. The two present-null tests above cannot exercise this
+// shape at all - their fixture is the value null, not the string ' ' - so it needs its own pair
+// of tests, aimed at the same two clauses, per the same H1 corollary the present-null pair
+// already follows.
+it('does not reject a whitespace-only status query parameter with a 422', function (): void {
+    // Isolates the validation-rule clause only. Illuminate\Validation\Validator::
+    // presentOrRuleIsImplicit() has its own exact-match-adjacent special case: `if
+    // (is_string($value) && trim($value) === '') return $this->isImplicit($rule);` - and
+    // 'nullable', 'string' and Rule::in() are all non-implicit, so EVERY rule on the field is
+    // skipped for a whitespace-only value, independent of whether 'nullable' is present at
+    // all. Rules()'s own docblock names this boundary; this test is what pins it as behaviour.
+    $validator = Validator::make(['status' => ' '], (new ListPlansRequest)->rules());
+
+    expect($validator->fails())->toBeFalse('a whitespace-only status must validate - every non-implicit rule on this field is skipped for that shape, independent of nullable');
+});
+
+it('defaults status to active for a whitespace-only status query parameter', function (): void {
+    // Isolates the status()-defaulting clause only, given the line above already proves
+    // validation does not block it. $this->input('status') ?? PlanStatus::Active->value alone
+    // - the fix for the present-null case above - does NOT catch this shape: ' ' is not null,
+    // so that form would hand ' ' straight to PlanStatus::from(), throwing an uncaught
+    // ValueError identical in kind to the present-null one, one shape over. Measured by writing
+    // that exact ??-only form and watching this assertion error with " " is not a valid backing
+    // value for enum App\Domain\Plans\PlanStatus, before being restored to the trim()-based
+    // form that treats a whitespace-only value the same as an absent key or a present null.
+    expect(validatedListPlansRequest(['status' => ' '])->status())
+        ->toBe(PlanStatus::Active, 'a whitespace-only ?status= must default the same way a present null and an absent key do');
 });

@@ -25,15 +25,28 @@ final class ListPlansRequest extends FormRequest
      * 'nullable' on status, unlike limit and cursor above it: Illuminate\Foundation\Http\
      * Middleware\ConvertEmptyStringsToNull is in Laravel's default global middleware stack and
      * bootstrap/app.php never removes it, so a real `?status=` arrives as a PRESENT null, not
-     * an absent key. Without 'nullable', Illuminate\Validation\Validator::isValidatable()
-     * still runs the 'string' rule against that null (presentOrRuleIsImplicit() treats a
-     * present key, of any value, as present), and validateString() is bare is_string($value) -
-     * false for null - so the request would 422 on `?status=` where the spec wants the
-     * default. 'nullable' makes isNotNullIfMarkedAsNullable() skip 'string' and the Rule::in()
-     * check for a null value, so the field reaches status() below unvalidated-against but not
-     * rejected. limit and cursor keep no 'nullable' deliberately - ReadsPageQuery's own
-     * docblock documents why a present-null limit SHOULD 422 rather than silently take
-     * DEFAULT_LIMIT, which is the opposite choice from status for a reason stated once, there.
+     * an absent key.
+     *
+     * The real boundary Illuminate\Validation\Validator::presentOrRuleIsImplicit() applies is
+     * narrower than "any present key is present": `if (is_string($value) && trim($value) ===
+     * '') return $this->isImplicit($rule);` - so a present key counts as present UNLESS its
+     * value is a string that trim()s to empty, in which case every NON-IMPLICIT rule on the
+     * field is skipped outright, 'nullable' included. That split matters here because this
+     * field's two blank-ish shapes land on opposite sides of it. null is not a string, so the
+     * short-circuit never fires for it, and 'string' (non-implicit) then runs against it for
+     * real - validateString() is bare is_string($value), false for null - so without 'nullable'
+     * the request would 422 on a present null `?status=` where the spec wants the default;
+     * 'nullable' is what makes isNotNullIfMarkedAsNullable() skip 'string' and Rule::in() for
+     * that null. A whitespace-only value such as '?status=%20' (ConvertEmptyStringsToNull's own
+     * transform() is an EXACT match, `$value === '' ? null : $value`, so a single space is not
+     * turned into null and survives as the string ' ') hits the OTHER branch instead: 'string'
+     * and Rule::in() are skipped regardless of 'nullable', so this field validates for that
+     * shape either way. 'nullable' is therefore load-bearing for the null shape and inert for
+     * the whitespace one; status() below is what makes both default correctly despite
+     * validation treating the two differently. limit and cursor keep no 'nullable' deliberately
+     * - ReadsPageQuery's own docblock documents why a present-null limit SHOULD 422 rather than
+     * silently take DEFAULT_LIMIT, which is the opposite choice from status for a reason stated
+     * once, there.
      *
      * @return array<string, mixed>
      */
@@ -45,7 +58,7 @@ final class ListPlansRequest extends FormRequest
             /** @query */
             'cursor' => ['sometimes', 'string', new ValidCursor],
             /** @query */
-            'status' => ['sometimes', 'nullable', 'string', Rule::in(['active', 'archived', 'cancelled'])],
+            'status' => ['sometimes', 'nullable', 'string', Rule::in(array_column(PlanStatus::cases(), 'value'))],
         ];
     }
 
@@ -56,15 +69,23 @@ final class ListPlansRequest extends FormRequest
      * the key exists at all - so for a present null that form resolves to
      * Stringable((string) null) === Stringable(''), and PlanStatus::from('') throws an
      * uncaught ValueError instead of defaulting. Measured directly against this method before
-     * this docblock was written; see ListPlansRequestTest's two present-null cases, which this
-     * form passes and the string()-based form does not.
+     * this docblock was written; see ListPlansRequestTest's present-null defaulting case, which
+     * this form passes and the string()-based form does not (the validation-isolating
+     * present-null case never calls status() at all, so it cannot distinguish the two forms).
      *
-     * $this->input('status') resolves to null for BOTH an absent key and a present null, which
-     * is exactly the one-?? shape that treats them identically - the same default, applied in
-     * one place, that D-R6 requires of limit.
+     * Not a bare `$this->input('status') ?? PlanStatus::Active->value` either: ' ' is not null,
+     * so that form still hands a whitespace-only value straight to PlanStatus::from(), which
+     * throws the same shape of uncaught ValueError one input over - '?status=%20' survives
+     * ConvertEmptyStringsToNull's exact-match transform() as the string ' ' (see rules()'s own
+     * docblock). is_string($status) && trim($status) !== '' treats a whitespace-only value the
+     * same as an absent key or a present null - a blank string carries no more intent than
+     * either - which is also why rules() cannot 422 it: every non-implicit rule on the field,
+     * 'nullable' included, is skipped for that shape.
      */
     public function status(): PlanStatus
     {
-        return PlanStatus::from($this->input('status') ?? PlanStatus::Active->value);
+        $status = $this->input('status');
+
+        return PlanStatus::from(is_string($status) && trim($status) !== '' ? $status : PlanStatus::Active->value);
     }
 }

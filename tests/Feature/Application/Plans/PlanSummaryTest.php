@@ -25,9 +25,9 @@ use Illuminate\Support\Carbon;
 // tests/Feature, not tests/Unit, and the call that forces it is Eloquent's, not this file's
 // own: forceFill()'s date-cast path for created_at/updated_at/archived_at reaches
 // Model::getDateFormat() -> Model::getConnection() -> static::$resolver->connection(), and
-// Pest's Unit suite boots no application (tests/Pest.php:26 is `uses(TestCase::class)
-// ->in('Feature')` only), so $resolver is null there. Measured: moving this file under
-// tests/Unit throws "Call to a member function connection() on null" from inside
+// Pest's Unit suite boots no application (tests/Pest.php's single `uses(TestCase::class)
+// ->in('Feature')` line names Feature only), so $resolver is null there. Measured: moving
+// this file under tests/Unit throws "Call to a member function connection() on null" from inside
 // vendor/laravel/framework's Model.php, for both cases, before a single assertion of this
 // file's own ever runs.
 //
