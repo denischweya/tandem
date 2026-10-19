@@ -206,7 +206,7 @@ it('declares every error status the application itself raises', function (): voi
         expect($response)->not->toBeNull("openapi.json must declare {$status} for {$method} {$path}");
 
         // A description, because a status with no prose tells a client the number and nothing
-        // about what to do with it - and all five of these are conditions a client must handle
+        // about what to do with it - and all six of these are conditions a client must handle
         // differently from each other.
         $description = data_get($response, 'description');
 
@@ -361,8 +361,8 @@ it('wraps every success response in the data envelope', function (): void {
     // Counted, so this cannot go vacuous again if the traversal ever stops finding anything.
     // Seven enveloped success responses today (register, login, refresh, verify-email, GET /me,
     // PATCH /me, GET /plans/{plan}) and four bodyless ones (logout, DELETE /me, reset-password,
-    // forgot-password). Task 15 (GetPlanTest) adds the seventh enveloped response - GET
-    // /plans/{plan} -> 200 - and no bodyless one.
+    // forgot-password). Task 15 adds the seventh enveloped response - GET /plans/{plan} ->
+    // 200 - and no bodyless one.
     expect([$enveloped, $bodyless])->toBe([7, 4]);
 });
 
@@ -460,9 +460,10 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     //     spot - this half is insurance on a config value and proves nothing today, which is
     //     said plainly here for the same reason OpenApiEnvironmentTest's docblock says it.
     //
-    // Three positions are deliberately NOT walked by name. paths.*.*.responses.*.description (14
-    // strings today), components.responses.* (7), and info.description / servers.0.description
-    // (2) are AUTHORED - every one comes from a #[Response] attribute, from Scramble's own fixed
+    // Three positions are deliberately NOT walked by name. paths.*.*.responses.*.description (16
+    // strings today, two of them GET /plans/{plan}'s 200 and 404 - Task 15),
+    // components.responses.* (7), and info.description / servers.0.description (2) are
+    // AUTHORED - every one comes from a #[Response] attribute, from Scramble's own fixed
     // strings, or from config/scramble.php - never from a docblock harvest. A path-level
     // allow-list over ~50 authored strings cannot catch the only defect available there (an
     // internal citation inside prose that is meant to be published), so it would be fifty lines
@@ -534,8 +535,8 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // first Wave 2 route to add a path parameter). A Wave 2 route with a path or query
     // parameter moves this number, and is meant to: any task that adds one must update this
     // literal in the same commit and state the arithmetic it contributes (+1, +2, ...) in its
-    // report. The task that owns the contract's final literals re-derives the absolute count
-    // from the regenerated document rather than trusting any task's arithmetic forward.
+    // report. Task 39 re-derives the final absolute count from the regenerated document
+    // rather than trusting any task's arithmetic forward.
     expect($parameterCount)->toBe(
         5,
         'The parameter walk above visited a different number of parameter objects than the '
@@ -581,7 +582,7 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // disclosing rather than assuming away: a `description` or `summary` key inside an
     // `example` or `default` payload - not a Scramble-authored schema position at all - would
     // appear in this list too, reading as a leaked docblock when it is neither. Wave 2 writes no
-    // such payload today (checked: none of the 26 paths below sits under `example` or
+    // such payload today (checked: none of the 28 paths below sits under `example` or
     // `default`), so this is a disclosed false-positive risk, not an observed one.
     //
     // Any task adding a new deliberate position (client-facing prose the way verify-email's
@@ -613,7 +614,7 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // listing the result - not derived by arithmetic. The first three are the ones $prose above
     // already names and pins by content; the other 25 are the authored strings $prose
     // deliberately does not walk by name (16 responses.*.description + 7 components.responses.*
-    // + 2 info/servers). Task 15 (GetPlanTest) added two of the 16: GET /plans/{plan}'s 200
+    // + 2 info/servers). Task 15 added two of the 16: GET /plans/{plan}'s 200
     // (Scramble's own inferred description for the PlanResource return type, not authored
     // prose) and its 404 (the #[Response] attribute on GetPlanController).
     expect($allProsePaths)->toEqualCanonicalizing([
@@ -677,13 +678,15 @@ it('publishes no component schema without properties, so no native enum reaches 
     // cause that has nothing to do with whatever was added. Catching it here names the real one.
     $schemas = Arr::wrap(data_get(openApiDocument(), 'components.schemas'));
 
-    // >= 8, not merely non-empty: a document that dropped from eight schemas to one would still
+    // >= 9, not merely non-empty: a document that dropped from nine schemas to one would still
     // pass a bare not-empty check while this traversal verified almost nothing, which is the
-    // same "a floor left behind is slack" shape plan-corrections.md objects to elsewhere in this
-    // plan. 8 today (measured: count($schemas)).
+    // same "a floor left behind is slack" shape this test objects to elsewhere. 9 today
+    // (measured: count($schemas)) - PlanResource is the ninth, added by Task 15, and the floor
+    // is raised in the same commit that added it: a floor left at 8 would have let a dropped
+    // PlanResource clear it silently, which is exactly the slack this comment warns against.
     expect(count($schemas))->toBeGreaterThanOrEqual(
-        8,
-        'components.schemas published fewer than the eight schemas this traversal expects to '
+        9,
+        'components.schemas published fewer than the nine schemas this traversal expects to '
         .'check, so most of them were skipped rather than verified.',
     );
 

@@ -35,7 +35,8 @@ interface PlanRepository
      * the actor may see one. PlanRepositoryTest's "keeps an archived Plan visible to its active
      * member" is the case that reds if this is ever tightened.
      *
-     * @throws PlanNotVisible for a malformed $planId, an unknown Plan, an actor with no
+     * @throws PlanNotVisible for a malformed $planId, an unknown Plan, a non-canonical-case
+     *                        (uppercase) spelling of a well-formed uuid, an actor with no
      *                        plan_members row, or an actor whose row's status does not satisfy
      *                        PlanPermissions::grantsAccess()
      */

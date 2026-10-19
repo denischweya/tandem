@@ -84,12 +84,13 @@ return Application::configure(basePath: dirname(__DIR__))
             'errors' => ['token' => ['This password reset link is no longer valid. Request a new one.']],
         ], 422));
 
-        // One body for a malformed {plan}, an unknown Plan, an actor with no plan_members row
-        // and an actor whose row's status does not grant access - see PlanNotVisible. 404 and
-        // not 403 because a 403 confirms the Plan exists, and that confirmation is available to
-        // anyone with a guessed id (spec §8.1). Encoded compactly, like the three closures
-        // above: Laravel's own handler pretty-prints, so a 404 arriving from the router instead
-        // of from here would differ in whitespace as well as in text.
+        // One body for a malformed {plan}, an unknown Plan, a non-canonical-case (uppercase)
+        // spelling of a well-formed uuid, an actor with no plan_members row, and an actor whose
+        // row's status does not grant access - see PlanNotVisible. 404 and not 403 because a
+        // 403 confirms the Plan exists, and that confirmation is available to anyone with a
+        // guessed id (spec §8.1). Encoded compactly, like the three closures above: Laravel's
+        // own handler pretty-prints, so a 404 arriving from the router instead of from here
+        // would differ in whitespace as well as in text.
         $exceptions->render(fn (PlanNotVisible $e) => new JsonResponse(
             ['message' => 'Plan not found.'],
             404,

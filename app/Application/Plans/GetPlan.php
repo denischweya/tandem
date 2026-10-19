@@ -13,9 +13,10 @@ final readonly class GetPlan
     /**
      * One statement, and spec §5.1's whole rule is in it. findVisibleTo() resolves the Plan and
      * the actor's membership together and throws PlanNotVisible for a malformed id, an unknown
-     * Plan, an actor with no plan_members row and an actor whose row's status does not grant
-     * access - so the 404 is decided in one place for every Plan endpoint rather than in nine
-     * controllers, and no caller can accidentally answer 403 and leak the Plan's existence.
+     * Plan, a non-canonical-case (uppercase) spelling of a well-formed uuid, an actor with no
+     * plan_members row and an actor whose row's status does not grant access - so the 404 is
+     * decided in one place for every Plan endpoint rather than in nine controllers, and no
+     * caller can accidentally answer 403 and leak the Plan's existence.
      *
      * A use case rather than a controller calling the repository directly, for two reasons that
      * outlive the one line: spec §4's Application/Plans list names GetPlan, and the arch rule
