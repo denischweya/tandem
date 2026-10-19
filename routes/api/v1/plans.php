@@ -2,10 +2,32 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\V1\Plans\CreatePlanController;
 use App\Http\Controllers\Api\V1\Plans\GetPlanController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('auth:sanctum')->group(function (): void {
+    // `verified` AND throttle:plans-create, and three measured notes about the pair.
+    //
+    // (1) The order written here is cosmetic. Laravel sorts route middleware by the Kernel's own
+    // $middlewarePriority - bootstrap/app.php never calls priority(), and
+    // Middleware::getMiddlewarePriority() returns [] for this app, which is falsy, so
+    // setMiddlewarePriority() is never called and the Kernel keeps its 11-entry default. The
+    // sorted order for this exact list is 0 Authenticate:sanctum, 1 ThrottleRequests,
+    // 2 SubstituteBindings, 3 EnsureEmailIsVerified.
+    //
+    // (2) That order is what makes the plans-create closure able to key on $request->user():
+    // auth:sanctum has already run. Do not "override middleware priority to be safe" - an empty
+    // or partial list would silently disable the ordering this depends on.
+    //
+    // (3) Because `verified` sorts LAST and ThrottleRequests::handleRequest() calls hit() before
+    // $next($request), an unverified user's 403 still spends a plans-create token: their
+    // thirty-first attempt is a 429 rather than a 403. Recorded rather than fixed - the only
+    // lever is $middlewarePriority, see (2).
+    Route::post('/plans', CreatePlanController::class)
+        ->middleware(['verified', 'throttle:plans-create'])
+        ->name('plans.store');
+
     // Deliberately NOT behind `verified`, and spec §7.5 is where the decision is argued: the
     // gate covers every Plan route that acts on another member's behalf or creates state other
     // members see, and it covers no read. If joining were exempt and reading were not, a user

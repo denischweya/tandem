@@ -83,6 +83,37 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perHour(3)->by('email:'.EmailInput::normalize(is_string($email) ? $email : ''));
         });
 
+        // §13.1: 30 per hour per user, counting requests rather than outcomes - creating thirty
+        // Plans an hour is the thing being limited whether or not each one succeeds, which is
+        // spec §8.2's own reasoning about registration. So this is route-level throttle:
+        // middleware and not an in-use-case limiter like LoginRateLimiter, and its 429 carries
+        // the full four-header set.
+        //
+        // Keyed on the user id. That is the whole claim, and it is not observable from a status
+        // code: a limiter keyed on the IP answers 429 exactly like one keyed on the user. The
+        // test that can see it is "limits one user to thirty an hour and leaves a second user on
+        // the same IP alone" in tests/Feature/Plans/CreatePlanTest.php - every request in the
+        // suite arrives with REMOTE_ADDR = 127.0.0.1, so under an IP key the second user shares
+        // the first user's bucket and that test must fail.
+        //
+        // $request->user() is non-null here because auth:sanctum sorts before ThrottleRequests
+        // in the Kernel's $middlewarePriority (measured: 0 Authenticate:sanctum,
+        // 1 ThrottleRequests). The ip() fallback is unreachable on this route and is kept so
+        // that Limit::by() always receives a string, and so that a future unauthenticated
+        // caller cannot land every request in one shared bucket.
+        //
+        // ?->getAuthIdentifier() rather than ?->id: measured, not merely the documented
+        // fallback for an undefined-property report. phpstan analyse --level=8 flags
+        // ?->id ?? ... with nullsafe.neverNull - PHPStan's IssetCheck::doCheck() treats a
+        // nullsafe PROPERTY fetch that bottoms out as the "leaf" of a ?? chain's isset
+        // resolution as unconditionally unnecessary, independent of whether the object is
+        // actually nullable (reproduced on a plain, unrelated class with a declared-nullable
+        // parameter, so it is not specific to $request->user() or to Eloquent). A nullsafe
+        // METHOD call in the same position does not hit that code path. getAuthIdentifier()
+        // is Authenticatable's own contract method and returns $this->{getAuthIdentifierName()},
+        // which for App\Models\User is $this->id (no override of getKeyName()) - the same uuid.
+        RateLimiter::for('plans-create', fn (Request $request) => Limit::perHour(30)->by($request->user()?->getAuthIdentifier() ?? $request->ip() ?? 'unknown'));
+
         // No named 'auth-login' limiter here (and so no throttle:auth-login on the route):
         // spec §8.2 counts login's two limits by failed attempt, not by request, which
         // middleware cannot do - it decides before the controller runs, before this

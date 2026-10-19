@@ -8,6 +8,7 @@ use App\Http\Requests\Api\V1\Auth\RefreshTokenRequest;
 use App\Http\Requests\Api\V1\Auth\RegisterRequest;
 use App\Http\Requests\Api\V1\Auth\ResetPasswordRequest;
 use App\Http\Requests\Api\V1\Auth\VerifyEmailRequest;
+use App\Http\Requests\Api\V1\Plans\CreatePlanRequest;
 use App\Http\Requests\Api\V1\UpdateProfileRequest;
 use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Arr;
@@ -198,6 +199,11 @@ it('declares every error status the application itself raises', function (): voi
         // GetPlanTest: "answers one byte-identical 404 for a non-member, an unknown Plan and a
         // malformed id"
         ['get', '/plans/{plan}', '404'],
+        // CreatePlanTest: "refuses an unverified user with 403 and writes nothing"
+        ['post', '/plans', '403'],
+        // CreatePlanTest: "limits one user to thirty an hour and leaves a second user on the
+        // same IP alone"
+        ['post', '/plans', '429'],
     ];
 
     foreach ($expected as [$method, $path, $status]) {
@@ -359,11 +365,12 @@ it('wraps every success response in the data envelope', function (): void {
     }
 
     // Counted, so this cannot go vacuous again if the traversal ever stops finding anything.
-    // Seven enveloped success responses today (register, login, refresh, verify-email, GET /me,
-    // PATCH /me, GET /plans/{plan}) and four bodyless ones (logout, DELETE /me, reset-password,
-    // forgot-password). Task 15 adds the seventh enveloped response - GET /plans/{plan} ->
-    // 200 - and no bodyless one.
-    expect([$enveloped, $bodyless])->toBe([7, 4]);
+    // Eight enveloped success responses today (register, login, refresh, verify-email, GET /me,
+    // PATCH /me, GET /plans/{plan}, POST /plans) and four bodyless ones (logout, DELETE /me,
+    // reset-password, forgot-password). Task 15 added the seventh enveloped response -
+    // GET /plans/{plan} -> 200. Task 16 adds the eighth - POST /plans -> 201 - and no bodyless
+    // one.
+    expect([$enveloped, $bodyless])->toBe([8, 4]);
 });
 
 it('publishes both session expiries as date-time, not as a bare string', function (): void {
@@ -393,6 +400,7 @@ it('publishes required-versus-optional exactly as the rules state it', function 
         'ForgotPasswordRequest' => ForgotPasswordRequest::class,
         'ResetPasswordRequest' => ResetPasswordRequest::class,
         'UpdateProfileRequest' => UpdateProfileRequest::class,
+        'CreatePlanRequest' => CreatePlanRequest::class,
     ];
 
     foreach ($classes as $schemaName => $class) {
@@ -552,6 +560,10 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         'paths./auth/verify-email.post.description',
         // Deliberate, client-facing: see above.
         'components.schemas.RegisterRequest.properties.timezone.description',
+        // Deliberate, client-facing: the same sentence as RegisterRequest.timezone, in the same
+        // position, for the same reason - IanaTimeZone declines to enumerate the ~400 values,
+        // so a client cannot deduce the field's shape from the schema.
+        'components.schemas.CreatePlanRequest.properties.timezone.description',
     ], 'Published prose must be deliberate. Anything new here is either a client-facing '
         .'description that belongs in this list, or internal reasoning that leaked through one '
         .'of spec §5.2\'s harvest positions.');
@@ -611,16 +623,20 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     $walkAllProse(openApiDocument(), '');
 
     // Every description/summary path in today's document, found by running this exact walk and
-    // listing the result - not derived by arithmetic. The first three are the ones $prose above
-    // already names and pins by content; the other 25 are the authored strings $prose
-    // deliberately does not walk by name (16 responses.*.description + 7 components.responses.*
-    // + 2 info/servers). Task 15 added two of the 16: GET /plans/{plan}'s 200
+    // listing the result - not derived by arithmetic. The first four are the ones $prose above
+    // already names and pins by content; the other 28 are the authored strings $prose
+    // deliberately does not walk by name (19 responses.*.description + 7 components.responses.*
+    // + 2 info/servers). Task 15 added two of the 19: GET /plans/{plan}'s 200
     // (Scramble's own inferred description for the PlanResource return type, not authored
-    // prose) and its 404 (the #[Response] attribute on GetPlanController).
+    // prose) and its 404 (the #[Response] attribute on GetPlanController). Task 16 added three
+    // more: POST /plans's 201 (Scramble's own inferred description, not authored prose), and
+    // its 403 and 429 (the #[Response] attributes on CreatePlanController) - plus the fourth
+    // $prose entry, CreatePlanRequest.timezone.
     expect($allProsePaths)->toEqualCanonicalizing([
         'paths./auth/verify-email.post.summary',
         'paths./auth/verify-email.post.description',
         'components.schemas.RegisterRequest.properties.timezone.description',
+        'components.schemas.CreatePlanRequest.properties.timezone.description',
         'info.description',
         'servers.0.description',
         'paths./auth/forgot-password.post.responses.429.description',
@@ -639,6 +655,9 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         'paths./auth/verify-email.post.responses.200.description',
         'paths./plans/{plan}.get.responses.200.description',
         'paths./plans/{plan}.get.responses.404.description',
+        'paths./plans.post.responses.201.description',
+        'paths./plans.post.responses.403.description',
+        'paths./plans.post.responses.429.description',
         'components.responses.ValidationException.description',
         'components.responses.ValidationException.content.application/json.schema.properties.message.description',
         'components.responses.ValidationException.content.application/json.schema.properties.errors.description',
@@ -652,6 +671,25 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         .'allow-list if it is deliberate client-facing prose, or trace and remove the docblock '
         .'comment that leaked it, and update this list either way in the same commit (say which '
         .'path was added, in your report - controller-amendments.md Amendment 2).');
+});
+
+it('publishes no group_id on the Plan write surface', function (): void {
+    // §12.2: the one line Wave 2 owes Groups is a refusal, and a refusal that is only enforced
+    // at runtime is not the one that was decided. `prohibited` or a use-case check would both
+    // leave a documented group_id in the contract; the decision was that the field is ABSENT.
+    //
+    // A literal list rather than a derivation from rules(): the test two screens up already
+    // derives the published fields FROM rules(), so it agrees with any rules() - including one
+    // that grew a group_id. This is the assertion that does not.
+    $properties = array_keys(Arr::wrap(data_get(
+        openApiDocument(),
+        'components.schemas.CreatePlanRequest.properties',
+    )));
+
+    expect($properties)->toEqualCanonicalizing(
+        ['title', 'description', 'timezone'],
+        'CreatePlanRequest must publish exactly title, description and timezone - §12.2 makes group_id absent, and spec §15 keeps cover_image_path unwritable',
+    );
 });
 
 it('publishes no component schema without properties, so no native enum reaches the document', function (): void {
@@ -678,15 +716,16 @@ it('publishes no component schema without properties, so no native enum reaches 
     // cause that has nothing to do with whatever was added. Catching it here names the real one.
     $schemas = Arr::wrap(data_get(openApiDocument(), 'components.schemas'));
 
-    // >= 9, not merely non-empty: a document that dropped from nine schemas to one would still
+    // >= 10, not merely non-empty: a document that dropped from ten schemas to one would still
     // pass a bare not-empty check while this traversal verified almost nothing, which is the
-    // same "a floor left behind is slack" shape this test objects to elsewhere. 9 today
-    // (measured: count($schemas)) - PlanResource is the ninth, added by Task 15, and the floor
-    // is raised in the same commit that added it: a floor left at 8 would have let a dropped
-    // PlanResource clear it silently, which is exactly the slack this comment warns against.
+    // same "a floor left behind is slack" shape this test objects to elsewhere. 10 today
+    // (measured: count($schemas)) - PlanResource was the ninth (Task 15); CreatePlanRequest is
+    // the tenth (Task 16), and the floor is raised in the same commit that added it: a floor
+    // left at 9 would have let a dropped CreatePlanRequest clear it silently, which is exactly
+    // the slack this comment warns against.
     expect(count($schemas))->toBeGreaterThanOrEqual(
-        9,
-        'components.schemas published fewer than the nine schemas this traversal expects to '
+        10,
+        'components.schemas published fewer than the ten schemas this traversal expects to '
         .'check, so most of them were skipped rather than verified.',
     );
 
