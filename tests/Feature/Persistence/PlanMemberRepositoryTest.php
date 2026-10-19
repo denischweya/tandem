@@ -17,6 +17,7 @@ use App\Models\User;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 
@@ -95,6 +96,12 @@ it('answers a malformed user id and a malformed plan id without reaching Postgre
     // a malformed $planId is an empty page. Same hazard, different answer, which is why it
     // needs its own assertion and its own mutation rather than riding on the two above.
     // findMembership()'s third answer for the same input, null, is in the next test.
+    //
+    // Expect the shape of that red, so a re-runner does not read it as a broken step: deleting
+    // listActiveMembers()'s own Str::isUuid($planId) guard reds this as an uncaught
+    // SQLSTATE[22P02] at the listActiveMembers() call below, before either expectation after it
+    // is evaluated - the call is what detects the guard's absence, not the two expectations
+    // that follow it.
     $plan = Plan::factory()->create();
     $user = User::factory()->hasProfile()->create();
     member($plan, $user, MemberRole::Member, '2026-01-01 10:00:00');
@@ -446,6 +453,42 @@ it('refuses to publish a member whose profile row is missing', function (): void
 
     expect(fn () => app(PlanMemberRepository::class)->listActiveMembers($plan->id, new PageQuery(25, null)))
         ->toThrow(RuntimeException::class, 'has no user_profiles row');
+});
+
+it("raises a ValueError when a member row's role is corrupt, pinning the ruling's deliberate 500", function (): void {
+    // R2-1. A human ruling, received 2026-10-19, keeps MemberRole::from() on
+    // plan_members.role rather than switching to the whereIn(...) exclusion
+    // EloquentPlanRepository::listForActor() applies to the same column: "whichever wins
+    // needs a test, since today neither is pinned." This is that test, and it has to red
+    // under the alternative the ruling rejected to be worth anything - see
+    // EloquentPlanMemberRepository::listActiveMembers()'s own comment for the ruling's
+    // reasoning, which this test does not re-argue.
+    //
+    // A raw DB::table()->insert(), not the model or the factory: PlanMember is
+    // $guarded = ['*'] and PlanMemberFactory::role() takes a MemberRole instance, so neither
+    // can write a role no case recognises. The row still has to clear every filter ahead of
+    // the conversion to reach it - its own Plan, status = active, a non-null joined_at - and
+    // the user needs a user_profiles row (hasProfile()), or the is_string guard throws first
+    // and this test would be proving the wrong guard instead.
+    //
+    // Its own Plan and its own test, not the shared ordering fixture above: dropping a
+    // corrupt row into that shared fixture would redden tests that are not about this one.
+    $plan = Plan::factory()->create();
+    $user = User::factory()->hasProfile()->create();
+
+    DB::table('plan_members')->insert([
+        'id' => (string) Str::uuid7(),
+        'plan_id' => $plan->id,
+        'user_id' => $user->id,
+        'role' => 'wizard',
+        'status' => MemberStatus::Active->value,
+        'joined_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    expect(fn () => app(PlanMemberRepository::class)->listActiveMembers($plan->id, new PageQuery(25, null)))
+        ->toThrow(ValueError::class);
 });
 
 /**

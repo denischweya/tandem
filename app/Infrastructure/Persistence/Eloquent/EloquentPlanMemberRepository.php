@@ -209,12 +209,27 @@ final readonly class EloquentPlanMemberRepository implements PlanMemberRepositor
             // than EloquentPlanRepository: listForActor() carries
             // whereIn('plan_members.role', ...) so a row whose role no case recognises is
             // excluded from the result set, while this query has no such filter and an
-            // unrecognised plan_members.role here is a ValueError - a 500 on §8.1's list rather
-            // than a member quietly missing from it. plan_members.role is under no CHECK, but
-            // every writer in this codebase writes MemberRole::X->value, so the exposure is
-            // corrupt data only. Left as the task prescribed it and recorded here rather than
-            // narrowed, because nothing asserts either behaviour and a filter no test can show
-            // red would be a guard in name only.
+            // unrecognised plan_members.role here is a ValueError instead.
+            //
+            // A RULING, received 2026-10-19, not an oversight or an unresolved conflict:
+            // from() stays. A member list that silently dropped a real member would
+            // under-report membership to every member and contradict §6.1's row-counting
+            // member_count, which a Plan list dropping one entry does not - loud beats wrong,
+            // even though the ruling knowingly accepts that one corrupt row then makes this
+            // Plan's whole member list permanently un-fetchable, with no page a client can
+            // route around it. Pinned by "raises a ValueError when a member row's role is
+            // corrupt, pinning the ruling's deliberate 500" in this repository's test, against
+            // the alternative the ruling rejected: that test reds if this method grows its own
+            // whereIn('plan_members.role', ...) filter, the behaviour above borrows the name
+            // of but does not carry.
+            //
+            // The "500" is forward-looking, not a claim about today: there is no route onto
+            // this method yet (GET /plans/{plan}/members arrives in Task 21), so right now
+            // this ValueError only surfaces out of a repository call with nothing downstream
+            // to turn it into an HTTP response. Task 21 is what lets an uncaught ValueError
+            // reach bootstrap/app.php's default handler and become {"message":"Server Error"}.
+            // plan_members.role is under no CHECK, but every writer in this codebase writes
+            // MemberRole::X->value, so the exposure is corrupt data only.
             $items[] = new PlanMemberView(
                 $row->user_id,
                 $displayName,
