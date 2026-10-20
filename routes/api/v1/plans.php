@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\Plans\CreatePlanController;
 use App\Http\Controllers\Api\V1\Plans\DeletePlanController;
 use App\Http\Controllers\Api\V1\Plans\GetPlanController;
 use App\Http\Controllers\Api\V1\Plans\ListPlansController;
+use App\Http\Controllers\Api\V1\Plans\PlanMemberController;
 use App\Http\Controllers\Api\V1\Plans\UpdatePlanController;
 use Illuminate\Support\Facades\Route;
 
@@ -61,4 +62,11 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::delete('/plans/{plan}', DeletePlanController::class)
         ->middleware('verified')
         ->name('plans.destroy');
+
+    // Not gated by `verified` (spec §7.5 gates no read - see VerifiedGateTest's $spec75 map,
+    // 'plans.members.index' => false), and not throttled: §13.4 limits plans-create,
+    // plan-invites and invite-lookup only, and a read scoped to one Plan's membership has no
+    // abuse shape worth a bucket.
+    Route::get('/plans/{plan}/members', [PlanMemberController::class, 'index'])
+        ->name('plans.members.index');
 });

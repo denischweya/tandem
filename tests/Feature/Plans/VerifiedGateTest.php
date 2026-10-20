@@ -125,7 +125,7 @@ it('gates exactly the Plan routes spec 7.5 names, read off the route table', fun
     // Every Plan route is authenticated. Separate again, so the failure says which of the three
     // properties broke. Unlike $gated above, this is a universal invariant rather than a per-route
     // decision - the correct value for any future row is always `true` - so a hand-written map of
-    // today's six is enough: a later task's new authenticated route still forces that task to add
+    // today's seven is enough: a later task's new authenticated route still forces that task to add
     // its key here (the exact-map comparison fails on key count alone), and there is no verdict to
     // get wrong once it does.
     expect($authenticated)->toEqual([
@@ -135,6 +135,7 @@ it('gates exactly the Plan routes spec 7.5 names, read off the route table', fun
         'plans.update' => true,
         'plans.destroy' => true,
         'plans.archive' => true,
+        'plans.members.index' => true,
     ], 'every Plan route resolves an actor, including join - plan_invites.accepted_by records who accepted');
 });
 
