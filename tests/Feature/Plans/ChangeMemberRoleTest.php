@@ -233,36 +233,52 @@ it('answers 404 with the Plan body for a non-member, whatever {user} names', fun
 
     [, , $access] = signIn($stranger);
 
-    // Spec §5.2's ordering, and FOUR spellings of {user} rather than one, because only three
-    // of them can see the defect. A non-member must receive the Plan body and never the
-    // precise member body, whatever the second parameter names.
+    // Spec §5.2's ordering, and SEVERAL spellings of {user} rather than one, because not all of
+    // them can see the defect. A non-member must receive the Plan body and never the precise
+    // member body, whatever the second parameter names.
     //
-    // Why one value is not enough, worked through against the two possible orderings: if
-    // {user} is a real active member of THIS Plan, then a use case that resolved the member
-    // first would find them and go on to throw PlanNotVisible anyway - the body is
-    // 'Plan not found.' under both orderings, and that case proves nothing about the order.
-    // The other three are where a member-first ordering answers "That person is not a member
+    // Why one value is not enough, worked through against the two possible orderings: for a
+    // {user} who is a real active member of THIS Plan, a use case that resolved the member first
+    // would find them and go on to throw PlanNotVisible anyway - the body is 'Plan not found.'
+    // under both orderings, so that probe proves nothing about the order and is kept only as the
+    // control. The others are where a member-first ordering answers "That person is not a member
     // of this Plan", which is a Plan-existence oracle: an attacker who holds one id that is
-    // certainly not a member of anything can then tell an existing Plan from a non-existent
-    // one by the body alone.
+    // certainly not a member of anything can then tell an existing Plan from a non-existent one
+    // by the body alone.
     //
-    // The body, not the status: both answers are 404, so a status-only assertion is green
-    // under either ordering.
-    $spellings = [$target->id, $outsider->id, 'not-a-uuid', '0193f0e0-0000-7000-8000-000000000000'];
+    // The BODY, not the status: both answers are 404, so a status-only assertion is green under
+    // either ordering.
+    //
+    // The role varies too, and that is the part a role-blind loop silently loses: the use case
+    // resolves the target through a TERNARY, findTransferTarget() when the requested role is
+    // owner and findActiveMember() otherwise. Probing only `admin` exercises one arm and leaves
+    // the other's ordering asserted by nothing. The owner probe is listed FIRST deliberately -
+    // Pest aborts a test at its first failing assertion, so with it last a member-first ordering
+    // would red on an admin probe and the transfer arm would go unobserved.
+    $probes = [
+        'a non-member asked for as the new owner (the findTransferTarget arm)' => [$outsider->id, MemberRole::Owner],
+        'a real active member of this Plan (the control: green under both orderings)' => [$target->id, MemberRole::Admin],
+        'a real user who is a member of nothing' => [$outsider->id, MemberRole::Admin],
+        'a {user} that is not a uuid' => ['not-a-uuid', MemberRole::Admin],
+        'a well-formed uuid that names nobody' => ['0193f0e0-0000-7000-8000-000000000000', MemberRole::Admin],
+    ];
 
-    foreach ($spellings as $spelling) {
-        withToken($access)->patchJson("/api/v1/plans/{$plan->id}/members/{$spelling}", [
-            'role' => MemberRole::Admin->value,
-        ])
-            ->assertNotFound()
-            ->assertJsonPath('message', 'Plan not found.');
+    foreach ($probes as $label => [$spelling, $role]) {
+        $response = withToken($access)->patchJson("/api/v1/plans/{$plan->id}/members/{$spelling}", [
+            'role' => $role->value,
+        ]);
+
+        expect($response->status())->toBe(404, "{$label} must answer 404");
+        expect($response->json('message'))->toBe(
+            'Plan not found.',
+            "{$label} must answer the Plan body and never the member body",
+        );
     }
 
-    // Tautological against the literal array three lines up, and kept for the one force it
-    // does carry: someone deleting a spelling to "simplify" the loop. Three of the four are
-    // load-bearing and the first is deliberately not, so the count is the only thing that
-    // notices a deletion.
-    expect($spellings)->toHaveCount(4, 'all four spellings must be probed, or the loop proves less than it claims');
+    // Tautological against the literal above, and kept for the one force it does carry: someone
+    // deleting a probe to "simplify" the loop. Four of the five are load-bearing and the control
+    // deliberately is not, so the count is the only thing that notices a deletion.
+    expect($probes)->toHaveCount(5, 'all five probes must run, or the loop proves less than it claims');
 });
 
 it('answers 404 with the member body when {user} belongs to another Plan', function (): void {

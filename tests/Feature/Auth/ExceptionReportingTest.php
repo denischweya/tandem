@@ -60,12 +60,15 @@ it('does not report the three expected auth failures, but still reports a genuin
  * the behaviour under test is bootstrap/app.php's dontReport() list and the container-bound
  * ExceptionHandler that reads it.
  *
- * Known weakness, disclosed rather than worked around: every exception here is reported into
- * ONE captured-log assertion, so a red says "something was reported" and never which
- * dontReport() entry went missing - the diff carries the log record's own message, which names
- * the class, but the expectation does not. Splitting this into one block per exception would fix
- * that and is not this task's to do; what is true today is that the red names the class in its
- * diff and nothing else, and that each exception added here makes the aggregation worse.
+ * Known weakness, disclosed rather than worked around: every exception here is reported into ONE
+ * captured-log assertion, so the expectation's own message cannot say which dontReport() entry
+ * went missing, and each exception added here makes that worse. What rescues it is the DIFF
+ * rather than the message, measured by removing PlanMemberNotFound::class from the list: the
+ * captured record's `message` is the EMPTY STRING, because a no-argument RuntimeException
+ * subclass carries none - it is the record's `context.exception` entry, which PHPUnit's exporter
+ * prints as "App\Application\Plans\PlanMemberNotFound Object #NNNN (...)", that names the class.
+ * So a red here is diagnosable, but only by reading the exported object and not the assertion.
+ * Splitting this into one block per exception would fix that properly and is not this task's.
  */
 it('does not report any of the three expected Plan refusals', function (): void {
     $handler = app(ExceptionHandler::class);
