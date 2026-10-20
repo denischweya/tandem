@@ -27,26 +27,33 @@ final class ListPlansRequest extends FormRequest
      * bootstrap/app.php never removes it, so a real `?status=` arrives as a PRESENT null, not
      * an absent key.
      *
+     * CORRECTED: an earlier version of this docblock claimed a whitespace-only `?status=%20`
+     * is a SECOND blank shape, surviving ConvertEmptyStringsToNull as the literal string ' '
+     * because that middleware's transform() is an exact match (`$value === '' ? null :
+     * $value`). Measured false for any real request: TrimStrings runs BEFORE
+     * ConvertEmptyStringsToNull in Laravel 13's default global stack, and bootstrap/app.php
+     * never reorders it. TrimStrings turns `' '` into `''` first, and ConvertEmptyStringsToNull
+     * then turns that `''` into `null` - so `?status=%20` arrives exactly like `?status=`: a
+     * PRESENT null. There is one blank shape at the validator, not two.
+     *
      * The real boundary Illuminate\Validation\Validator::presentOrRuleIsImplicit() applies is
      * narrower than "any present key is present": `if (is_string($value) && trim($value) ===
      * '') return $this->isImplicit($rule);` - so a present key counts as present UNLESS its
      * value is a string that trim()s to empty, in which case every NON-IMPLICIT rule on the
-     * field is skipped outright, 'nullable' included. That split matters here because this
-     * field's two blank-ish shapes land on opposite sides of it. null is not a string, so the
-     * short-circuit never fires for it, and 'string' (non-implicit) then runs against it for
-     * real - validateString() is bare is_string($value), false for null - so without 'nullable'
-     * the request would 422 on a present null `?status=` where the spec wants the default;
+     * field is skipped outright, 'nullable' included. That branch is therefore dead for any
+     * value a real HTTP request can deliver on this field - null is not a string, so the
+     * short-circuit never fires for it - and 'string' (non-implicit) runs against it for real:
+     * validateString() is bare is_string($value), false for null, so without 'nullable' the
+     * request would 422 on a present null `?status=` where the spec wants the default.
      * 'nullable' is what makes isNotNullIfMarkedAsNullable() skip 'string' and Rule::in() for
-     * that null. A whitespace-only value such as '?status=%20' (ConvertEmptyStringsToNull's own
-     * transform() is an EXACT match, `$value === '' ? null : $value`, so a single space is not
-     * turned into null and survives as the string ' ') hits the OTHER branch instead: 'string'
-     * and Rule::in() are skipped regardless of 'nullable', so this field validates for that
-     * shape either way. 'nullable' is therefore load-bearing for the null shape and inert for
-     * the whitespace one; status() below is what makes both default correctly despite
-     * validation treating the two differently. limit and cursor keep no 'nullable' deliberately
-     * - ReadsPageQuery's own docblock documents why a present-null limit SHOULD 422 rather than
-     * silently take DEFAULT_LIMIT, which is the opposite choice from status for a reason stated
-     * once, there.
+     * that null, and it is load-bearing for every blank shape HTTP can deliver on this field,
+     * not merely one of two. status() below still carries an is_string($status) &&
+     * trim($status) !== '' guard - belt-and-braces for HTTP, where that branch cannot fire, but
+     * load-bearing for a non-HTTP caller that builds this FormRequest (or calls status()
+     * directly) without going through the global middleware. limit and cursor keep no
+     * 'nullable' deliberately - ReadsPageQuery's own docblock documents why a present-null limit
+     * SHOULD 422 rather than silently take DEFAULT_LIMIT, which is the opposite choice from
+     * status for a reason stated once, there.
      *
      * @return array<string, mixed>
      */
@@ -73,14 +80,15 @@ final class ListPlansRequest extends FormRequest
      * this form passes and the string()-based form does not (the validation-isolating
      * present-null case never calls status() at all, so it cannot distinguish the two forms).
      *
-     * Not a bare `$this->input('status') ?? PlanStatus::Active->value` either: ' ' is not null,
-     * so that form still hands a whitespace-only value straight to PlanStatus::from(), which
-     * throws the same shape of uncaught ValueError one input over - '?status=%20' survives
-     * ConvertEmptyStringsToNull's exact-match transform() as the string ' ' (see rules()'s own
-     * docblock). is_string($status) && trim($status) !== '' treats a whitespace-only value the
-     * same as an absent key or a present null - a blank string carries no more intent than
-     * either - which is also why rules() cannot 422 it: every non-implicit rule on the field,
-     * 'nullable' included, is skipped for that shape.
+     * Not a bare `$this->input('status') ?? PlanStatus::Active->value` either: for a real
+     * `?status=%20`, TrimStrings runs before ConvertEmptyStringsToNull (see rules()'s own
+     * docblock, corrected) and the value already arrives here as null, same as `?status=` - so
+     * a bare `??` would in fact catch it. The is_string($status) && trim($status) !== '' form
+     * is kept anyway: it is belt-and-braces for that HTTP shape, but load-bearing for a
+     * non-HTTP caller that passes the literal string ' ' directly (a use case invoked without
+     * going through the global middleware, or a test that calls status() directly) - without
+     * it, such a caller's whitespace-only value would reach PlanStatus::from(' ') and throw an
+     * uncaught ValueError instead of defaulting.
      */
     public function status(): PlanStatus
     {

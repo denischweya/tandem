@@ -129,36 +129,47 @@ it('defaults status to active for a present-but-null status query parameter, not
         ->toBe(PlanStatus::Active, 'a present null ?status= must default the same way an absent key does');
 });
 
-// T11-1 (fix round 1): the present-null fix above does not cover a whitespace-only value, which
-// is a DIFFERENT shape surviving a DIFFERENT exact-match gap. ConvertEmptyStringsToNull's own
-// transform() is `$value === '' ? null : $value` - exact match only - so `?status=%20` decodes
-// to the single-character string ' ', which is not '' and so is never turned into null, and a
-// bare `?? PlanStatus::Active->value` in status() would still hand it straight to
-// PlanStatus::from(), since ' ' !== null. The two present-null tests above cannot exercise this
-// shape at all - their fixture is the value null, not the string ' ' - so it needs its own pair
-// of tests, aimed at the same two clauses, per the same H1 corollary the present-null pair
-// already follows.
-it('does not reject a whitespace-only status query parameter with a 422', function (): void {
+// CORRECTED (H9): an earlier version of this comment claimed the present-null fix above does
+// not cover a whitespace-only value because '   ' survives ConvertEmptyStringsToNull's
+// exact-match transform() and so lands in presentOrRuleIsImplicit()'s own trim()-based branch
+// instead - a SECOND blank shape, distinct from present-null. Measured false for any real
+// request: TrimStrings runs BEFORE ConvertEmptyStringsToNull in Laravel 13's default global
+// stack, so a real `?status=%20` is trimmed to `''` first and then converted to `null` - the
+// exact same present-null shape the two tests above already cover, not a second one. There is
+// one blank shape at the validator, not two.
+//
+// The pair below therefore does not model anything a real HTTP request can deliver:
+// Validator::make() and validatedListPlansRequest() are called directly with the literal
+// string ' ', a shape only a non-HTTP caller can produce - one that builds this request's
+// validator, or calls status() directly, without going through the global middleware (a
+// console command or a use case invoked outside the HTTP kernel). Kept for that caller, which
+// is also why status()'s own is_string($status) && trim($status) !== '' guard stays: it is
+// belt-and-braces for HTTP, where presentOrRuleIsImplicit()'s trim() branch is unreachable on
+// this field, but load-bearing for the non-HTTP shape this pair actually exercises.
+it('does not reject a literal whitespace-only status value with a 422 (non-HTTP caller)', function (): void {
     // Isolates the validation-rule clause only. Illuminate\Validation\Validator::
-    // presentOrRuleIsImplicit() has its own exact-match-adjacent special case: `if
-    // (is_string($value) && trim($value) === '') return $this->isImplicit($rule);` - and
-    // 'nullable', 'string' and Rule::in() are all non-implicit, so EVERY rule on the field is
-    // skipped for a whitespace-only value, independent of whether 'nullable' is present at
-    // all. Rules()'s own docblock names this boundary; this test is what pins it as behaviour.
+    // presentOrRuleIsImplicit() has its own trim()-based special case: `if (is_string($value)
+    // && trim($value) === '') return $this->isImplicit($rule);` - and 'nullable', 'string' and
+    // Rule::in() are all non-implicit, so EVERY rule on the field is skipped for this literal
+    // whitespace string, independent of whether 'nullable' is present at all. A real
+    // `?status=%20` never reaches here as this string - see the file comment above - so this
+    // pins the rule's behaviour for the non-HTTP caller that can still hand it one directly.
     $validator = Validator::make(['status' => ' '], (new ListPlansRequest)->rules());
 
-    expect($validator->fails())->toBeFalse('a whitespace-only status must validate - every non-implicit rule on this field is skipped for that shape, independent of nullable');
+    expect($validator->fails())->toBeFalse('a literal whitespace-only status must validate - every non-implicit rule on this field is skipped for that shape, independent of nullable');
 });
 
-it('defaults status to active for a whitespace-only status query parameter', function (): void {
+it('defaults status to active for a literal whitespace-only status value (non-HTTP caller)', function (): void {
     // Isolates the status()-defaulting clause only, given the line above already proves
     // validation does not block it. $this->input('status') ?? PlanStatus::Active->value alone
-    // - the fix for the present-null case above - does NOT catch this shape: ' ' is not null,
-    // so that form would hand ' ' straight to PlanStatus::from(), throwing an uncaught
-    // ValueError identical in kind to the present-null one, one shape over. Measured by writing
-    // that exact ??-only form and watching this assertion error with " " is not a valid backing
+    // - the fix for the present-null case above - does NOT catch this literal string: ' ' is
+    // not null, so that form would hand ' ' straight to PlanStatus::from(), throwing an
+    // uncaught ValueError identical in kind to the present-null one. Measured by writing that
+    // exact ??-only form and watching this assertion error with " " is not a valid backing
     // value for enum App\Domain\Plans\PlanStatus, before being restored to the trim()-based
-    // form that treats a whitespace-only value the same as an absent key or a present null.
+    // form that treats a whitespace-only value the same as an absent key or a present null -
+    // which is the only reason this case still matters once the HTTP path is known to never
+    // deliver it (see the file comment above).
     expect(validatedListPlansRequest(['status' => ' '])->status())
-        ->toBe(PlanStatus::Active, 'a whitespace-only ?status= must default the same way a present null and an absent key do');
+        ->toBe(PlanStatus::Active, 'a literal whitespace-only status must default the same way a present null and an absent key do');
 });

@@ -202,13 +202,19 @@ it('rejects a blank title, a whitespace-only title, an over-long title and a non
         ->assertStatus(422)
         ->assertJsonValidationErrors(['title' => 'The title field is required.']);
 
-    // '   ' survives ConvertEmptyStringsToNull (exact-match only: '' !== '   ') and would skip
-    // every NON-implicit rule under Validator::presentOrRuleIsImplicit() - but `required` is
-    // itself one of Laravel's implicit rules, so it is evaluated regardless and its own
-    // trim($value) === '' check fails it. The message pin, not assertJsonValidationErrorFor(),
-    // is what proves it is `required` doing the refusing here and not `string` happening to
-    // reject a non-empty value for an unrelated reason - `string` accepts '   ' outright, so
-    // nothing but `required` can produce this 422 on this input.
+    // CORRECTED (H9): this used to read "'   ' survives ConvertEmptyStringsToNull (exact-match
+    // only: '' !== '   ') and would skip every NON-implicit rule under
+    // Validator::presentOrRuleIsImplicit()". Measured false through this real HTTP request:
+    // TrimStrings runs BEFORE ConvertEmptyStringsToNull in Laravel 13's default global stack
+    // (CreatePlanTest's own "rejects a missing title..." case states this correctly for the
+    // identical shape), so `'   '` is trimmed to `''` and then converted to `null` before this
+    // request's rules() ever run - the same present-null shape the blank-title case above
+    // exercises, not a second one surviving as whitespace. `required` refuses it via its
+    // `is_null($value)` branch rather than its `trim($value) === ''` one, and - exactly as the
+    // comment on the blank-title case above already says - `string` independently refuses the
+    // same null too. The message pin is what proves `required`'s own message is among the
+    // errors; it does not claim `required` is the only rule failing, only that it is one of
+    // them, same as the case above.
     withToken($access)->patchJson("/api/v1/plans/{$plan->id}", ['title' => '   '])
         ->assertStatus(422)
         ->assertJsonValidationErrors(['title' => 'The title field is required.']);

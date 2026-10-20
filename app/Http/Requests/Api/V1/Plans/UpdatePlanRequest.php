@@ -13,14 +13,21 @@ final class UpdatePlanRequest extends FormRequest
      * Three writable fields, each sometimes|required - UpdateProfileRequest's shape. Omitting a
      * key leaves the value unchanged; sending an empty one is a 422, because the GLOBAL
      * ConvertEmptyStringsToNull middleware turns '' into null before any rule runs and `required`
-     * then refuses it. A whitespace-only value ('   ') survives that middleware (exact-match
-     * only) and would skip every NON-implicit rule under
-     * Validator::presentOrRuleIsImplicit() - but `required` is itself one of Laravel's implicit
-     * rules, so it always runs, and its own trim($value) === '' check refuses a whitespace-only
-     * value the same way it refuses ''. Measured via UpdatePlanTest's dedicated whitespace case,
-     * rather than assumed: this is the shape that made an optional field a 500 elsewhere in this
-     * wave (an enum `from()` fed by a FormRequest field that had no implicit rule to force it to
-     * run), and every field here is safe specifically because `required` is on it. An empty body
+     * then refuses it (validateRequired()'s own `is_null($value)` branch).
+     *
+     * CORRECTED (H9): this docblock used to claim a whitespace-only value ('   ') survives that
+     * middleware - ConvertEmptyStringsToNull's transform() is an exact match, `$value === '' ?
+     * null : $value` - and so skips every NON-implicit rule under
+     * Validator::presentOrRuleIsImplicit(), with `required` rescuing it only because `required`
+     * is itself implicit. Measured false for any real request: TrimStrings runs BEFORE
+     * ConvertEmptyStringsToNull in Laravel 13's default global stack, so `'   '` is trimmed to
+     * `''` first and then converted to `null` - it never reaches the validator as whitespace.
+     * `required` still refuses it either way (its `is_null($value)` branch fires instead of its
+     * `trim($value) === ''` branch), so UpdatePlanTest's dedicated case still 422s with the same
+     * message - only the mechanism it was attributed to has moved. This is the shape that made
+     * an optional field a 500 elsewhere in this wave (an enum `from()` fed by a FormRequest field
+     * that had no implicit rule to force it to run), and every field here is safe specifically
+     * because `required` is on it, regardless of which of its two branches fires. An empty body
      * is valid and writes nothing.
      *
      * Not writable, and each for its own reason: owner_id (ownership moves only through spec

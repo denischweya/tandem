@@ -120,13 +120,21 @@ final readonly class EloquentPlanActivityRepository implements PlanActivityRepos
 
     /**
      * §6.2 caps a page at 100, matching both sibling repositories' own pageSize() - the
-     * repository is what would issue the unbounded query. limit = 0 is reachable unvalidated:
-     * a whitespace-only ?limit= skips every non-implicit validation rule on that field, and
-     * (int) ' ' is 0. Without the max(1, ...) arm, a Plan with real activity would return a
-     * page of zero rows and a null cursor instead of one row and a cursor to the rest - the
-     * same defect PlanMemberRepositoryTest's own
-     * "clamps a limit of 0 up to one row rather than returning an empty page" case pins for
-     * its sibling.
+     * repository is what would issue the unbounded query.
+     *
+     * CORRECTED (H9): this used to attribute a reachable limit = 0 to "a whitespace-only
+     * ?limit= skips every non-implicit validation rule on that field, and (int) ' ' is 0".
+     * Measured false for any real request: TrimStrings runs before ConvertEmptyStringsToNull,
+     * so a whitespace-only `?limit=` arrives as a PRESENT NULL, not the literal string ' ' -
+     * and ListPlanActivityRequest's own `limit` rule carries `integer` with deliberately no
+     * `nullable` (Amendment 7), so that present null already 422s before this method is ever
+     * called. The path that really reaches limit = 0 is a caller that bypasses rules()
+     * entirely and constructs `PageQuery` directly - nothing in listForPlan()'s own interface
+     * stops that. Without the max(1, ...) arm, such a caller would get a page of zero rows and
+     * a null cursor for a Plan that does have activity, instead of one row and a cursor to the
+     * rest - the same defect PlanMemberRepositoryTest's own "clamps a limit of 0 up to one row
+     * rather than returning an empty page" case pins for its sibling, both of them exercising
+     * the direct-construction path rather than an HTTP request.
      */
     private static function pageSize(int $limit): int
     {
