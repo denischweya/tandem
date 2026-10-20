@@ -51,9 +51,10 @@ it('holds the one-owner invariant across a transfer, a removal and a departure',
             // role is compared as the raw string column here, never through MemberRole::from()
             // or ::tryFrom(): plan_members.role is a plain string under no CHECK and with no
             // Eloquent cast, so a value no enum case recognises simply fails to match 'owner'.
-            // This assertion therefore leans on neither of the two policies the use cases apply
-            // to that column - the fail-closed tryFrom() and the deliberately loud from() - and
-            // a corrupt role can only ever make this count smaller, never larger.
+            // This assertion therefore leans on neither the fail-closed tryFrom() that
+            // RemoveMember and ChangeMemberRole apply to that column nor the deliberately loud
+            // from() that the member list applies, and a corrupt role can only ever make this
+            // count smaller, never larger.
             expect($ownerRows)->toHaveCount(
                 1,
                 "{$when}: active Plan {$activePlan->id} must have exactly one active owner row",
@@ -81,8 +82,10 @@ it('holds the one-owner invariant across a transfer, a removal and a departure',
     // departure below is the transition that is supposed to show §8.3's asymmetry - LeavePlan
     // writes `left` and deliberately leaves `role` alone, where RemoveMember demotes - and a
     // row seeded as `member` reads `member` under both branches, so it cannot tell them apart.
-    // Seeded as an admin, the surviving `admin` on a `left` row is the asymmetry itself, and it
-    // is also what makes the actor switch before that request observable at all.
+    // Seeded as an admin, the surviving `admin` on a `left` row IS the asymmetry. It is the
+    // row's `status` and not its role that makes the actor switch before that request
+    // observable - measured by deleting that forgetAuthenticatedUser() call, which reds on
+    // `removed` against `left` - so the two assertions carry different halves of the claim.
     $bystanderMembership = member($plan, $bystander, MemberRole::Admin, '2026-01-03 10:00:00+00');
 
     // A second, untouched Plan with a different owner, so the count assertion above is a real
@@ -158,8 +161,8 @@ it('holds the one-owner invariant across a transfer, a removal and a departure',
 
     // The same branch assertion from the other side, and the half that makes §9.4's row 4
     // observable rather than argued: the departing admin's row keeps `admin` on a `left` row,
-    // where the removal above demoted. Both halves of the asymmetry, in one test, one
-    // transition apart.
+    // where the removal above demoted. Both halves of the asymmetry, observed in one test
+    // rather than argued across two.
     $bystanderMembership->refresh();
 
     expect($bystanderMembership->status)
@@ -169,8 +172,8 @@ it('holds the one-owner invariant across a transfer, a removal and a departure',
 
     $assertInvariant('after a member left', 2);
 
-    // And the three transitions really did happen, so none of the four checks above was
-    // asserting the same unchanged state four times over.
+    // And every transition really did happen, so no invariant check above was asserting the
+    // same unchanged state over and over.
     expect(PlanMember::query()->where('plan_id', $plan->id)->where('status', MemberStatus::Active->value)->count())
         ->toBe(1, 'one of three members remains active: the new owner');
     expect(PlanMember::query()->where('plan_id', $plan->id)->where('status', MemberStatus::Removed->value)->count())
@@ -178,7 +181,7 @@ it('holds the one-owner invariant across a transfer, a removal and a departure',
     expect(PlanMember::query()->where('plan_id', $plan->id)->where('status', MemberStatus::Left->value)->count())
         ->toBe(1, 'the bystander left');
 
-    // The second Plan was never addressed by any of the three requests, and nothing above would
+    // The second Plan was never addressed by any request above, and nothing else here would
     // notice if a transition had reached across to it: the invariant holds for a Plan whose
     // owner row was rewritten correctly as well as for one nobody touched.
     expect($otherPlan->refresh()->owner_id)->toBe($otherFounder->id, 'the untouched Plan kept its owner');
@@ -202,8 +205,8 @@ it('scopes the invariant to active Plans, because spec §9.3 branch 3 produces o
     // invariant agrees with what that endpoint really produces. DELETE /me is deliberately not
     // behind `verified` - the route file records why - so no verification step is needed here.
     //
-    // One actor and one request, so no forgetAuthenticatedUser() is needed anywhere in this
-    // case: the cached guard only misleads a test that switches actor.
+    // No actor switch anywhere in this case, so no forgetAuthenticatedUser() is needed: the
+    // cached guard only misleads a test that changes actor.
     withToken($token)->deleteJson('/api/v1/me')->assertNoContent();
 
     $plan->refresh();
@@ -309,9 +312,9 @@ it('agrees with spec §9.3 automatic transfer: the promoted successor is the one
     // (their row is `left`), and §9.3's demotion is what keeps the published `role` honest.
     //
     // The list is ordered joined_at ascending, so the earlier-joining plain member comes first
-    // and the promoted admin second. The published role is the one place in this file that does
-    // depend on a policy for plan_members.role: listActiveMembers() converts with
-    // MemberRole::from(), which is loud by a recorded human ruling rather than fail-closed.
+    // and the promoted admin second. The published role is where this file does depend on a
+    // policy for plan_members.role: listActiveMembers() converts with MemberRole::from(),
+    // which is loud by a recorded human ruling rather than fail-closed.
     withToken($adminToken)->getJson("/api/v1/plans/{$plan->id}/members")
         ->assertOk()
         ->assertJsonCount(2, 'data')
