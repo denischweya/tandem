@@ -233,9 +233,10 @@ it('refuses an unknown status with a 422 naming status', function (): void {
 });
 
 // Three cases below close the route-level half of the paging surface a FormRequest-level test
-// cannot reach on its own: what a bare, present-and-null or over-cap query string actually does
-// through the real HTTP kernel, with the global TrimStrings/ConvertEmptyStringsToNull
-// middleware in front of validation rather than bypassed by a hand-built request.
+// cannot reach on its own: what a bare or a present-and-null query string actually does through
+// the real HTTP kernel, with the global TrimStrings/ConvertEmptyStringsToNull middleware in
+// front of validation rather than bypassed by a hand-built request. (The over-cap case - a
+// present `limit` above the ceiling - is covered separately, above these three.)
 
 it('defaults limit to 25 when none is given, even when more Plans than that exist', function (): void {
     $actor = userWithPassword();

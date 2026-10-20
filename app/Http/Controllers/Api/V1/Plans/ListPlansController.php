@@ -36,18 +36,29 @@ final class ListPlansController
     // different schema.
     //
     // next_cursor is NOT read as a bare `$page->nextCursor`, and that is measured rather than
-    // a style choice: the page DTO carries a `@template` tag, and Scramble's ClassAnalyzer
-    // wraps every one of its non-static properties - items AND nextCursor alike - in its own
-    // auto-generated per-property template type, bounded by that property's native/phpdoc
-    // type. This use case's own `@return` tag supplies one generic argument, which resolves
-    // only the template bound to `items`; the second, unrelated template synthesised for
-    // `nextCursor` is left unsubstituted, and handing that straight to `additional()` makes
-    // `artisan scramble:export --fail-on-unknown` refuse the whole document with
-    // "Schema `UnknownType` is not allowed" at this exact line. The ternary forces a fresh,
-    // concrete type per branch instead - a literal null, and a `(string)` cast whose result
-    // type does not depend on the unresolved template of its operand - which is the same
-    // device PlanResource's three date fields already use, for the same reason, one property
-    // deeper. The cast is a no-op at runtime: the branch it sits in already excludes null.
+    // a style choice. Scramble's ClassAnalyzer (Infer/Analyzer/ClassAnalyzer.php) wraps EVERY
+    // non-static property of ANY class in its own auto-generated per-property template type,
+    // regardless of whether that class declares `@template` at all - so a bare read of this
+    // property hands `additional()` an unresolved template, and `artisan scramble:export
+    // --fail-on-unknown` refuses the whole document with "Schema `UnknownType` is not allowed"
+    // at this exact line; without --fail-on-unknown, the same unresolved template silently
+    // publishes as a bare `{"type":"string"}`, losing nullability from the contract instead of
+    // refusing to generate it.
+    //
+    // ROUND 1 CORRECTION: an earlier version of this comment blamed the use case's `@return`
+    // tag supplying one generic argument where the DTO structurally needs two - a "widen the
+    // generic" framing. Measured false: the failure is insensitive to the generic argument
+    // count. No generic argument at all, a declared accessor on the DTO returning `?string`,
+    // and removing the DTO's own `@template` tag entirely all fail identically. The operative
+    // fact is simply that ANY read of a property on this DTO yields ClassAnalyzer's unresolved
+    // per-property template - there is no argument-count fix to reach for.
+    //
+    // The ternary forces a fresh, concrete type per branch instead - a literal null, and a
+    // `(string)` cast whose result type does not depend on the unresolved template of its
+    // operand. PlanResource's three date fields use the identical device, one property deeper
+    // (that file carries no comment explaining why; only the mechanism is shared here, not any
+    // stated reason). The cast is a no-op at runtime: the branch it sits in already excludes
+    // null.
     public function __invoke(ListPlansRequest $request, ListPlans $listPlans): AnonymousResourceCollection
     {
         $user = $this->requireAuthenticatedUser($request->user(), 'GET /plans');

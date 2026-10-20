@@ -251,11 +251,13 @@ it('declares every error status the application itself raises', function (): voi
     // response: a $ref response object has neither key.
     //
     // Measured at tandem-api@02f5418 as five and thirteen; re-measured against the regenerated
-    // document at this commit, now fifteen and twenty - the table and the inferred $ref count
+    // document at this commit, now fifteen and twenty-two - the table and the inferred $ref count
     // both grow every time a task adds a row, so this is a re-verified current fact, not the
-    // original snapshot. The fifteen inline non-2xx responses in the committed document are
-    // exactly the fifteen rows above, and the twenty $ref ones are exactly the inferred 401s,
-    // 422s and verify-email's authorize()-derived 403.
+    // original snapshot (round 1: GET /plans added one inferred 401, from auth:sanctum, and one
+    // inferred 422, from ListPlansRequest, moving twenty to twenty-two; it added no inline
+    // non-2xx response of its own, so fifteen did not move). The fifteen inline non-2xx responses
+    // in the committed document are exactly the fifteen rows above, and the twenty-two $ref ones
+    // are exactly the inferred 401s, 422s and verify-email's authorize()-derived 403.
     //
     // This is the assertion that makes a Wave 2 endpoint shipped without its row fail here
     // instead of passing quietly. What actually governs inference is the list two paragraphs up
@@ -334,7 +336,8 @@ it('declares every error status the application itself raises', function (): voi
 });
 
 it('wraps every success response in the data envelope', function (): void {
-    // True of all fifteen operations today and asserted nowhere. Every client's response handling
+    // True of all sixteen operations today and asserted nowhere (round 1: GET /plans moved this
+    // from fifteen - the sum below, 11 + 5, already reads sixteen). Every client's response handling
     // depends on it, tandem-shared's response parsers index through ['data'] to prove it, and
     // the envelope comes from Laravel's JsonResource rather than from anything in this
     // codebase - so it could change under a framework upgrade with the byte gate green.
@@ -492,8 +495,11 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     //     spot - this half is insurance on a config value and proves nothing today, which is
     //     said plainly here for the same reason OpenApiEnvironmentTest's docblock says it.
     //
-    // Three positions are deliberately NOT walked by name. paths.*.*.responses.*.description (29
-    // strings today, two of them GET /plans/{plan}'s 200 and 404 - Task 15),
+    // Three positions are deliberately NOT walked by name. paths.*.*.responses.*.description (30
+    // strings today, round 1 - two of them GET /plans/{plan}'s 200 and 404 from Task 15, and this
+    // count moves with every inline or inferred response description the document gains - the
+    // recursive walk's own comment, further down this file, derives the same 30 as one third of
+    // its 39),
     // components.responses.* (7), and info.description / servers.0.description (2) are
     // AUTHORED - every one comes from a #[Response] attribute, from Scramble's own fixed
     // strings, or from config/scramble.php - never from a docblock harvest. A path-level
@@ -509,12 +515,18 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // Visitors/PhpDocResolver.php) attaches a parsed docblock to ANY Expr\ArrayItem carrying a
     // `//` or `/** */` comment, with no scoping to FormRequest::rules() at all - the identical
     // mechanism already walked into components.schemas.*.properties above, just landing at a
-    // path this test has never named. Wave 2 writes no such resource yet (there is no list
-    // endpoint and no `next_cursor` anywhere in today's document), so the named walk above
-    // cannot be extended to a path that does not exist to prove it visits correctly. A comment
-    // above a future 'next_cursor' => $page->nextCursor would publish there with $prose and
-    // $parameterCount both unchanged - which is exactly the leak the count below exists to
-    // catch, in the only way a blind spot that has no name yet CAN be caught.
+    // path this test has never named.
+    //
+    // ROUND 1, PROVEN rather than hypothetical: GET /plans (the first paginated list) now
+    // exists, and its controller's ->additional(['meta' => ['next_cursor' => ...]]) now gives
+    // this position something to leak. A break step placed a `//` comment immediately above
+    // that 'next_cursor' key and regenerated: neither $prose nor $parameterCount above moved -
+    // both stayed green, exactly as the untested version of this paragraph predicted - and the
+    // leaked comment published at
+    // paths./plans.get.responses.200.content.application/json.schema.properties.meta.properties.next_cursor.description,
+    // which is a path the recursive walk below does name (it is one of the 39), so that
+    // assertion caught it and named the exact position. The comment was removed and the
+    // document regenerated back to this committed state before this test was trusted again.
     //
     // One blind spot remains in the named walk, stated rather than implied: it descends exactly
     // one level into components.schemas.*.properties, so a nested object's field description
@@ -727,10 +739,33 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
 
 it('publishes the Plans list query parameters exactly as ListPlansRequest states them', function (): void {
     // The parallel of "publishes required-versus-optional exactly as the rules state it", for
-    // the position that test cannot reach: a @query key is published as a
-    // paths.*.*.parameters[n] entry and never as a components schema, so no assertion over
-    // components.schemas can see it. Derived from rules() rather than restated, so a fourth
-    // parameter cannot be added without appearing here.
+    // the position that test cannot reach: every rules() key of a BODYLESS-method FormRequest
+    // (GET here) is published as a paths.*.*.parameters[n] entry and never as a components
+    // schema, so no assertion over components.schemas can see it. ROUND 1 CORRECTION: that is
+    // NOT because of @query - RequestBodyExtension::handle() takes an early-return branch for
+    // get/delete/head that converts every extracted parameter to a query parameter
+    // unconditionally, before @query/isInQuery is ever consulted. @query is inert on this route
+    // (confirmed: removing it from one key leaves the document byte-identical; removing all
+    // three leaves it byte-identical, md5 unchanged - this task's report has both measurements).
+    //
+    // Derived from rules() rather than restated, so a fourth parameter cannot be added without
+    // appearing here - but two of the four checks below cannot fail on a route shaped like this
+    // one, and that needs saying rather than leaving implied:
+    //
+    //   - the key-set equality two lines down is nearly as weak: Scramble publishes every
+    //     rules() key automatically for a bodyless method, so adding or removing a rule key
+    //     moves both sides of that comparison together.
+    //   - the `in === 'query'` check inside the loop below is fully tautological: it is `query`
+    //     for every parameter extracted from a bodyless method, independent of anything
+    //     ListPlansRequest declares.
+    //
+    // The three checks that do carry force: the loop's required-flag check (derived from
+    // `sometimes`, broken deliberately by dropping it from `limit` and watched to red - this
+    // task's report has the output) and the two assertions after the loop - status's full enum
+    // (also broken deliberately, by narrowing the rule, and watched to red) and limit's published
+    // maximum against PageQuery::MAX_LIMIT (a direct equality against a named constant, which
+    // needs no break step to be load-bearing: change the constant or stop publishing the
+    // keyword and this fails without any mutation at all).
     $rules = (new ListPlansRequest)->rules();
 
     $parameters = collect(Arr::wrap(data_get(openApiDocument(), 'paths./plans.get.parameters')))
