@@ -455,6 +455,34 @@ it('refuses to publish a member whose profile row is missing', function (): void
         ->toThrow(RuntimeException::class, 'has no user_profiles row');
 });
 
+it('refuses to publish a member view whose profile row is missing', function (): void {
+    // The sibling of the case above, for findActiveMemberView() rather than listActiveMembers(),
+    // and it exists because that method shipped with no force holding its is_string guard open at
+    // all: the guard is NOT a narrowing - getAttribute() returns mixed, and mixed-into-string is
+    // a level-nine check while this project is level 8 with no checkExplicitMixed - so deleting
+    // the guard left phpstan at errors: 0 and the whole suite green. This case is the force.
+    //
+    // What it pins is the DIAGNOSIS, not the refusal. With the guard deleted the member is still
+    // not published: PlanMemberView::fromMember()'s $displayName parameter is a typed string
+    // under strict_types, null reaches it, and the result is a TypeError and a 500 either way.
+    // So the toThrow() below has to name the RuntimeException and its sentence, not merely that
+    // something was thrown - a toThrow(Throwable::class) here would be green under the deletion
+    // and would prove nothing.
+    //
+    // Same fixture as the sibling and for the same measured reason: User::factory()->create()
+    // with no ->hasProfile() is the persisted user with no user_profiles row, which the
+    // constraints permit (user_profiles.user_id is UNIQUE NOT NULL on the PROFILE side, so at
+    // most one profile per user and never at least one) and which only registration - the one
+    // path that creates a user and writes the profile in the same breath - makes unreachable
+    // through the application.
+    $plan = Plan::factory()->create();
+    $user = User::factory()->create();
+    member($plan, $user, MemberRole::Member, '2026-01-01 10:00:00');
+
+    expect(fn () => app(PlanMemberRepository::class)->findActiveMemberView($plan->id, $user->id))
+        ->toThrow(RuntimeException::class, 'has no user_profiles row');
+});
+
 it("raises a ValueError when a member row's role is corrupt, pinning the ruling's deliberate 500", function (): void {
     // R2-1. A human ruling, received 2026-10-19, keeps MemberRole::from() on
     // plan_members.role rather than switching to the whereIn(...) exclusion

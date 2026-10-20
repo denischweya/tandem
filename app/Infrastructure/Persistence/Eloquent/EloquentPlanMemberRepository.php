@@ -108,12 +108,27 @@ final readonly class EloquentPlanMemberRepository implements PlanMemberRepositor
 
         $displayName = $row->getAttribute('display_name');
 
-        // The one narrowing this method does itself, for the reason listActiveMembers() states
-        // at length: user_profiles.user_id is UNIQUE NOT NULL on the PROFILE side, which gives
-        // at most one profile per user and never at least one, so a persisted user with no
-        // profile row is exactly what User::factory()->create() produces - and the left join
-        // then yields null here. Throwing names the member whose profile is missing; a
-        // `(string)` coercion in its place would publish an empty display_name for a real one.
+        // NOT a narrowing, and the analyser does not hold this open: getAttribute() returns
+        // mixed, and mixed-into-string is a level-NINE check while this project is level 8 with
+        // no checkExplicitMixed. Measured by deleting this block and nothing else: phpstan stays
+        // at errors: 0 and the whole suite stays green. What holds it open is one named test,
+        // "refuses to publish a member view whose profile row is missing", and nothing else.
+        //
+        // And what it buys is the DIAGNOSIS rather than the refusal, which is worth knowing
+        // before anyone trims it: with the throw deleted the member is still not published,
+        // because PlanMemberView::fromMember()'s $displayName parameter is a typed string under
+        // strict_types and null reaches it - a TypeError naming that parameter, and a 500 either
+        // way. This throw is what turns that into a message naming the plan_members row and the
+        // user whose profile is missing. A `(string)` coercion in its place is the version that
+        // would publish an empty display_name for a real member, and that is the option being
+        // refused here.
+        //
+        // The constraints are not what makes the case unreachable, and a reader who believes they
+        // are will skip this check somewhere it is load-bearing: user_profiles.user_id is UNIQUE
+        // NOT NULL on the PROFILE side, which gives at most one profile per user and never at
+        // least one, so a persisted user with no profile row is exactly what
+        // User::factory()->create() produces. Registration writing the profile row in the same
+        // breath as the user is the only thing that makes it unreachable through the application.
         if (! is_string($displayName)) {
             throw new RuntimeException(
                 "plan_members row {$row->id} has no user_profiles row for user {$row->user_id}, "

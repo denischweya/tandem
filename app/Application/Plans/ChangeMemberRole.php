@@ -35,12 +35,24 @@ final readonly class ChangeMemberRole
      * that "a caller who may never edit gets the same answer whatever the Plan's lifecycle is
      * doing", while this method cannot authorize first at all - canChangeRole() takes the
      * TARGET's role, so the target has to be resolved first, and resolving a {user} on a Plan
-     * that is already read-only is work with no possible outcome. The consequence is that an
-     * admin asking for a role change on an archived Plan is told 409 here and would be told 403
-     * by the same actor's PATCH /plans/{plan}. Nothing in spec §5.3 or §8.2 picks between the
-     * two, and NO TEST IN ChangeMemberRoleTest DISTINGUISHES THEM - every archived case in it
-     * has the owner as the actor, for whom both orders answer 409. Worth a ruling if the two
-     * routes are ever asked to agree.
+     * that is already read-only is work with no possible outcome.
+     *
+     * The consequence, measured on an archived Plan against all four actors rather than reasoned
+     * about: a PLAIN MEMBER is told 409 here and 403 by PATCH /plans/{plan}. An ADMIN is told 409
+     * by BOTH, because an admin may edit a Plan - allows(Admin, Capability::EditPlan) is true, so
+     * the role check that route runs first does not refuse them - and the OWNER is told 409 by
+     * both as well. The plain member is the only actor for whom the two routes disagree.
+     *
+     * Neither order discloses anything, which is what makes this a consistency question rather
+     * than a security one: the 409 is reachable only PAST findVisibleTo(), so only an active
+     * member of the Plan can ever see it - a non-member gets 404 "Plan not found." - and
+     * GET /plans/{plan} already answers that same member 200 with status "archived", because
+     * PlanResource publishes status unconditionally. UpdatePlan's docblock records the same
+     * argument for its own order.
+     *
+     * Nothing in spec §5.3 or §8.2 picks between the two, and NO TEST IN ChangeMemberRoleTest
+     * DISTINGUISHES THEM - every archived case in it has the owner as the actor, for whom both
+     * orders answer 409. Worth a ruling if the two routes are ever asked to agree.
      *
      * @throws PlanNotVisible the actor cannot see this Plan (spec §5.1)
      * @throws PlanNotEditable the Plan is not active (spec §5.3)

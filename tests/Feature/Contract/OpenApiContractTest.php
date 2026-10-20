@@ -28,7 +28,9 @@ use Illuminate\Validation\Rules\Password;
  * committed bytes match a fresh generation, so any defect the generator reproduces passes it
  * for ever - and worse, the standard response to "openapi.json is out of date" is
  * `make openapi && git add openapi.json`, which commits whatever the generator now produces.
- * One line vanishing from a 225-line generated file is easy to wave through.
+ * One line vanishing from a generated document of well over a thousand is easy to wave
+ * through. (No line count here: this one said "225-line" while the committed document had grown
+ * past 1400, which is what an unasserted prose count does.)
  *
  * Both facts below shipped broken-but-green exactly that way, which is why they are asserted
  * behaviourally and derived from the rules rather than restated as literals: a test that
@@ -538,7 +540,8 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // components.responses.* (7), and info.description / servers.0.description (2) are
     // AUTHORED - every one comes from a #[Response] attribute, from Scramble's own fixed
     // strings, or from config/scramble.php - never from a docblock harvest. A path-level
-    // allow-list over ~50 authored strings cannot catch the only defect available there (an
+    // allow-list over every authored string in the document cannot catch the only defect
+    // available there (an
     // internal citation inside prose that is meant to be published), so it would be fifty lines
     // of literal buying nothing.
     //
@@ -559,9 +562,16 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // both stayed green, exactly as the untested version of this paragraph predicted - and the
     // leaked comment published at
     // paths./plans.get.responses.200.content.application/json.schema.properties.meta.properties.next_cursor.description,
-    // which is a path the recursive walk below does name (it is one of the 39), so that
-    // assertion caught it and named the exact position. The comment was removed and the
-    // document regenerated back to this committed state before this test was trusted again.
+    // which is a position the recursive walk below REACHES, so that assertion caught it - as an
+    // ADDITION to its enumerated set, which is exactly what toEqualCanonicalizing reports - and
+    // named the exact position. The comment was removed and the document regenerated back to this
+    // committed state before this test was trusted again.
+    //
+    // No count in that sentence, deliberately. It read "it is one of the 39" and was wrong twice
+    // over: 39 was the authored-strings subtotal at a commit three tasks back, and a leaked path is
+    // never a MEMBER of the enumerated set - it is what the diff adds to it, which is the opposite
+    // of how the gate works. A prose count nothing computes is unfalsifiable, so prefer deleting it
+    // to maintaining it.
     //
     // One blind spot remains in the named walk, stated rather than implied: it descends exactly
     // one level into components.schemas.*.properties, so a nested object's field description
