@@ -3,6 +3,8 @@
 use App\Application\Auth\InvalidCredentials;
 use App\Application\Auth\InvalidPasswordResetToken;
 use App\Application\Auth\InvalidRefreshToken;
+use App\Application\Plans\ActorEmailNotVerified;
+use App\Application\Plans\OwnerCannotLeave;
 use App\Application\Plans\PlanMemberNotFound;
 use App\Application\Plans\PlanNotEditable;
 use App\Application\Plans\PlanNotVisible;
@@ -71,6 +73,16 @@ return Application::configure(basePath: dirname(__DIR__))
             // argument as the entries above, and the only one of the three Plan exceptions that
             // is reachable by a caller who HAS already proved they can see the Plan.
             PlanMemberNotFound::class,
+            // An owner tapping "leave" on their own Plan - the one refusal in this wave with an
+            // actionable body, which is itself evidence that users try it. Expected control flow
+            // on the same argument as the entries above, and reporting it at ERROR would bury the
+            // Log::warning() security lines on the same channel.
+            OwnerCannotLeave::class,
+            // An unverified actor removing another member. Exactly as expected as every
+            // EnsureEmailIsVerified refusal on the gated routes, which Laravel never reports
+            // either - this one differs only in living in the Application layer, so it would
+            // otherwise be the one `verified` refusal in the API that logged at ERROR.
+            ActorEmailNotVerified::class,
         ]);
 
         $exceptions->render(fn (InvalidCredentials $e) => new JsonResponse(
@@ -125,5 +137,27 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (PlanNotEditable $e) => new JsonResponse(
             ['message' => 'This Plan has been archived.'],
             409,
+        ));
+
+        // 403 with its own body, not Laravel's generic one, because this is the one refusal in
+        // the wave that has an exit - see OwnerCannotLeave. A render() closure and not a bare
+        // AuthorizationException: that class overwrites the message with its own default,
+        // "This action is unauthorized.", and the actionable sentence is the whole point.
+        // Encoded compactly like every closure above.
+        $exceptions->render(fn (OwnerCannotLeave $e) => new JsonResponse(
+            ['message' => 'Transfer ownership or archive this Plan before leaving it.'],
+            403,
+        ));
+
+        // The same status and the same message EnsureEmailIsVerified produces, so that the one
+        // route whose `verified` gate lives in the Application layer (spec §8.3's DELETE, which
+        // is two use cases on one URI) is indistinguishable from the routes where the middleware
+        // does it. The only difference is whitespace - the middleware's abort(403, ...) goes
+        // through Handler::prepareJsonResponse(), which encodes with JSON_PRETTY_PRINT, while
+        // this closure encodes compactly - and no JSON client and no test assertion in this
+        // suite can see it, because both decode.
+        $exceptions->render(fn (ActorEmailNotVerified $e) => new JsonResponse(
+            ['message' => 'Your email address is not verified.'],
+            403,
         ));
     })->create();

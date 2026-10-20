@@ -5,6 +5,8 @@ declare(strict_types=1);
 use App\Application\Auth\InvalidCredentials;
 use App\Application\Auth\InvalidPasswordResetToken;
 use App\Application\Auth\InvalidRefreshToken;
+use App\Application\Plans\ActorEmailNotVerified;
+use App\Application\Plans\OwnerCannotLeave;
 use App\Application\Plans\PlanMemberNotFound;
 use App\Application\Plans\PlanNotEditable;
 use App\Application\Plans\PlanNotVisible;
@@ -50,11 +52,18 @@ it('does not report the three expected auth failures, but still reports a genuin
 });
 
 /**
- * The Plan surface's own control-flow exceptions, on the same argument as the auth ones above:
- * a non-member probing a Plan id (PlanNotVisible), a client acting on a Plan that was archived
- * while its screen was open (PlanNotEditable), and an owner naming a {user} who is no longer an
- * active member (PlanMemberNotFound) all happen at a rate that scales with traffic rather than
- * with bugs.
+ * The Plan surface's own control-flow exceptions, on the same argument as the auth ones above.
+ * Each happens at a rate that scales with traffic rather than with bugs: a non-member probing a
+ * Plan id (PlanNotVisible), an owner naming a {user} who is no longer an active member
+ * (PlanMemberNotFound), a client acting on a Plan that was archived while its screen was open
+ * (PlanNotEditable), an owner tapping "leave" on their own Plan (OwnerCannotLeave), and an
+ * unverified actor removing another member (ActorEmailNotVerified) - the last being the one
+ * `verified` refusal in this API raised from the Application layer rather than by
+ * EnsureEmailIsVerified, which Laravel never reports either.
+ *
+ * Named rather than counted: the previous wording said "the three expected Plan refusals" in
+ * both the name and the assertion message, and this task's two entries falsified both. A count
+ * of the list below it decays on the next task's entry; the list itself does not.
  *
  * Exercises report() directly rather than an HTTP round trip, exactly as the block above does:
  * the behaviour under test is bootstrap/app.php's dontReport() list and the container-bound
@@ -67,20 +76,23 @@ it('does not report the three expected auth failures, but still reports a genuin
  * captured record's `message` is the EMPTY STRING, because a no-argument RuntimeException
  * subclass carries none - it is the record's `context.exception` entry, which PHPUnit's exporter
  * prints as "App\Application\Plans\PlanMemberNotFound Object #NNNN (...)", that names the class.
- * So a red here is diagnosable, but only by reading the exported object and not the assertion.
- * Splitting this into one block per exception would fix that properly and is not this task's.
+ * Re-measured on OwnerCannotLeave by this task's break step, with the same result. So a red here
+ * is diagnosable, but only by reading the exported object and not the assertion. Splitting this
+ * into one block per exception would fix that properly and is still not any one task's.
  */
-it('does not report any of the three expected Plan refusals', function (): void {
+it('does not report the Plan refusals that are expected control flow', function (): void {
     $handler = app(ExceptionHandler::class);
 
     $logs = captureLogs();
 
     $handler->report(new PlanNotVisible);
-    $handler->report(new PlanNotEditable);
     $handler->report(new PlanMemberNotFound);
+    $handler->report(new PlanNotEditable);
+    $handler->report(new OwnerCannotLeave);
+    $handler->report(new ActorEmailNotVerified);
 
     expect(capturedLogRecords($logs))->toBe(
         [],
-        'PlanNotVisible, PlanNotEditable and PlanMemberNotFound must all three be in dontReport()',
+        'PlanNotVisible, PlanMemberNotFound, PlanNotEditable, OwnerCannotLeave and ActorEmailNotVerified must every one be in dontReport()',
     );
 });

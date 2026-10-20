@@ -5,14 +5,18 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Plans;
 
 use App\Application\Plans\ChangeMemberRole;
+use App\Application\Plans\LeavePlan;
 use App\Application\Plans\ListPlanMembers;
+use App\Application\Plans\RemoveMember;
 use App\Domain\Plans\MemberRole;
 use App\Http\Controllers\Concerns\RequiresAuthenticatedUser;
 use App\Http\Requests\Api\V1\Plans\ChangeMemberRoleRequest;
 use App\Http\Requests\Api\V1\Plans\ListPlanMembersRequest;
 use App\Http\Resources\Api\V1\Plans\PlanMemberResource;
 use Dedoc\Scramble\Attributes\Response as ResponseDoc;
+use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Http\Response;
 
 final class PlanMemberController
 {
@@ -107,5 +111,52 @@ final class PlanMemberController
             $user,
             MemberRole::from($request->string('role')->toString()),
         ));
+    }
+
+    // Spec §8.3: spec §6 names two use cases and spec §8 publishes one route. The dispatch is
+    // here because the question it asks - is {user} the actor? - needs nothing but the request,
+    // and because the two use cases that follow are genuinely different rules with different
+    // authorization, different written status and different answers on an archived Plan.
+    //
+    // strcasecmp(), not ===: Str::uuid7() emits lowercase, so an upper-cased self id would
+    // otherwise take the RemoveMember branch, where canRemoveMember(Member, Member) is false -
+    // i.e. a member refused 403 for leaving their own Plan. No refusal depends on this: every
+    // actor-equals-target pair is false for canRemoveMember, and the Owner is refused by
+    // canLeave on one branch and by canRemoveMember on the other, so this is a usability guard
+    // rather than a security one.
+    //
+    // A plain Request and no FormRequest: this route takes no input but its two path parameters.
+    // Both are raw strings, because a model type hint would put SubstituteBindings in front of
+    // the controller and answer a missing row with Laravel's own pretty-printed 404 (spec §5.1).
+    //
+    // 204, not a body: there is nothing left for the client to render, and the DELETE /me
+    // comment records the same reasoning. The return type below is Illuminate\Http\Response, the
+    // bare `Response` in this file - which is why the Scramble attribute class is the one
+    // carrying the ResponseDoc alias, exactly as in ForgotPasswordController. index()'s own
+    // comment records that the alias was written in the first action so that it would not have
+    // to be rewritten when this action landed.
+    #[ResponseDoc(status: 403, description: 'The signed-in user may not do this: the Plan owner cannot leave their own Plan, an admin cannot remove another admin or the owner, a member cannot remove anyone, and removing another member requires a verified email address. The body says which.', type: 'array{message: string}')]
+    #[ResponseDoc(status: 404, description: 'Either the Plan is not visible to the signed-in user, or the named user is not an active member of it. Both are 404 so that a non-member cannot learn whether the Plan exists; the body says which.', type: 'array{message: string}')]
+    #[ResponseDoc(status: 409, description: 'The Plan is archived, so another member cannot be removed from it. Leaving an archived Plan is always allowed.', type: 'array{message: string}')]
+    public function destroy(Request $request, string $plan, string $user, LeavePlan $leavePlan, RemoveMember $removeMember): Response
+    {
+        $actor = $this->requireAuthenticatedUser($request->user(), 'DELETE /plans/{plan}/members/{user}');
+
+        if (strcasecmp($user, $actor->id) === 0) {
+            $leavePlan->execute($actor->id, $plan);
+
+            return response()->noContent();
+        }
+
+        // The whole User and not just an id, unlike every other call out of this controller:
+        // RemoveMember reads hasVerifiedEmail(), which is spec §7.5's gate enforced in the
+        // Application layer because this one route cannot carry the middleware. The concrete
+        // App\Models\User type survives requireAuthenticatedUser()'s @template TUser without
+        // this file naming a model class, which is what keeps the "controllers touch no Eloquent
+        // and no persistence" arch rule green - MeController@destroy takes the same path into
+        // DeleteAccount::execute(User $user).
+        $removeMember->execute($actor, $plan, $user);
+
+        return response()->noContent();
     }
 }

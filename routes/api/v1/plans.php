@@ -88,4 +88,25 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::patch('/plans/{plan}/members/{user}', [PlanMemberController::class, 'update'])
         ->middleware('verified')
         ->name('plans.members.update');
+
+    // NO `verified`, and the omission is deliberate rather than an oversight - it is the one
+    // exemption in spec §7.5's table that middleware cannot express. This single URI is both
+    // LeavePlan and RemoveMember (§8.3): §7.5 gates removing another member and deliberately
+    // does not gate leaving, because a rule that can trap someone in a Plan is the wrong rule
+    // (§5.3), and route middleware runs before the controller and so before anything knows which
+    // of the two a request is. RemoveMember::execute() therefore enforces verification itself, as
+    // its first statement, refusing with the same 403 body EnsureEmailIsVerified returns;
+    // LeavePlan does not. The precedent for recording an exemption here, with its reason, is the
+    // DELETE /me comment in routes/api/v1/me.php.
+    //
+    // VerifiedGateTest's $spec75 map already carries this verdict as
+    // 'plans.members.destroy' => false, with a note disclosing it as a FALSE NEGATIVE of that
+    // map rather than a verdict: because the gate reads `verified` off this route table, it is
+    // green whether or not the in-application check exists. That makes
+    // LeaveAndRemoveMemberTest's unverified-remover case the only thing in the suite holding the
+    // check open, which is why it asserts both the refusal and its position.
+    //
+    // No `throttle:`: §13.4 limits plans-create, plan-invites and invite-lookup only.
+    Route::delete('/plans/{plan}/members/{user}', [PlanMemberController::class, 'destroy'])
+        ->name('plans.members.destroy');
 });

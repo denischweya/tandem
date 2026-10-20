@@ -128,9 +128,15 @@ it('gates exactly the Plan routes spec 7.5 names, read off the route table', fun
     // Every Plan route is authenticated. Separate again, so the failure says which of the three
     // properties broke. Unlike $gated above, this is a universal invariant rather than a per-route
     // decision - the correct value for any future row is always `true` - so a hand-written map of
-    // today's eight is enough: a later task's new authenticated route still forces that task to add
-    // its key here (the exact-map comparison fails on key count alone), and there is no verdict to
-    // get wrong once it does.
+    // the routes that exist today is enough: a later task's new authenticated route still forces
+    // that task to add its key here (the exact-map comparison fails on key count alone), and there
+    // is no verdict to get wrong once it does. (No count in that sentence: it read "today's eight"
+    // and this task's row made it nine, which is what an unasserted count does when the map below
+    // is the thing that grows.)
+    //
+    // plans.members.destroy carries no per-route `auth:sanctum` of its own - the enclosing group
+    // in routes/api/v1/plans.php applies it, and gatherMiddleware() is what this traversal reads,
+    // so a group-applied middleware counts here exactly as a route-applied one does.
     expect($authenticated)->toEqual([
         'plans.index' => true,
         'plans.store' => true,
@@ -140,6 +146,7 @@ it('gates exactly the Plan routes spec 7.5 names, read off the route table', fun
         'plans.archive' => true,
         'plans.members.index' => true,
         'plans.members.update' => true,
+        'plans.members.destroy' => true,
     ], 'every Plan route resolves an actor, including join - plan_invites.accepted_by records who accepted');
 });
 
