@@ -22,10 +22,14 @@ it('gates exactly the Plan routes spec 7.5 names, read off the route table', fun
     //
     // uri() is 'api/v1/plans/{plan}', with the prefix. OpenApiContractTest::documentedRoutes()
     // strips it because `servers` carries it in the document; this traversal reads the raw uri,
-    // so a filter written against '/plans' would match nothing, the foreach would never run, and
-    // an empty $gated would be compared against the literal below - which is the one way this
-    // test could pass having checked nothing, and the reason the comparison is an exact map
-    // rather than a subset check.
+    // so a filter written against '/plans' would match nothing and the foreach would never run.
+    // An empty $gated is NOT caught by the two expectations below on their own:
+    // array_diff_key([], $spec75) is [] and array_intersect_key($spec75, []) == [] too, so an
+    // empty $gated satisfies both of them having checked nothing - measured by forcing the
+    // filter to match no route. That is why there is a third, explicit
+    // expect($gated)->not->toBeEmpty() ahead of the completeness check below: the one assertion
+    // here whose job is to rule out "the traversal matched nothing" rather than to check what it
+    // found.
     //
     // The traversal is inline rather than a helper: a file-scope function in a test file is
     // process-global, and tests/Pest.php already carries 12 helpers while 8 more sit in 5 test
@@ -58,8 +62,8 @@ it('gates exactly the Plan routes spec 7.5 names, read off the route table', fun
     // now, closes that: a later task can only go green by OVERTURNING a row already committed in
     // this array, which is a visible, deliberate edit to a decision this task made - not by
     // filling in a blank nobody had an opinion on. Each later task's row and its own §7.5 reason
-    // is also stated in task-20-report.md, so the next controller can put it in that task's
-    // dispatch rather than re-deriving it.
+    // is recorded directly in the array below, not merely in the comment above it, so a later
+    // task's own dispatch can read its verdict straight off this file rather than re-deriving it.
     $spec75 = [
         'plans.index' => false,            // reading
         'plans.store' => true,              // creates a Plan, an owner membership and a feed row
@@ -92,6 +96,14 @@ it('gates exactly the Plan routes spec 7.5 names, read off the route table', fun
     // Also disclosed: this map says nothing about ORDER relative to ThrottleRequests. A route can
     // carry `verified` and still let an unverified, over-limit caller see 429 instead of 403 -
     // that is residual 17, pinned as its own tripwire below rather than folded in here.
+
+    // Anti-vacuity: neither expectation below would catch an empty $gated on its own (both
+    // array_diff_key and array_intersect_key against [] are themselves [] or == []), so this is
+    // the one assertion whose entire job is ruling out "the prefix filter matched no route" -
+    // the one way the two checks below could pass having checked nothing.
+    expect($gated)->not->toBeEmpty(
+        'the prefix filter matched no route under api/v1/plans, so this case checked nothing',
+    );
 
     // Completeness: every route this traversal actually finds must have a recorded verdict
     // above. This is the half that reds when the system GROWS a Plan route nobody made a §7.5
@@ -166,16 +178,21 @@ it('refuses all four Plan writes for an unverified owner, and writes nothing', f
     foreach ($refusals as $label => $call) {
         $response = $call();
 
-        $response->assertForbidden();
+        // expect()->toBe() rather than assertForbidden(): assertForbidden() carries no failure
+        // message, and this line is shared by all four iterations - a red here would otherwise
+        // read only "Expected ... [403] but received ..." with the row unnamed, because $label
+        // is reached only on the sentence assertion below, which runs only once the status has
+        // already passed.
+        expect($response->status())->toBe(
+            403,
+            "the {$label} route must be refused (403) by the verified gate",
+        );
 
         // EnsureEmailIsVerified's own sentence, from abort(403, 'Your email address is not
         // verified.') - NOT AuthorizationException's 'This action is unauthorized.', which spec
         // §5.4's table states for this row and which is the body a role failure carries. A
         // client distinguishes the two by the sentence, or by data.email_verified from GET /me,
         // which it already holds.
-        //
-        // expect() rather than assertJsonPath(), because assertJsonPath() takes no failure
-        // message and four identical iterations need the label to say which one broke.
         expect($response->json('message'))->toBe(
             'Your email address is not verified.',
             "the {$label} route must be refused by the verified gate, with the gate's own sentence",
@@ -274,13 +291,37 @@ it('spends a plans-create rate-limit token on every unverified refusal, so the 4
 
     [, , $access] = signIn($owner);
 
-    for ($i = 1; $i <= 30; $i++) {
-        withToken($access)->postJson('/api/v1/plans', [
+    $first = withToken($access)->postJson('/api/v1/plans', [
+        'title' => 'Plan 1',
+        'timezone' => 'Europe/London',
+    ]);
+
+    expect($first->status())->toBe(
+        403,
+        'request 1 of thirty must still be refused by the gate, not yet by the limiter',
+    );
+
+    // The sentence is checked once, against this first refusal, not on every one of the thirty:
+    // all thirty share the same code path (EnsureEmailIsVerified), so the status check alone -
+    // asserted on every request below, each naming its own number - already tells any iteration
+    // that takes a DIFFERENT path apart from one that does not. Repeating the body comparison
+    // thirty times would cost thirty assertions to re-confirm a fact this one already settles.
+    expect($first->json('message'))->toBe('Your email address is not verified.');
+
+    for ($i = 2; $i <= 30; $i++) {
+        $response = withToken($access)->postJson('/api/v1/plans', [
             'title' => "Plan {$i}",
             'timezone' => 'Europe/London',
-        ])
-            ->assertForbidden()
-            ->assertJsonPath('message', 'Your email address is not verified.');
+        ]);
+
+        // expect()->toBe() rather than assertForbidden(), so a red names WHICH of the thirty
+        // requests broke instead of reading only "Expected ... [403] but received ...": with no
+        // index, a status red here could not say whether the boundary had moved from 31 down to
+        // some earlier request.
+        expect($response->status())->toBe(
+            403,
+            "request {$i} of thirty must still be refused by the gate, not yet by the limiter",
+        );
     }
 
     // The measured boundary this test exists to pin: the thirty-first spent token is a 429, not
