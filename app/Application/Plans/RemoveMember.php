@@ -79,7 +79,15 @@ final readonly class RemoveMember
             // Fail closed: plan_members.role carries no CHECK, so a value no MemberRole case
             // recognises is a row this application cannot reason about, and for this endpoint's
             // purposes that is not a membership. 404, not the 500 a MemberRole::from() would
-            // raise.
+            // raise - and a corrupt role can never become an input to the matrix check below.
+            //
+            // What holds this branch open is one named test and nothing else:
+            // LeaveAndRemoveMemberTest's "answers 404 rather than 500 for a member whose role no
+            // MemberRole case recognises". Measured by swapping tryFrom() for from(): that case
+            // reds on 500, and the rest of the suite stays green. The branch is unreachable
+            // through any route - no write in this application stores a role outside the enum -
+            // so that test manufactures the row with forceFill(), which is the only way to get
+            // one past PlanMember's $guarded = ['*'].
             throw new PlanMemberNotFound;
         }
 

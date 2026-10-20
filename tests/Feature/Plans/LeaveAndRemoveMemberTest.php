@@ -413,6 +413,50 @@ it('answers 404 with the member body for a {user} who is not an active member', 
         ->toBe(0, 'none of the three refusals wrote a removal');
 });
 
+it('answers 404 rather than 500 for a member whose role no MemberRole case recognises', function (): void {
+    $owner = userWithPassword();
+    $corrupt = User::factory()->hasProfile()->create();
+    $plan = Plan::factory()->create(['owner_id' => $owner->id]);
+
+    member($plan, $owner, MemberRole::Owner, '2026-01-01 10:00:00+00');
+
+    // forceFill() to manufacture a state no route can reach: PlanMember is $guarded = ['*'] and
+    // PlanMemberFactory::role() takes a MemberRole instance, so neither can write a role no case
+    // recognises - and plan_members.role carries no CHECK of any kind, which is why the
+    // application has to answer for the value rather than the database. 'wizard' is the spelling
+    // PlanMemberRepositoryTest and PlanRepositoryTest already use for this.
+    //
+    // The row still has to clear every filter ahead of the conversion to be reaching the right
+    // guard: its own Plan, status = active, a non-null joined_at - all three from member() - and
+    // a user_profiles row, or an earlier guard answers first and this case would be proving
+    // something else.
+    $corruptMembership = member($plan, $corrupt, MemberRole::Member, '2026-01-02 10:00:00+00');
+    $corruptMembership->forceFill(['role' => 'wizard'])->save();
+
+    [, , $access] = signIn($owner);
+
+    // This case is what holds RemoveMember's MemberRole::tryFrom() fail-closed branch open, and
+    // it is the whole of what holds it open: with tryFrom() swapped for the MemberRole::from()
+    // its own comment says it exists to avoid, the rest of the suite stays green and only this
+    // case reds - on 500 rather than 404, because an uncaught ValueError has no render closure.
+    //
+    // 404 and the member body, not 403 and not 500: a row whose role this application cannot
+    // read is, for every purpose this endpoint has, not a membership - so it answers exactly as
+    // a {user} who never joined does, and a corrupt row can never be an input to an
+    // authorization decision.
+    withToken($access)->deleteJson("/api/v1/plans/{$plan->id}/members/{$corrupt->id}")
+        ->assertNotFound()
+        ->assertJsonPath('message', 'That person is not a member of this Plan.');
+
+    // Fail CLOSED, which the status alone does not say: the refusal must also have written
+    // nothing. A guard that answered 404 after demoting the row would satisfy the two
+    // assertions above.
+    $corruptMembership->refresh();
+
+    expect($corruptMembership->status)->toBe(MemberStatus::Active->value, 'the corrupt row was not removed');
+    expect($corruptMembership->role)->toBe('wizard', 'and it was not rewritten either');
+});
+
 it('refuses an unverified actor removing another member, before it looks the Plan up', function (): void {
     $unverified = User::factory()->unverified()->hasProfile()->create();
     $owner = User::factory()->hasProfile()->create();

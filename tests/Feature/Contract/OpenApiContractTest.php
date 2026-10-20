@@ -143,9 +143,12 @@ it('publishes the password minimum length that the rule actually enforces', func
 
 it('declares bearer authentication, and marks exactly the auth:sanctum routes as requiring it', function (): void {
     // The document shipped with 'security_strategy' => null, so it never said the API is
-    // authenticated at all: no securitySchemes, and no `security` on any operation, while four
-    // operations require auth:sanctum. A generated client had no Authorization header and no
-    // way to describe one.
+    // authenticated at all: no securitySchemes, and no `security` on any operation, while most
+    // operations require auth:sanctum. A generated client had no Authorization header and no way
+    // to describe one. (No count of them here: that sentence read "four operations" and was
+    // already wrong by a wide margin when this task measured it against the committed document.
+    // The correspondence the loop below checks is the point, nothing computes a total, and a
+    // total nothing computes cannot be held true by anything in this repository.)
     //
     // Derived from the route table, not from a list restated here: MiddlewareAuthSecurityStrategy
     // reads the route's own middleware, so this asserts the correspondence rather than a
@@ -775,15 +778,20 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     //
     // ⚠ That DELETE /plans/{plan} entry carried a false parenthesis until this task - "(no body,
     // so no inferred description - the two #[Response]s on DeletePlanController are the only
-    // prose at that path)" - which contradicted the literal three dozen lines below it, where
-    // paths./plans/{plan}.delete.responses.204.description has been listed all along. MEASURED
-    // on the regenerated document: a bodyless 204 DOES carry a description, Scramble's own fixed
-    // string 'No content', and so does every other 204 and 202 in this document (logout,
-    // reset-password, DELETE /me, DELETE /plans/{plan}, forgot-password's 202). What a bodyless
-    // response has no schema for is the ENVELOPE case above, which is where the "no body" fact
-    // actually bites; it has nothing to do with whether a description is published. The false
-    // half mattered: this task predicted its own delta from it and would have been three instead
-    // of four.
+    // prose at that path)" - which contradicted the literal below it in this same case, where
+    // paths./plans/{plan}.delete.responses.204.description has been listed all along. What a
+    // bodyless response has no schema for is the ENVELOPE case above, which is where the "no
+    // body" fact actually bites; it has nothing to do with whether a description is published.
+    // The false half mattered: this task predicted its own delta from it and would have been
+    // three instead of four.
+    //
+    // What the regenerated document actually publishes, read off it key by key rather than
+    // reasoned about: every 204 in it carries Scramble's own fixed string 'No content' - logout,
+    // reset-password, DELETE /me, DELETE /plans/{plan} and this task's DELETE - and all five are
+    // in the literal below. forgot-password's 202 is the exception and is NOT in the literal: it
+    // publishes description: "", and the walk's own non-empty guard excludes an empty string. So
+    // "bodyless" and "carries a description" are independent in both directions, and the literal
+    // below is the only statement of which responses have one.
     //
     // Task 18: GET /plans's 200 (Scramble's own inferred description for an
     // AnonymousResourceCollection return type - no #[Response] attribute exists on
@@ -873,8 +881,10 @@ it('publishes the Plans list query parameters exactly as ListPlansRequest states
     // three leaves it byte-identical, md5 unchanged - this task's report has both measurements).
     //
     // Derived from rules() rather than restated, so a fourth parameter cannot be added without
-    // appearing here - but two of the four checks below cannot fail on a route shaped like this
-    // one, and that needs saying rather than leaving implied:
+    // appearing here - but two of the checks below cannot fail on a route shaped like this one,
+    // and that needs saying rather than leaving implied. (The sentence read "two of the four"
+    // while naming two that cannot fail and three that can, against a case that makes five
+    // assertions; the subtotals are what matters and they are both stated, so the total is not.)
     //
     //   - the key-set equality two lines down is nearly as weak: Scramble publishes every
     //     rules() key automatically for a bodyless method, so adding or removing a rule key
