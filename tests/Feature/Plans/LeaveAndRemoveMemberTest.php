@@ -468,7 +468,14 @@ it('leaves a removed member with no further access to the Plan', function (): vo
     $plan = Plan::factory()->create(['owner_id' => $owner->id]);
 
     member($plan, $owner, MemberRole::Owner, '2026-01-01 10:00:00+00');
-    $targetMembership = member($plan, $target, MemberRole::Member, '2026-01-02 10:00:00+00');
+
+    // An ADMIN, not a plain member, and the role is load-bearing rather than incidental: the
+    // role assertion below only discriminates the two branches if the target holds something
+    // other than `member` to begin with. Seeded as a plain member it read `member` whether
+    // RemoveMember demoted or LeavePlan left it alone, so it could not tell them apart - found
+    // by deleting RemoveMember's demotion and watching this case stay GREEN while
+    // "removes a member as the owner ..." reddened. Admin makes the same mutation red here too.
+    $targetMembership = member($plan, $target, MemberRole::Admin, '2026-01-02 10:00:00+00');
 
     [, , $ownerAccess] = signIn($owner);
     [, , $targetAccess] = signIn($target);
@@ -496,7 +503,7 @@ it('leaves a removed member with no further access to the Plan', function (): vo
     expect($targetMembership->status)
         ->toBe(MemberStatus::Removed->value, 'the owner removed them; they did not leave');
     expect($targetMembership->role)
-        ->toBe(MemberRole::Member->value, 'and RemoveMember demoted the role, which LeavePlan does not');
+        ->toBe(MemberRole::Member->value, 'and RemoveMember demoted the admin, which LeavePlan does not do');
 
     // Again before the actor switches back. Spec §17.3 makes forgetAuthenticatedUser() mandatory
     // in any test that makes an authenticated request and then asserts access is gone, because
