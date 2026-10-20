@@ -281,7 +281,7 @@ it('declares every error status the application itself raises', function (): voi
     //
     // No count of either side here, and that is this task's correction rather than an omission.
     // Both numbers grow whenever any task adds a row, nothing in this file computes either, and
-    // the previous generation of this sentence maintained two of them by hand across four tasks.
+    // the previous generation of this sentence maintained both of them by hand.
     // What is stable is the CORRESPONDENCE, which the assertion below checks: the inline non-2xx
     // responses in the committed document are exactly the rows of $expected above, and the $ref
     // ones are exactly the inferred 401s, 422s and verify-email's authorize()-derived 403.
@@ -563,8 +563,8 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // info.description / servers.0.description. All three are
     // AUTHORED - every one comes from a #[Response] attribute, from Scramble's own fixed
     // strings, or from config/scramble.php - never from a docblock harvest. (No subtotals here
-    // any more: this sentence used to state three, the recursive walk below used to restate two
-    // of them as its own breakdown, and the two halves of the pair went stale together. The
+    // any more: this sentence used to state all three, the recursive walk below used to restate
+    // all three again as its own breakdown, and the two copies went stale together. The
     // recursive walk's literal is what counts them, and its diff is what names a mover.) A
     // path-level
     // allow-list over every authored string in the document cannot catch the only defect
