@@ -10,6 +10,7 @@ use App\Http\Requests\Api\V1\Auth\RefreshTokenRequest;
 use App\Http\Requests\Api\V1\Auth\RegisterRequest;
 use App\Http\Requests\Api\V1\Auth\ResetPasswordRequest;
 use App\Http\Requests\Api\V1\Auth\VerifyEmailRequest;
+use App\Http\Requests\Api\V1\Plans\ChangeMemberRoleRequest;
 use App\Http\Requests\Api\V1\Plans\CreatePlanRequest;
 use App\Http\Requests\Api\V1\Plans\ListPlansRequest;
 use App\Http\Requests\Api\V1\Plans\UpdatePlanRequest;
@@ -222,6 +223,14 @@ it('declares every error status the application itself raises', function (): voi
         // ArchivePlanTest: "refuses an admin and a plain member with 403, and a non-member with 404"
         ['post', '/plans/{plan}/archive', '403'],
         ['post', '/plans/{plan}/archive', '404'],
+        // ChangeMemberRoleTest: "refuses an admin actor with 403 and the generic body"
+        ['patch', '/plans/{plan}/members/{user}', '403'],
+        // ChangeMemberRoleTest: "answers 404 with the Plan body for a non-member, whatever
+        // {user} names", and "answers 404 with the member body when {user} belongs to another
+        // Plan" - one status, two bodies, a test each
+        ['patch', '/plans/{plan}/members/{user}', '404'],
+        // ChangeMemberRoleTest: "answers 409 with the archived body on an archived Plan"
+        ['patch', '/plans/{plan}/members/{user}', '409'],
     ];
 
     foreach ($expected as [$method, $path, $status]) {
@@ -230,8 +239,10 @@ it('declares every error status the application itself raises', function (): voi
         expect($response)->not->toBeNull("openapi.json must declare {$status} for {$method} {$path}");
 
         // A description, because a status with no prose tells a client the number and nothing
-        // about what to do with it - and all fifteen of these are conditions a client must
-        // handle differently from each other.
+        // about what to do with it - and every row of this table is a condition a client must
+        // handle differently from the others. (The previous wording said "all fifteen of these"
+        // while the table held sixteen rows: a count of the literal above it decays on the next
+        // task's row, so this sentence no longer states one.)
         $description = data_get($response, 'description');
 
         expect($description)->toBeString("{$method} {$path} {$status} must carry a description");
@@ -253,14 +264,22 @@ it('declares every error status the application itself raises', function (): voi
     // response: a $ref response object has neither key.
     //
     // Measured at tandem-api@02f5418 as five and thirteen; re-measured against the regenerated
-    // document at this commit, now sixteen and twenty-four - the table and the inferred $ref
+    // document at this commit, now nineteen and twenty-six - the table and the inferred $ref
     // count both grow every time a task adds a row, so this is a re-verified current fact, not
-    // the original snapshot (this task's GET /plans/{plan}/members added one inferred 401, from
-    // auth:sanctum, and one inferred 422, from ListPlanMembersRequest, moving twenty-two to
-    // twenty-four; it added one inline non-2xx response of its own, the #[ResponseDoc] 404,
-    // moving fifteen to sixteen). The sixteen inline non-2xx responses in the committed document
-    // are exactly the sixteen rows above, and the twenty-four $ref ones are exactly the inferred
-    // 401s, 422s and verify-email's authorize()-derived 403.
+    // the original snapshot (this task's PATCH /plans/{plan}/members/{user} added one inferred
+    // 401, from auth:sanctum, and one inferred 422, from ChangeMemberRoleRequest, moving
+    // twenty-four to twenty-six; it added three inline non-2xx responses of its own, the
+    // #[ResponseDoc] 403, 404 and 409, moving sixteen to nineteen). The inline non-2xx responses
+    // in the committed document are exactly the rows above, and the $ref ones are exactly the
+    // inferred 401s, 422s and verify-email's authorize()-derived 403.
+    //
+    // One measured subtlety that row illustrates, and the reason its 403 is AUTHORED rather than
+    // left to inference: deleting PlanMemberController::update()'s three attributes and
+    // regenerating publishes a 403 anyway, as $ref #/components/responses/AuthorizationException,
+    // because Scramble's call-graph propagation finds ChangeMemberRole::execute()'s
+    // @throws AuthorizationException. A $ref carries neither its own description nor a message
+    // body schema, so the loop above cannot check it - an inferred status publishes the number
+    // while making its table row uncheckable. Authoring it is what keeps the row meaningful.
     //
     // This is the assertion that makes a Wave 2 endpoint shipped without its row fail here
     // instead of passing quietly. What actually governs inference is the list two paragraphs up
@@ -339,8 +358,11 @@ it('declares every error status the application itself raises', function (): voi
 });
 
 it('wraps every success response in the data envelope', function (): void {
-    // True of all sixteen operations today and asserted nowhere (round 1: GET /plans moved this
-    // from fifteen - the sum below, 11 + 5, already reads sixteen). Every client's response handling
+    // True of every operation the document publishes, and asserted nowhere else: the pair
+    // below is the count, and it is deliberately the only place in this test that states one -
+    // this header used to carry a second, independently maintained figure, which read
+    // "sixteen" while the literal at the end of the case already summed to seventeen. Every
+    // client's response handling
     // depends on it, tandem-shared's response parsers index through ['data'] to prove it, and
     // the envelope comes from Laravel's JsonResource rather than from anything in this
     // codebase - so it could change under a framework upgrade with the byte gate green.
@@ -390,16 +412,20 @@ it('wraps every success response in the data envelope', function (): void {
     }
 
     // Counted, so this cannot go vacuous again if the traversal ever stops finding anything.
-    // True of all seventeen operations today and asserted nowhere else - the sum below,
-    // 12 + 5, already reads seventeen. Eleven enveloped success responses before this task
+    // The two numbers sum to the number of operations the document publishes, which is the only
+    // form of that count this test keeps. Twelve enveloped success responses before this task
     // (register, login, refresh, verify-email, GET /me, PATCH /me, GET /plans/{plan},
-    // POST /plans, PATCH /plans/{plan}, POST /plans/{plan}/archive, GET /plans) and five
-    // bodyless ones (logout, DELETE /me, reset-password, forgot-password,
-    // DELETE /plans/{plan}). This task adds the twelfth enveloped response,
-    // GET /plans/{plan}/members -> 200, and no bodyless one: the literal is derived from the
-    // shape rather than copied off the printed diff - predicted +1/+0 before regenerating, and
-    // confirmed against the regenerated document.
-    expect([$enveloped, $bodyless])->toBe([12, 5]);
+    // POST /plans, PATCH /plans/{plan}, POST /plans/{plan}/archive, GET /plans,
+    // GET /plans/{plan}/members) and five bodyless ones (logout, DELETE /me, reset-password,
+    // forgot-password, DELETE /plans/{plan}). This task adds the thirteenth enveloped response,
+    // PATCH /plans/{plan}/members/{user} -> 200 (the updated member under `data`, spec §8.2's
+    // 200 - 204 is not available: §5.4 reserves it for the three DELETEs, and a client that just
+    // changed a role needs the new row), and no bodyless one. The literal is derived from the
+    // shape rather than copied off the printed diff: +1/+0 was predicted before regenerating and
+    // then confirmed against the regenerated document. If the diff ever prints a pair this
+    // reasoning does not predict, something other than the task shipped - that is the defect, not
+    // the literal.
+    expect([$enveloped, $bodyless])->toBe([13, 5]);
 });
 
 it('publishes both session expiries as date-time, not as a bare string', function (): void {
@@ -431,6 +457,12 @@ it('publishes required-versus-optional exactly as the rules state it', function 
         'UpdateProfileRequest' => UpdateProfileRequest::class,
         'CreatePlanRequest' => CreatePlanRequest::class,
         'UpdatePlanRequest' => UpdatePlanRequest::class,
+        // The members section's first body-bearing request. ListPlanMembersRequest is
+        // correctly absent and will stay absent: every one of its keys carries a
+        // /** @query */ docblock, so Scramble publishes them as parameters[n] on the
+        // operation and there is no components.schemas entry for the three assertions below to
+        // read. This one's single key carries no @query, so there is.
+        'ChangeMemberRoleRequest' => ChangeMemberRoleRequest::class,
     ];
 
     foreach ($classes as $schemaName => $class) {
@@ -498,11 +530,11 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     //     spot - this half is insurance on a config value and proves nothing today, which is
     //     said plainly here for the same reason OpenApiEnvironmentTest's docblock says it.
     //
-    // Three positions are deliberately NOT walked by name. paths.*.*.responses.*.description (30
-    // strings today, round 1 - two of them GET /plans/{plan}'s 200 and 404 from Task 15, and this
-    // count moves with every inline or inferred response description the document gains - the
-    // recursive walk's own comment, further down this file, derives the same 30 as one third of
-    // its 39),
+    // Three positions are deliberately NOT walked by name. paths.*.*.responses.*.description (36
+    // strings today - two of them GET /plans/{plan}'s 200 and 404 from Task 15, four of them this
+    // task's PATCH /plans/{plan}/members/{user}, and this count moves with every inline or
+    // inferred response description the document gains - the recursive walk's own comment,
+    // further down this file, re-derives the same 36 as the largest part of its 45),
     // components.responses.* (7), and info.description / servers.0.description (2) are
     // AUTHORED - every one comes from a #[Response] attribute, from Scramble's own fixed
     // strings, or from config/scramble.php - never from a docblock harvest. A path-level
@@ -578,20 +610,22 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
 
     // Counted, for the reason the envelope case above is counted: a traversal that stopped
     // finding parameter objects would build an empty $prose and pass while watching nothing.
-    // Eleven before this task: four on POST /auth/verify-email, one for GET /plans/{plan}
+    // Fourteen before this task: four on POST /auth/verify-email, one for GET /plans/{plan}
     // (Task 15, the first Wave 2 route to add a path parameter), three for Task 17's three
     // parameterised routes (PATCH /plans/{plan}, DELETE /plans/{plan} and
-    // POST /plans/{plan}/archive each carry the one {plan} path parameter), and three for
-    // GET /plans's status, limit and cursor. This task adds three more (+3, measured by
-    // counting the `parameters` arrays in the regenerated document, not assumed from the route
-    // count): GET /plans/{plan}/members's {plan} path parameter plus its limit and cursor
-    // query parameters - fourteen today. A
+    // POST /plans/{plan}/archive each carry the one {plan} path parameter), three for
+    // GET /plans's status, limit and cursor, and three for GET /plans/{plan}/members's {plan}
+    // plus its limit and cursor. This task adds two more (+2, measured by counting the
+    // `parameters` arrays in the regenerated document, not assumed from the route count):
+    // PATCH /plans/{plan}/members/{user} is the first route in the document with TWO path
+    // parameters, and the walk counts OPERATION-level parameter objects, so both of them
+    // contribute even though /plans/{plan} already appears elsewhere as a path. Sixteen today. A
     // Wave 2 route with a path or query parameter moves this number, and is meant to: any task
     // that adds one must update this literal in the same commit and state the arithmetic it
     // contributes (+1, +2, ...) in its report. Task 39 re-derives the final absolute count from
     // the regenerated document rather than trusting any task's arithmetic forward.
     expect($parameterCount)->toBe(
-        14,
+        16,
         'The parameter walk above visited a different number of parameter objects than the '
         .'document publishes. Either a route gained or lost a parameter - in which case this '
         .'number moves with it (update the literal here in the same commit, and say by how much '
@@ -669,9 +703,19 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
 
     // Every description/summary path in today's document, found by running this exact walk and
     // listing the result - not derived by arithmetic. The first four are the ones $prose above
-    // already names and pins by content; the other 39 are the authored strings $prose
-    // deliberately does not walk by name (30 responses.*.description + 7 components.responses.*
-    // + 2 info/servers). Task 15 added two of the responses.*.description rows:
+    // already names and pins by content; the other 45 are the authored strings $prose
+    // deliberately does not walk by name (36 responses.*.description + 7 components.responses.*
+    // + 2 info/servers).
+    //
+    // That breakdown read "39 (30 + 7 + 2)" until this task and was wrong by two: Task 21 added
+    // its own two rows to the literal below and to the narrative at the end of this comment
+    // without moving the breakdown, so the two halves of one comment disagreed. Counted again
+    // here, from the literal's own indented lines and from the regenerated document, both ends.
+    // Counting with a pattern for what one EXPECTS to find in the literal - entries beginning
+    // 'paths.' or 'components.' - silently drops info.description and servers.0.description and
+    // lands two low, which is exactly how the stale figure survived looking re-measured.
+    //
+    // Task 15 added two of the responses.*.description rows:
     // GET /plans/{plan}'s 200 (Scramble's own inferred description for the PlanResource return
     // type, not authored prose) and its 404 (the #[Response] attribute on GetPlanController).
     // Task 16 added three more: POST /plans's 201 (Scramble's own inferred description, not
@@ -688,10 +732,16 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     //
     // Task 18 added exactly one more: GET /plans's 200 (Scramble's own inferred description for
     // an AnonymousResourceCollection return type, not authored prose - no #[Response] attribute
-    // exists on ListPlansController). This task adds exactly two more: GET /plans/{plan}/members's
-    // 200 (Scramble's own inferred description for an AnonymousResourceCollection return type,
-    // the identical mechanism GET /plans added, not authored prose) and its 404 (the
-    // #[ResponseDoc] attribute on PlanMemberController::index()).
+    // exists on ListPlansController). Task 21 added exactly two: GET /plans/{plan}/members's 200
+    // (Scramble's own inferred description for an AnonymousResourceCollection return type, the
+    // identical mechanism GET /plans added, not authored prose) and its 404 (the #[ResponseDoc]
+    // attribute on PlanMemberController::index()).
+    //
+    // This task adds exactly four, all at PATCH /plans/{plan}/members/{user}: its 200 (Scramble's
+    // own inferred description for a PlanMemberResource return type, not authored prose) and its
+    // 403, 404 and 409 (the three #[ResponseDoc] attributes on PlanMemberController::update()).
+    // No new $prose entry: this route publishes no client-facing description of its own, and if
+    // one ever appears here it belongs in BOTH literals in the same commit.
     expect($allProsePaths)->toEqualCanonicalizing([
         'paths./auth/verify-email.post.summary',
         'paths./auth/verify-email.post.description',
@@ -731,6 +781,10 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         'paths./plans/{plan}/archive.post.responses.404.description',
         'paths./plans/{plan}/members.get.responses.200.description',
         'paths./plans/{plan}/members.get.responses.404.description',
+        'paths./plans/{plan}/members/{user}.patch.responses.200.description',
+        'paths./plans/{plan}/members/{user}.patch.responses.403.description',
+        'paths./plans/{plan}/members/{user}.patch.responses.404.description',
+        'paths./plans/{plan}/members/{user}.patch.responses.409.description',
         'components.responses.ValidationException.description',
         'components.responses.ValidationException.content.application/json.schema.properties.message.description',
         'components.responses.ValidationException.content.application/json.schema.properties.errors.description',
@@ -904,18 +958,20 @@ it('publishes no component schema without properties, so no native enum reaches 
     // cause that has nothing to do with whatever was added. Catching it here names the real one.
     $schemas = Arr::wrap(data_get(openApiDocument(), 'components.schemas'));
 
-    // >= 12, not merely non-empty: a document that dropped from twelve schemas to one would
+    // >= 13, not merely non-empty: a document that dropped from thirteen schemas to one would
     // still pass a bare not-empty check while this traversal verified almost nothing, which is
-    // the same "a floor left behind is slack" shape this test objects to elsewhere. 12 today
+    // the same "a floor left behind is slack" shape this test objects to elsewhere. 13 today
     // (measured: count($schemas)) - PlanResource was the ninth (Task 15); CreatePlanRequest was
-    // the tenth (Task 16); UpdatePlanRequest was the eleventh (Task 17); PlanMemberResource is
-    // the twelfth (this task - the first Plan route to return it), and the floor is raised in
-    // the same commit that added it: a floor left at 11 would have let a dropped
-    // PlanMemberResource clear it silently, which is exactly the slack this comment warns
-    // against.
+    // the tenth (Task 16); UpdatePlanRequest was the eleventh (Task 17); PlanMemberResource was
+    // the twelfth (Task 21); ChangeMemberRoleRequest is the thirteenth (this task - its single
+    // `role` key carries no /** @query */, so it publishes a request BODY schema, unlike
+    // ListPlanMembersRequest and ListPlansRequest, whose keys publish as parameters[n] and which
+    // therefore appear nowhere in components.schemas). The floor is raised in the same commit
+    // that added it: a floor left at 12 would have let a dropped ChangeMemberRoleRequest clear it
+    // silently, which is exactly the slack this comment warns against.
     expect(count($schemas))->toBeGreaterThanOrEqual(
-        12,
-        'components.schemas published fewer than the twelve schemas this traversal expects to '
+        13,
+        'components.schemas published fewer than the thirteen schemas this traversal expects to '
         .'check, so most of them were skipped rather than verified.',
     );
 

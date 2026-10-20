@@ -25,7 +25,9 @@ use RuntimeException;
  * remove-member refusals raise this same exception on this same predicate for exactly this
  * reason, so that PATCH /plans/{plan} and PATCH /plans/{plan}/members/{user} cannot disagree
  * about whether a cancelled Plan is editable - a ruling this class adopts rather than one it
- * originates, since those use cases are not yet part of this codebase.
+ * originates. ChangeMemberRole is the first of those use cases to land on it; the
+ * remove-member one has not shipped yet. (This sentence previously read "since those use cases
+ * are not yet part of this codebase", which stopped being true the moment the first one did.)
  *
  * Refusing on state rather than on identity is also what keeps the read-only rule from being an
  * authorization hole: a Plan archived by spec §9.3 branch 3 has no active owner row at all - its

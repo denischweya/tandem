@@ -3,6 +3,7 @@
 use App\Application\Auth\InvalidCredentials;
 use App\Application\Auth\InvalidPasswordResetToken;
 use App\Application\Auth\InvalidRefreshToken;
+use App\Application\Plans\PlanMemberNotFound;
 use App\Application\Plans\PlanNotEditable;
 use App\Application\Plans\PlanNotVisible;
 use Illuminate\Auth\Middleware\EnsureEmailIsVerified;
@@ -65,6 +66,11 @@ return Application::configure(basePath: dirname(__DIR__))
             // A client acting on a Plan that was archived while its screen was open. Expected
             // control flow, and its volume scales with traffic rather than with bugs.
             PlanNotEditable::class,
+            // An owner or admin naming a {user} who is not an active member of the Plan - a
+            // stale client, a removed member, a mistyped id. Expected control flow on the same
+            // argument as the entries above, and the only one of the three Plan exceptions that
+            // is reachable by a caller who HAS already proved they can see the Plan.
+            PlanMemberNotFound::class,
         ]);
 
         $exceptions->render(fn (InvalidCredentials $e) => new JsonResponse(
@@ -97,6 +103,19 @@ return Application::configure(basePath: dirname(__DIR__))
         // would differ in whitespace as well as in text.
         $exceptions->render(fn (PlanNotVisible $e) => new JsonResponse(
             ['message' => 'Plan not found.'],
+            404,
+        ));
+
+        // A precise message, unlike PlanNotVisible's deliberately vague one, and the ordering is
+        // what makes it safe: findVisibleTo() runs first in every use case, so this is only ever
+        // reachable by a caller who has already proved they can see the Plan and holds the role
+        // for the action. There is nothing left to disclose at that point, and "That person is
+        // not a member of this Plan" says nothing about whether the id names a real user. A
+        // single vague body for both would have been safe too, and worse: an owner who can
+        // plainly see their own Plan being told "Plan not found" is the kind of refusal blueprint
+        // §135 exists to prevent. Encoded compactly, like every closure above.
+        $exceptions->render(fn (PlanMemberNotFound $e) => new JsonResponse(
+            ['message' => 'That person is not a member of this Plan.'],
             404,
         ));
 

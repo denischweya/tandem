@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Plans;
 
+use App\Application\Plans\ChangeMemberRole;
 use App\Application\Plans\ListPlanMembers;
+use App\Domain\Plans\MemberRole;
 use App\Http\Controllers\Concerns\RequiresAuthenticatedUser;
+use App\Http\Requests\Api\V1\Plans\ChangeMemberRoleRequest;
 use App\Http\Requests\Api\V1\Plans\ListPlanMembersRequest;
 use App\Http\Resources\Api\V1\Plans\PlanMemberResource;
 use Dedoc\Scramble\Attributes\Response as ResponseDoc;
@@ -65,5 +68,44 @@ final class PlanMemberController
         // carries the identical device for the same reason.
         return PlanMemberResource::collection($page->items)
             ->additional(['meta' => ['next_cursor' => $page->nextCursor === null ? null : (string) $page->nextCursor]]);
+    }
+
+    // Spec §8.2. The job is exactly: read the string off the request, wrap it in the domain
+    // type, call one use-case method, wrap the result in a Resource.
+    //
+    // MemberRole::from() and not tryFrom(): the FormRequest's 'in:owner,admin,member' rule has
+    // already refused every other value with a 422, so a value that reaches here and is not a
+    // case means the rule and the enum have drifted apart - a ValueError naming this line is the
+    // right answer to that, and the test "keeps the role rule in step with MemberRole" is what
+    // stops it happening.
+    //
+    // $plan and $user are raw strings, for the reason index() gives above: no model type hint,
+    // because SubstituteBindings sorts before the controller and a binding would answer a
+    // missing row with Laravel's own pretty-printed 404 - a second body for a route whose whole
+    // design is that its refusals are indistinguishable (spec §5.1).
+    //
+    // All three statuses are AUTHORED, and the 403 is authored even though Scramble infers one
+    // on its own. Measured by deleting all three attributes and regenerating: the row becomes
+    // 200, 401, 422 and a 403 published as $ref #/components/responses/AuthorizationException -
+    // Scramble's call-graph propagation picks up ChangeMemberRole::execute()'s
+    // @throws AuthorizationException - with no 404 and no 409 at all, because a render()-mapped
+    // RuntimeException is invisible to it. A $ref response object carries neither its own
+    // description nor a message body schema, which is exactly what
+    // "declares every error status the application itself raises" checks for every row of its
+    // table, so the inferred 403 would publish the status while making its row uncheckable.
+    // UpdatePlanController authors its 403 for the same reason on the same shape.
+    #[ResponseDoc(status: 403, description: 'The signed-in user is a member of this Plan but may not make this change: only the owner can change a member role, the owner role itself is never edited directly, and the signed-in user must have verified their email address. The body says which.', type: 'array{message: string}')]
+    #[ResponseDoc(status: 404, description: 'Either the Plan is not visible to the signed-in user, or the named user is not an active member of it. Both are 404 so that a non-member cannot learn whether the Plan exists; the body says which.', type: 'array{message: string}')]
+    #[ResponseDoc(status: 409, description: 'The Plan is archived. An archived Plan is read-only: its members and their roles cannot be changed.', type: 'array{message: string}')]
+    public function update(ChangeMemberRoleRequest $request, string $plan, string $user, ChangeMemberRole $changeMemberRole): PlanMemberResource
+    {
+        $actor = $this->requireAuthenticatedUser($request->user(), 'PATCH /plans/{plan}/members/{user}');
+
+        return PlanMemberResource::make($changeMemberRole->execute(
+            $actor->id,
+            $plan,
+            $user,
+            MemberRole::from($request->string('role')->toString()),
+        ));
     }
 }

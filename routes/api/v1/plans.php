@@ -69,4 +69,23 @@ Route::middleware('auth:sanctum')->group(function (): void {
     // abuse shape worth a bucket.
     Route::get('/plans/{plan}/members', [PlanMemberController::class, 'index'])
         ->name('plans.members.index');
+
+    // `verified`, per spec §7.5: changing another member's role both acts on another member's
+    // behalf - it rewrites someone else's capabilities - and creates state every member sees,
+    // because it writes a member.role_changed row into a feed every member reads. Both halves of
+    // §7.5's rule, not one. The verdict is also recorded in VerifiedGateTest's $spec75 partition,
+    // which builds its other side from the real route table, so dropping this middleware reds
+    // there as well as in ChangeMemberRoleTest's unverified case.
+    //
+    // No per-route `auth:sanctum`: the enclosing group already applies it, and a second copy
+    // would be redundant. Not throttled, for the reason plans.members.index gives above:
+    // §13.4 limits plans-create, plan-invites and invite-lookup only.
+    //
+    // The declaration order of the middleware is immaterial: Laravel sorts route middleware
+    // through the Kernel's own priority list - bootstrap/app.php never calls priority() - and
+    // the measured order for this set is 0 Authenticate:sanctum, 1 SubstituteBindings,
+    // 2 EnsureEmailIsVerified. Auth first, `verified` last.
+    Route::patch('/plans/{plan}/members/{user}', [PlanMemberController::class, 'update'])
+        ->middleware('verified')
+        ->name('plans.members.update');
 });

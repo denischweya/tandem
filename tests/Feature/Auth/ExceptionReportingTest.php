@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Application\Auth\InvalidCredentials;
 use App\Application\Auth\InvalidPasswordResetToken;
 use App\Application\Auth\InvalidRefreshToken;
+use App\Application\Plans\PlanMemberNotFound;
 use App\Application\Plans\PlanNotEditable;
 use App\Application\Plans\PlanNotVisible;
 use Illuminate\Contracts\Debug\ExceptionHandler;
@@ -49,21 +50,34 @@ it('does not report the three expected auth failures, but still reports a genuin
 });
 
 /**
- * The Plan surface's own control-flow exception, on the same argument as the three auth ones
- * above: every non-member who probes a Plan id and every client acting on a Plan it can no
- * longer see reaches this, at a rate that scales with traffic rather than with bugs.
+ * The Plan surface's own control-flow exceptions, on the same argument as the auth ones above:
+ * a non-member probing a Plan id (PlanNotVisible), a client acting on a Plan that was archived
+ * while its screen was open (PlanNotEditable), and an owner naming a {user} who is no longer an
+ * active member (PlanMemberNotFound) all happen at a rate that scales with traffic rather than
+ * with bugs.
  *
  * Exercises report() directly rather than an HTTP round trip, exactly as the block above does:
  * the behaviour under test is bootstrap/app.php's dontReport() list and the container-bound
  * ExceptionHandler that reads it.
+ *
+ * Known weakness, disclosed rather than worked around: every exception here is reported into
+ * ONE captured-log assertion, so a red says "something was reported" and never which
+ * dontReport() entry went missing - the diff carries the log record's own message, which names
+ * the class, but the expectation does not. Splitting this into one block per exception would fix
+ * that and is not this task's to do; what is true today is that the red names the class in its
+ * diff and nothing else, and that each exception added here makes the aggregation worse.
  */
-it('does not report a Plan that was not visible or was archived', function (): void {
+it('does not report any of the three expected Plan refusals', function (): void {
     $handler = app(ExceptionHandler::class);
 
     $logs = captureLogs();
 
     $handler->report(new PlanNotVisible);
     $handler->report(new PlanNotEditable);
+    $handler->report(new PlanMemberNotFound);
 
-    expect(capturedLogRecords($logs))->toBe([], 'PlanNotVisible and PlanNotEditable must both be in dontReport()');
+    expect(capturedLogRecords($logs))->toBe(
+        [],
+        'PlanNotVisible, PlanNotEditable and PlanMemberNotFound must all three be in dontReport()',
+    );
 });

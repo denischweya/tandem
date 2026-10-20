@@ -26,6 +26,21 @@ interface PlanMemberRepository
     public function findActiveMember(string $planId, string $userId): PlanMember;
 
     /**
+     * findActiveMember()'s row, plus the display_name §6.1 publishes, as the value a Resource
+     * mixes in. §8.2's 200 returns the member it just changed, and the display name lives two
+     * tables away.
+     *
+     * Deliberately NOT findActiveMember() plus a second lookup in the use case: the display
+     * name is resolved by one join here, in the layer that owns the query, exactly as
+     * listActiveMembers() does it - rather than through $member->user->profile->display_name,
+     * which is two lazy relations and a nullable chain in a layer that should not be traversing
+     * them.
+     *
+     * @throws PlanMemberNotFound on the same four conditions as findActiveMember()
+     */
+    public function findActiveMemberView(string $planId, string $userId): PlanMemberView;
+
+    /**
      * §9.3's transfer target: findActiveMember()'s conditions plus
      * DeleteAccount::successorFor()'s account filter - the user neither soft-deleted nor
      * suspended. The two paths that move ownership have to agree, or a failure mode

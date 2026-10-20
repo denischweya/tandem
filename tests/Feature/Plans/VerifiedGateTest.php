@@ -52,8 +52,11 @@ it('gates exactly the Plan routes spec 7.5 names, read off the route table', fun
         $authenticated[$key] = in_array('auth:sanctum', $middleware, true);
     }
 
-    // Spec §7.5's partition for EVERY Plan route under api/v1/plans - not only the six that
-    // exist at this commit, but all fourteen the section will ever carry. A literal rather than
+    // Spec §7.5's partition for EVERY Plan route under api/v1/plans - not only the ones that
+    // exist at this commit, but all fourteen the section will ever carry, one row each below
+    // (the previous wording counted today's routes as "six", which Task 21's and this task's
+    // routes each falsified in turn: a count of the file's own contents decays silently, so this
+    // sentence now counts only the literal immediately below it). A literal rather than
     // a comment: the mutation this guards against is an implementer declaring a later route
     // (say `PATCH /plans/{plan}/members/{user}`) WITHOUT `verified`, then quietly repairing a
     // comment-derived map to agree with whatever they just shipped - which degrades the gate from
@@ -125,7 +128,7 @@ it('gates exactly the Plan routes spec 7.5 names, read off the route table', fun
     // Every Plan route is authenticated. Separate again, so the failure says which of the three
     // properties broke. Unlike $gated above, this is a universal invariant rather than a per-route
     // decision - the correct value for any future row is always `true` - so a hand-written map of
-    // today's seven is enough: a later task's new authenticated route still forces that task to add
+    // today's eight is enough: a later task's new authenticated route still forces that task to add
     // its key here (the exact-map comparison fails on key count alone), and there is no verdict to
     // get wrong once it does.
     expect($authenticated)->toEqual([
@@ -136,6 +139,7 @@ it('gates exactly the Plan routes spec 7.5 names, read off the route table', fun
         'plans.destroy' => true,
         'plans.archive' => true,
         'plans.members.index' => true,
+        'plans.members.update' => true,
     ], 'every Plan route resolves an actor, including join - plan_invites.accepted_by records who accepted');
 });
 

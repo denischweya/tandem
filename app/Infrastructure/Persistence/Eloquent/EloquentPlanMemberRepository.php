@@ -76,6 +76,60 @@ final readonly class EloquentPlanMemberRepository implements PlanMemberRepositor
         return $target;
     }
 
+    public function findActiveMemberView(string $planId, string $userId): PlanMemberView
+    {
+        // The shape check is repeated rather than reached through activeMemberQuery(): that
+        // helper's predicates are unqualified (`where('user_id', ...)`, `where('status', ...)`),
+        // and user_profiles carries user_id, id, created_at and updated_at of its own - so
+        // joining it onto that builder is a Postgres 42702 "column reference is ambiguous",
+        // not a narrower query. Every column below is table-qualified for that reason.
+        if (! Str::isUuid($planId) || ! Str::isUuid($userId)) {
+            throw new PlanMemberNotFound;
+        }
+
+        $row = PlanMember::query()
+            ->select('plan_members.*')
+            ->addSelect('user_profiles.display_name as display_name')
+            ->leftJoin('user_profiles', 'user_profiles.user_id', '=', 'plan_members.user_id')
+            ->where('plan_members.plan_id', $planId)
+            ->where('plan_members.user_id', $userId)
+            ->where('plan_members.status', MemberStatus::Active->value)
+            // No whereNotNull('plan_members.joined_at') here, unlike listActiveMembers(), and
+            // the difference is deliberate: there the filter keeps a keyset page consistent,
+            // while here it would answer "that person is not a member of this Plan" for someone
+            // who demonstrably is. The callers check the S-37 invariant themselves, before their
+            // first write, so a corrupt row is reported loudly rather than either silently
+            // 404ing or being published with a fabricated joined_at.
+            ->first();
+
+        if ($row === null) {
+            throw new PlanMemberNotFound;
+        }
+
+        $displayName = $row->getAttribute('display_name');
+
+        // The one narrowing this method does itself, for the reason listActiveMembers() states
+        // at length: user_profiles.user_id is UNIQUE NOT NULL on the PROFILE side, which gives
+        // at most one profile per user and never at least one, so a persisted user with no
+        // profile row is exactly what User::factory()->create() produces - and the left join
+        // then yields null here. Throwing names the member whose profile is missing; a
+        // `(string)` coercion in its place would publish an empty display_name for a real one.
+        if (! is_string($displayName)) {
+            throw new RuntimeException(
+                "plan_members row {$row->id} has no user_profiles row for user {$row->user_id}, "
+                .'which registration makes impossible.'
+            );
+        }
+
+        // PlanMemberView::fromMember() rather than a second hand-built constructor call: it
+        // already owns the joined_at refusal (the S-37 invariant, held open by both the analyser
+        // and its own named test) and the role/status conversions, its docblock names a
+        // single-member read as its intended caller, and listActiveMembers()'s MemberRole::from()
+        // ruling - loud over silently dropping a member - reaches this method through it rather
+        // than being restated differently one method away.
+        return PlanMemberView::fromMember($row, $displayName);
+    }
+
     public function findMembership(string $planId, string $userId): ?PlanMember
     {
         if (! Str::isUuid($planId) || ! Str::isUuid($userId)) {
