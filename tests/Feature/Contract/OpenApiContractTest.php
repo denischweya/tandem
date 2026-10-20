@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Application\Plans\PageQuery;
+use App\Domain\Plans\PlanStatus;
 use App\Http\Requests\Api\V1\Auth\ForgotPasswordRequest;
 use App\Http\Requests\Api\V1\Auth\LoginRequest;
 use App\Http\Requests\Api\V1\Auth\RefreshTokenRequest;
@@ -9,6 +11,7 @@ use App\Http\Requests\Api\V1\Auth\RegisterRequest;
 use App\Http\Requests\Api\V1\Auth\ResetPasswordRequest;
 use App\Http\Requests\Api\V1\Auth\VerifyEmailRequest;
 use App\Http\Requests\Api\V1\Plans\CreatePlanRequest;
+use App\Http\Requests\Api\V1\Plans\ListPlansRequest;
 use App\Http\Requests\Api\V1\Plans\UpdatePlanRequest;
 use App\Http\Requests\Api\V1\UpdateProfileRequest;
 use Illuminate\Routing\Route as RoutingRoute;
@@ -381,14 +384,16 @@ it('wraps every success response in the data envelope', function (): void {
     }
 
     // Counted, so this cannot go vacuous again if the traversal ever stops finding anything.
-    // Ten enveloped success responses today (register, login, refresh, verify-email, GET /me,
-    // PATCH /me, GET /plans/{plan}, POST /plans, PATCH /plans/{plan}, POST /plans/{plan}/archive)
-    // and five bodyless ones (logout, DELETE /me, reset-password, forgot-password,
+    // Eleven enveloped success responses today (register, login, refresh, verify-email, GET /me,
+    // PATCH /me, GET /plans/{plan}, POST /plans, PATCH /plans/{plan}, POST /plans/{plan}/archive,
+    // GET /plans) and five bodyless ones (logout, DELETE /me, reset-password, forgot-password,
     // DELETE /plans/{plan}). Task 15 added the seventh enveloped response - GET /plans/{plan} ->
-    // 200. Task 16 added the eighth - POST /plans -> 201 - and no bodyless one. Task 17 adds the
+    // 200. Task 16 added the eighth - POST /plans -> 201 - and no bodyless one. Task 17 added the
     // ninth and tenth enveloped responses - PATCH /plans/{plan} -> 200 and
     // POST /plans/{plan}/archive -> 200 - plus the fifth bodyless one, DELETE /plans/{plan} -> 204.
-    expect([$enveloped, $bodyless])->toBe([10, 5]);
+    // This task adds the eleventh enveloped response, GET /plans -> 200, the first paginated list
+    // this API has, and no bodyless one.
+    expect([$enveloped, $bodyless])->toBe([11, 5]);
 });
 
 it('publishes both session expiries as date-time, not as a bare string', function (): void {
@@ -558,18 +563,19 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
 
     // Counted, for the reason the envelope case above is counted: a traversal that stopped
     // finding parameter objects would build an empty $prose and pass while watching nothing.
-    // Eight today: four on POST /auth/verify-email, one for GET /plans/{plan} (Task 15, the
-    // first Wave 2 route to add a path parameter), and three more for Task 17's three
-    // parameterised routes - PATCH /plans/{plan}, DELETE /plans/{plan} and
-    // POST /plans/{plan}/archive each carry the one {plan} path parameter (+3, measured by
-    // counting the `parameters` arrays in the regenerated document, not assumed from the route
-    // count). A Wave 2 route with a path or query parameter moves this number, and is meant to:
-    // any task that adds one must update this literal in the same commit and state the
-    // arithmetic it contributes (+1, +2, ...) in its report. Task 39 re-derives the final
-    // absolute count from the regenerated document rather than trusting any task's arithmetic
-    // forward.
+    // Eight before this task: four on POST /auth/verify-email, one for GET /plans/{plan}
+    // (Task 15, the first Wave 2 route to add a path parameter), and three more for Task 17's
+    // three parameterised routes - PATCH /plans/{plan}, DELETE /plans/{plan} and
+    // POST /plans/{plan}/archive each carry the one {plan} path parameter. This task adds three
+    // more (+3, measured by counting the `parameters` arrays in the regenerated document, not
+    // assumed from the route count): GET /plans's status, limit and cursor, the first @query
+    // parameters this API has published rather than path parameters - eleven today. A Wave 2
+    // route with a path or query parameter moves this number, and is meant to: any task that
+    // adds one must update this literal in the same commit and state the arithmetic it
+    // contributes (+1, +2, ...) in its report. Task 39 re-derives the final absolute count from
+    // the regenerated document rather than trusting any task's arithmetic forward.
     expect($parameterCount)->toBe(
-        8,
+        11,
         'The parameter walk above visited a different number of parameter objects than the '
         .'document publishes. Either a route gained or lost a parameter - in which case this '
         .'number moves with it (update the literal here in the same commit, and say by how much '
@@ -647,15 +653,15 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
 
     // Every description/summary path in today's document, found by running this exact walk and
     // listing the result - not derived by arithmetic. The first four are the ones $prose above
-    // already names and pins by content; the other 38 are the authored strings $prose
-    // deliberately does not walk by name (29 responses.*.description + 7 components.responses.*
+    // already names and pins by content; the other 39 are the authored strings $prose
+    // deliberately does not walk by name (30 responses.*.description + 7 components.responses.*
     // + 2 info/servers). Task 15 added two of the responses.*.description rows:
     // GET /plans/{plan}'s 200 (Scramble's own inferred description for the PlanResource return
     // type, not authored prose) and its 404 (the #[Response] attribute on GetPlanController).
     // Task 16 added three more: POST /plans's 201 (Scramble's own inferred description, not
     // authored prose), and its 403 and 429 (the #[Response] attributes on
     // CreatePlanController) - plus the fourth $prose entry, CreatePlanRequest.timezone. Task 17
-    // adds ten more, all authored the same two ways - one inferred 200 description per route
+    // added ten more, all authored the same two ways - one inferred 200 description per route
     // that returns a PlanResource, and one #[Response] attribute per declared non-2xx status:
     // PATCH /plans/{plan}'s 200 (inferred), 403, 404 and 409 (each a #[Response] attribute on
     // UpdatePlanController, the first bootstrap/app.php render()-closure status this walk has
@@ -663,6 +669,10 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // ArchivePlanController); and DELETE /plans/{plan}'s 204 (no body, so no inferred
     // description - the two #[Response]s on DeletePlanController are the only prose at that
     // path), 403 and 404.
+    //
+    // This task adds exactly one more: GET /plans's 200 (Scramble's own inferred description for
+    // an AnonymousResourceCollection return type, not authored prose - no #[Response] attribute
+    // exists on ListPlansController).
     expect($allProsePaths)->toEqualCanonicalizing([
         'paths./auth/verify-email.post.summary',
         'paths./auth/verify-email.post.description',
@@ -684,6 +694,7 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         'paths./auth/register.post.responses.429.description',
         'paths./auth/reset-password.post.responses.204.description',
         'paths./auth/verify-email.post.responses.200.description',
+        'paths./plans.get.responses.200.description',
         'paths./plans/{plan}.get.responses.200.description',
         'paths./plans/{plan}.get.responses.404.description',
         'paths./plans.post.responses.201.description',
@@ -712,6 +723,92 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         .'allow-list if it is deliberate client-facing prose, or trace and remove the docblock '
         .'comment that leaked it, and update this list either way in the same commit (say which '
         .'path was added, in your report - controller-amendments.md Amendment 2).');
+});
+
+it('publishes the Plans list query parameters exactly as ListPlansRequest states them', function (): void {
+    // The parallel of "publishes required-versus-optional exactly as the rules state it", for
+    // the position that test cannot reach: a @query key is published as a
+    // paths.*.*.parameters[n] entry and never as a components schema, so no assertion over
+    // components.schemas can see it. Derived from rules() rather than restated, so a fourth
+    // parameter cannot be added without appearing here.
+    $rules = (new ListPlansRequest)->rules();
+
+    $parameters = collect(Arr::wrap(data_get(openApiDocument(), 'paths./plans.get.parameters')))
+        ->keyBy(fn (mixed $parameter): string => (string) data_get($parameter, 'name'));
+
+    expect($parameters->keys()->all())->toEqualCanonicalizing(
+        array_keys($rules),
+        'every rules() key of ListPlansRequest must be published as a query parameter, and nothing else may be',
+    );
+
+    foreach ($rules as $field => $fieldRules) {
+        $flat = array_map(
+            fn (mixed $rule): string => is_string($rule) ? $rule : '',
+            Arr::wrap($fieldRules),
+        );
+
+        $parameter = $parameters->get($field);
+
+        expect(data_get($parameter, 'in'))->toBe(
+            'query',
+            "{$field} must be published in the query, not as a body field of a GET",
+        );
+        expect((bool) data_get($parameter, 'required'))->toBe(
+            ! in_array('sometimes', $flat, true),
+            "{$field}'s published `required` must follow its `sometimes` rule",
+        );
+    }
+
+    // `status` carries `nullable`, unlike `limit` and `cursor` - ListPlansRequest's own
+    // docblock argues why, and this task left that asymmetry in place rather than rewriting it.
+    // Scramble publishes a nullable Rule::in() with `null` appended to the enum list itself, not
+    // as a bare three-value enum with nullability expressed some other way, so the expectation
+    // is derived from the same rule the loop above already flattened rather than restated as a
+    // three-element literal that would fail against what `nullable` actually publishes.
+    $statusRules = array_map(
+        fn (mixed $rule): string => is_string($rule) ? $rule : '',
+        Arr::wrap($rules['status']),
+    );
+    $expectedStatusValues = in_array('nullable', $statusRules, true)
+        ? [...array_column(PlanStatus::cases(), 'value'), null]
+        : array_column(PlanStatus::cases(), 'value');
+
+    expect(Arr::wrap(data_get($parameters->get('status'), 'schema.enum')))->toEqualCanonicalizing(
+        $expectedStatusValues,
+        'the status filter must publish every PlanStatus case - cancelled is accepted and matches nothing (spec §7.3), so leaving it out would document a narrower filter than the one that runs',
+    );
+    expect(data_get($parameters->get('limit'), 'schema.maximum'))->toBe(
+        PageQuery::MAX_LIMIT,
+        'limit must publish the maximum it enforces, or a client cannot know 101 is a 422',
+    );
+});
+
+it('publishes the cursor-page envelope, with next_cursor nullable rather than null', function (): void {
+    // Why this exists as its own case: "wraps every success response in the data envelope"
+    // passes with `meta` ENTIRELY ABSENT, because a collection resource that forgot
+    // ->additional([...]) still publishes a well-formed {data: [...]}. So the envelope test
+    // cannot see the half of spec §6.2 that clients page with, and this one asserts meta and
+    // next_cursor BY NAME.
+    //
+    // And the type, not just the key: Scramble narrows a value it can see as a literal null to
+    // {"type": "null"}, which is a wrong-but-stable schema - the byte gate reproduces it for
+    // ever and a generated client types next_cursor as `null`, making the second page
+    // unreachable in TypeScript.
+    $schema = data_get(openApiDocument(), 'paths./plans.get.responses.200.content.application/json.schema');
+
+    expect(Arr::wrap(data_get($schema, 'required')))->toEqualCanonicalizing(
+        ['data', 'meta'],
+        'both envelope keys must be required: a client that has to test for meta cannot page',
+    );
+    expect(data_get($schema, 'properties.data.type'))->toBe('array');
+    expect(Arr::wrap(data_get($schema, 'properties.meta.required')))->toEqualCanonicalizing(
+        ['next_cursor'],
+        'next_cursor must be present-but-nullable, never optional',
+    );
+    expect(Arr::wrap(data_get($schema, 'properties.meta.properties.next_cursor.type')))->toEqualCanonicalizing(
+        ['string', 'null'],
+        'next_cursor must publish as string|null - {"type":"null"} means Scramble narrowed it from a literal null in the controller',
+    );
 });
 
 it('publishes no group_id on the Plan write surface', function (): void {

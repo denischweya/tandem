@@ -6,10 +6,15 @@ use App\Http\Controllers\Api\V1\Plans\ArchivePlanController;
 use App\Http\Controllers\Api\V1\Plans\CreatePlanController;
 use App\Http\Controllers\Api\V1\Plans\DeletePlanController;
 use App\Http\Controllers\Api\V1\Plans\GetPlanController;
+use App\Http\Controllers\Api\V1\Plans\ListPlansController;
 use App\Http\Controllers\Api\V1\Plans\UpdatePlanController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('auth:sanctum')->group(function (): void {
+    // Not gated by `verified` (spec §7.5 gates no read), and not throttled: an authenticated
+    // read of one's own membership list is not a surface spec §13 limits.
+    Route::get('/plans', ListPlansController::class)->name('plans.index');
+
     // `verified` AND throttle:plans-create, and three measured notes about the pair.
     //
     // (1) The order written here is cosmetic. Laravel sorts route middleware by the Kernel's own
