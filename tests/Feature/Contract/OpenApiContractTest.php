@@ -929,11 +929,11 @@ it('publishes no *Resource schema with a $ref to a domain enum', function (): vo
     // this one catches the $ref itself and names the exact Resource and field, which "some
     // schema has no properties" cannot.
     //
-    // DERIVED from the document, not a hand list of six names: plan-corrections.md's TASK 19
-    // entry (B19a) measured that a hand list walked with a `[]` default contributes nothing for
-    // a name that is absent or misspelled, so a walk over
-    // ['PlanResource', 'PlanMemberResource', ...] silently checks only whichever of those six
-    // the document happens to contain and reports success either way. Filtering
+    // DERIVED from the document, not a hand list of six names: a walk over a literal array like
+    // ['PlanResource', 'PlanMemberResource', ...], read with a `[]` default for a name that is
+    // absent or misspelled, silently checks only whichever of those names the document happens
+    // to contain and reports success either way - today that would be one name out of six, with
+    // the other five contributing nothing and nobody able to tell from the result. Filtering
     // components.schemas's own keys by /Resource$/ instead means every name this walks is
     // guaranteed to exist in the document - it cannot "walk" a name that was never there. Today
     // that derived set is PlanResource, SessionResource and UserResource; it will include this
@@ -957,14 +957,13 @@ it('publishes no *Resource schema with a $ref to a domain enum', function (): vo
 
     // Not "any $ref" - measured, by running this test before writing this comment:
     // SessionResource.user is a GENUINE $ref to UserResource, a nested Resource and not an
-    // enum, and the derived walk above (unlike the brief's six-name hand list, which never
-    // reaches SessionResource at all) finds it. The six Plan Resources this section owns do not
-    // nest one another, so the brief's "any $ref" was never wrong for its own narrower scope -
-    // it only becomes wrong once the walk is widened to the whole document, which is what fixing
-    // B19a required. A $ref LEAKS A DOMAIN ENUM specifically when its target component has no
-    // `properties` - exactly the signature the "publishes no component schema without
-    // properties" case above polices from the other side - so that is the condition checked
-    // here, not the mere presence of a $ref.
+    // enum, and the derived walk above (unlike a six-name hand list restricted to this
+    // section's own Resources, none of which nests another Resource) finds it. So "any $ref"
+    // is the wrong condition once the walk covers the whole document rather than six names
+    // chosen because none of them nests another Resource. A $ref LEAKS A DOMAIN ENUM
+    // specifically when its target component has no `properties` - exactly the signature the
+    // "publishes no component schema without properties" case above polices from the other
+    // side - so that is the condition checked here, not the mere presence of a $ref.
     $refs = [];
 
     foreach ($resourceSchemaNames as $name) {
@@ -989,18 +988,17 @@ it('publishes no *Resource schema with a $ref to a domain enum', function (): vo
         .'the native enum instead of publishing ->value, and that enum\'s class docblock is now '
         .'the schema description every client sees');
 
-    // This section owns six Resources (spec §6.1), named here explicitly rather than counted
-    // (F3/F4): a Resource not yet in components.schemas is not a defect, it is not routed yet,
-    // and the task that will route it is named so the gap is a disclosed fact instead of a
-    // silent one. Measured at this task's own start commit, against
-    // app/Http/Resources/Api/V1/Plans/: all six classes already exist, but Scramble registers a
-    // component schema only for a Resource reachable from a route, and only PlanResource is
-    // reachable today (GET /plans/{plan}, POST /plans, GET /plans). The other five are not yet
-    // routed by anything: PlanMemberResource (Task 21, GET /plans/{plan}/members),
-    // PlanInviteResource (Task 28, GET /plans/{plan}/invites), PlanInviteCreatedResource
-    // (Task 26, POST /plans/{plan}/invites), PlanActivityResource (Task 29, GET
-    // /plans/{plan}/activity) and InvitePreviewResource (Task 25, GET /invites/{token}) - each
-    // task number read off that task's own brief header, not quoted from any planning document.
+    // This section owns six Resources (spec §6.1), named here explicitly rather than counted:
+    // a Resource not yet in components.schemas is not a defect, it is not routed yet, and the
+    // route that will add it is named so the gap is a disclosed fact instead of a silent one.
+    // Measured at this task's own start commit, against app/Http/Resources/Api/V1/Plans/: all
+    // six classes already exist, but Scramble registers a component schema only for a Resource
+    // reachable from a route, and only PlanResource is reachable today (GET /plans/{plan}, POST
+    // /plans, GET /plans). The other five are not yet routed by anything: PlanMemberResource
+    // (GET /plans/{plan}/members), PlanInviteResource (GET /plans/{plan}/invites),
+    // PlanInviteCreatedResource (POST /plans/{plan}/invites), PlanActivityResource (GET
+    // /plans/{plan}/activity) and InvitePreviewResource (GET /invites/{token}) - routes this
+    // section does not add.
     //
     // The assertion below is what a misspelling break step targets: the intersection is computed
     // against $resourceSchemaNames, which comes from the document, so a typo below in the one
