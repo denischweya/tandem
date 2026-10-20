@@ -920,3 +920,103 @@ it('publishes no component schema without properties, so no native enum reaches 
         );
     }
 });
+
+it('publishes no *Resource schema with a $ref to a domain enum', function (): void {
+    // D-R2 / baseline S-9: EnumTransformer::addEnumDescription() is unconditional, so a native
+    // enum typed on any Resource field leaks that enum's whole class docblock as the schema
+    // description under every enum_cases_description_strategy value. The case above already
+    // catches the "no properties" half of the same defect for every schema in the document;
+    // this one catches the $ref itself and names the exact Resource and field, which "some
+    // schema has no properties" cannot.
+    //
+    // DERIVED from the document, not a hand list of six names: plan-corrections.md's TASK 19
+    // entry (B19a) measured that a hand list walked with a `[]` default contributes nothing for
+    // a name that is absent or misspelled, so a walk over
+    // ['PlanResource', 'PlanMemberResource', ...] silently checks only whichever of those six
+    // the document happens to contain and reports success either way. Filtering
+    // components.schemas's own keys by /Resource$/ instead means every name this walks is
+    // guaranteed to exist in the document - it cannot "walk" a name that was never there. Today
+    // that derived set is PlanResource, SessionResource and UserResource; it will include this
+    // section's other five Plan Resources as the Plans section's remaining list routes land,
+    // with no edit here required for the $ref check itself.
+    $resourceSchemaNames = array_values(array_filter(
+        array_keys(Arr::wrap(data_get(openApiDocument(), 'components.schemas'))),
+        fn (string $name): bool => (bool) preg_match('/Resource$/', $name),
+    ));
+
+    // >= 3, not merely non-empty, for the reason the case above is >= 11 rather than a bare
+    // not-empty check: measured today (PlanResource, SessionResource, UserResource). A document
+    // that lost every *Resource schema would still pass a bare not-empty check while this walk
+    // verified nothing; growing the floor is this task's obligation whenever a Plan Resource
+    // newly starts being returned by a route.
+    expect(count($resourceSchemaNames))->toBeGreaterThanOrEqual(
+        3,
+        'fewer than three *Resource schemas are published, so this walk is checking almost '
+        .'nothing - either the suffix filter stopped matching or a schema genuinely vanished',
+    );
+
+    // Not "any $ref" - measured, by running this test before writing this comment:
+    // SessionResource.user is a GENUINE $ref to UserResource, a nested Resource and not an
+    // enum, and the derived walk above (unlike the brief's six-name hand list, which never
+    // reaches SessionResource at all) finds it. The six Plan Resources this section owns do not
+    // nest one another, so the brief's "any $ref" was never wrong for its own narrower scope -
+    // it only becomes wrong once the walk is widened to the whole document, which is what fixing
+    // B19a required. A $ref LEAKS A DOMAIN ENUM specifically when its target component has no
+    // `properties` - exactly the signature the "publishes no component schema without
+    // properties" case above polices from the other side - so that is the condition checked
+    // here, not the mere presence of a $ref.
+    $refs = [];
+
+    foreach ($resourceSchemaNames as $name) {
+        $properties = Arr::wrap(data_get(openApiDocument(), "components.schemas.{$name}.properties"));
+
+        foreach ($properties as $field => $property) {
+            if (! is_array($property) || ! array_key_exists('$ref', $property)) {
+                continue;
+            }
+
+            $refTarget = (string) $property['$ref'];
+            $refSchemaName = substr($refTarget, strrpos($refTarget, '/') + 1);
+            $refSchema = data_get(openApiDocument(), "components.schemas.{$refSchemaName}");
+
+            if ($refSchema !== null && ! array_key_exists('properties', Arr::wrap($refSchema))) {
+                $refs[] = "{$name}.{$field} => {$refTarget}";
+            }
+        }
+    }
+
+    expect($refs)->toBe([], 'a $ref to a schema with no `properties` means a field is typed as '
+        .'the native enum instead of publishing ->value, and that enum\'s class docblock is now '
+        .'the schema description every client sees');
+
+    // This section owns six Resources (spec §6.1), named here explicitly rather than counted
+    // (F3/F4): a Resource not yet in components.schemas is not a defect, it is not routed yet,
+    // and the task that will route it is named so the gap is a disclosed fact instead of a
+    // silent one. Measured at this task's own start commit, against
+    // app/Http/Resources/Api/V1/Plans/: all six classes already exist, but Scramble registers a
+    // component schema only for a Resource reachable from a route, and only PlanResource is
+    // reachable today (GET /plans/{plan}, POST /plans, GET /plans). The other five are not yet
+    // routed by anything: PlanMemberResource (Task 21, GET /plans/{plan}/members),
+    // PlanInviteResource (Task 28, GET /plans/{plan}/invites), PlanInviteCreatedResource
+    // (Task 26, POST /plans/{plan}/invites), PlanActivityResource (Task 29, GET
+    // /plans/{plan}/activity) and InvitePreviewResource (Task 25, GET /invites/{token}) - each
+    // task number read off that task's own brief header, not quoted from any planning document.
+    //
+    // The assertion below is what a misspelling break step targets: the intersection is computed
+    // against $resourceSchemaNames, which comes from the document, so a typo below in the one
+    // name that IS currently routed drops it out of the intersection and reds here - proving the
+    // correspondence is checked rather than assumed. A typo in one of the five not-yet-routed
+    // names cannot be observed this way, because neither spelling is in the document yet; that
+    // is why each of those five is disclosed above by name instead of asserted here.
+    $sixResourceNames = [
+        'PlanResource', 'PlanMemberResource', 'PlanInviteResource',
+        'PlanInviteCreatedResource', 'PlanActivityResource', 'InvitePreviewResource',
+    ];
+
+    expect(array_values(array_intersect($sixResourceNames, $resourceSchemaNames)))->toBe(
+        ['PlanResource'],
+        'exactly one of this section\'s six Resources should be reachable from a route today, '
+        .'and it must be found by this exact name - if this fails with an empty array, either '
+        .'PlanResource stopped being routed or its name above no longer matches the document',
+    );
+});
