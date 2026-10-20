@@ -40,6 +40,14 @@ final readonly class ArchivePlan
      * status and archived_at are written together because DeleteAccount::resolvePlanOwnership()
      * writes both, and a reader that checked only one would disagree with the other path.
      *
+     * The idempotence check above keys on `=== PlanStatus::Archived->value`, not on
+     * UpdatePlan's `!== PlanStatus::Active->value` - deliberately asymmetric with it, not an
+     * oversight. "already archived ⇒ no-op" says nothing about a cancelled Plan, so archiving
+     * one today would overwrite its status, stamp archived_at and write a plan.archived row.
+     * Whether that is the right behaviour, or whether archiving a cancelled Plan should itself
+     * be refused, is the Events cycle's question once it starts writing PlanStatus::Cancelled -
+     * not this one's to answer, since nothing in Wave 2 can reach that state.
+     *
      * Carbon::instance(), not a bare assignment of Clock::now()'s DateTimeImmutable: archived_at
      * is cast 'datetime', which PHPStan/larastan types as Illuminate\Support\Carbon|null on the
      * property - a DateTimeImmutable does not satisfy that (measured: phpstan analyse --level=8

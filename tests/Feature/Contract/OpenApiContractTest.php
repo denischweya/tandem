@@ -225,8 +225,8 @@ it('declares every error status the application itself raises', function (): voi
         expect($response)->not->toBeNull("openapi.json must declare {$status} for {$method} {$path}");
 
         // A description, because a status with no prose tells a client the number and nothing
-        // about what to do with it - and all eight of these are conditions a client must handle
-        // differently from each other.
+        // about what to do with it - and all fifteen of these are conditions a client must
+        // handle differently from each other.
         $description = data_get($response, 'description');
 
         expect($description)->toBeString("{$method} {$path} {$status} must carry a description");
@@ -247,9 +247,12 @@ it('declares every error status the application itself raises', function (): voi
     // non-empty description, and a {message: string} body) are only possible for an inline
     // response: a $ref response object has neither key.
     //
-    // Measured at tandem-api@02f5418: the five inline non-2xx responses in the committed
-    // document are exactly the five rows above, and the thirteen $ref ones are exactly the
-    // inferred 401s, 422s and verify-email's authorize()-derived 403.
+    // Measured at tandem-api@02f5418 as five and thirteen; re-measured against the regenerated
+    // document at this commit, now fifteen and twenty - the table and the inferred $ref count
+    // both grow every time a task adds a row, so this is a re-verified current fact, not the
+    // original snapshot. The fifteen inline non-2xx responses in the committed document are
+    // exactly the fifteen rows above, and the twenty $ref ones are exactly the inferred 401s,
+    // 422s and verify-email's authorize()-derived 403.
     //
     // This is the assertion that makes a Wave 2 endpoint shipped without its row fail here
     // instead of passing quietly. What actually governs inference is the list two paragraphs up
@@ -282,10 +285,10 @@ it('declares every error status the application itself raises', function (): voi
     // raised by code Scramble has no position for - the render() exception mapping or the
     // throttle closure the header comment above names - publishes NOTHING at the route at all,
     // neither inline nor $ref, so it is invisible to this loop exactly as it is invisible to
-    // Scramble, and still has to be added to $expected by hand, as those five rows already are.
+    // Scramble, and still has to be added to $expected by hand, as every row in it already is.
     // This closes the "authored but the table forgot it" gap; it does not and cannot close the
-    // "raised but never published anywhere" gap, which is why the five hand-asserted rows above
-    // remain load-bearing rather than becoming redundant with this loop.
+    // "raised but never published anywhere" gap, which is why the hand-asserted $expected table
+    // above remains load-bearing rather than becoming redundant with this loop.
     $authored = [];
 
     foreach (documentedRoutes() as [$method, $path, $route]) {
@@ -328,7 +331,7 @@ it('declares every error status the application itself raises', function (): voi
 });
 
 it('wraps every success response in the data envelope', function (): void {
-    // True of all ten operations today and asserted nowhere. Every client's response handling
+    // True of all fifteen operations today and asserted nowhere. Every client's response handling
     // depends on it, tandem-shared's response parsers index through ['data'] to prove it, and
     // the envelope comes from Laravel's JsonResource rather than from anything in this
     // codebase - so it could change under a framework upgrade with the byte gate green.
@@ -484,7 +487,7 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     //     spot - this half is insurance on a config value and proves nothing today, which is
     //     said plainly here for the same reason OpenApiEnvironmentTest's docblock says it.
     //
-    // Three positions are deliberately NOT walked by name. paths.*.*.responses.*.description (16
+    // Three positions are deliberately NOT walked by name. paths.*.*.responses.*.description (29
     // strings today, two of them GET /plans/{plan}'s 200 and 404 - Task 15),
     // components.responses.* (7), and info.description / servers.0.description (2) are
     // AUTHORED - every one comes from a #[Response] attribute, from Scramble's own fixed
@@ -614,8 +617,8 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // disclosing rather than assuming away: a `description` or `summary` key inside an
     // `example` or `default` payload - not a Scramble-authored schema position at all - would
     // appear in this list too, reading as a leaked docblock when it is neither. Wave 2 writes no
-    // such payload today (checked: none of the 28 paths below sits under `example` or
-    // `default`), so this is a disclosed false-positive risk, not an observed one.
+    // such payload today (checked: none of the paths below sits under `example` or `default`),
+    // so this is a disclosed false-positive risk, not an observed one.
     //
     // Any task adding a new deliberate position (client-facing prose the way verify-email's
     // #[Endpoint] text already is) must add its path to BOTH this list and $prose's allow-list

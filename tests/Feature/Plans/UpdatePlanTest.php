@@ -106,6 +106,21 @@ it('refuses an archived Plan with 409 and writes nothing', function (): void {
     expect(PlanActivity::query()->count())->toBe(0);
 });
 
+it('refuses a cancelled Plan with 409 too, not only an archived one', function (): void {
+    $owner = userWithPassword();
+    $plan = ownedPlan($owner);
+    // plans.status carries no CHECK constraint, so this state is constructible even though no
+    // Wave 2 write path produces it (spec §7.3). The predicate this pins is "anything but
+    // active", not "archived specifically" - without this case, reverting to
+    // `=== PlanStatus::Archived->value` passes the whole suite.
+    $plan->forceFill(['status' => PlanStatus::Cancelled->value])->save();
+
+    [, , $access] = signIn($owner);
+
+    withToken($access)->patchJson("/api/v1/plans/{$plan->id}", ['title' => 'Also too late'])
+        ->assertStatus(409);
+});
+
 it('answers 403 and not 409 when a plain member edits an archived Plan', function (): void {
     $owner = User::factory()->hasProfile()->create();
     $plan = ownedPlan($owner);
@@ -178,20 +193,25 @@ it('rejects a blank title, a whitespace-only title, an over-long title and a non
 
     // '' arrives as null through the GLOBAL ConvertEmptyStringsToNull middleware and is then
     // refused by `required`, which is what makes 'sometimes|required' mean "omit the key to
-    // leave it alone, and you may not clear it".
+    // leave it alone, and you may not clear it". assertJsonValidationErrors() with the message,
+    // not assertJsonValidationErrorFor(): the latter is satisfied by ANY failing rule on the
+    // field, and `string` alone already refuses null - so a weaker assertion here would not
+    // tell a required-rule refusal apart from a string-rule one, which is exactly the gap this
+    // case exists to close.
     withToken($access)->patchJson("/api/v1/plans/{$plan->id}", ['title' => ''])
         ->assertStatus(422)
-        ->assertJsonValidationErrorFor('title');
+        ->assertJsonValidationErrors(['title' => 'The title field is required.']);
 
     // '   ' survives ConvertEmptyStringsToNull (exact-match only: '' !== '   ') and would skip
     // every NON-implicit rule under Validator::presentOrRuleIsImplicit() - but `required` is
     // itself one of Laravel's implicit rules, so it is evaluated regardless and its own
-    // trim($value) === '' check fails it. Measured directly: this case 422s on `title`, same as
-    // the blank-string case above, which is what tells the two apart from a rule that merely
-    // happened not to run.
+    // trim($value) === '' check fails it. The message pin, not assertJsonValidationErrorFor(),
+    // is what proves it is `required` doing the refusing here and not `string` happening to
+    // reject a non-empty value for an unrelated reason - `string` accepts '   ' outright, so
+    // nothing but `required` can produce this 422 on this input.
     withToken($access)->patchJson("/api/v1/plans/{$plan->id}", ['title' => '   '])
         ->assertStatus(422)
-        ->assertJsonValidationErrorFor('title');
+        ->assertJsonValidationErrors(['title' => 'The title field is required.']);
 
     withToken($access)->patchJson("/api/v1/plans/{$plan->id}", ['title' => str_repeat('a', 256)])
         ->assertStatus(422)
