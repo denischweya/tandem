@@ -62,6 +62,31 @@ it('refuses limit 101, a 422 rather than a silent clamp (D-R6)', function (): vo
         ->toThrow(ValidationException::class);
 });
 
+// Amendment 7 / residual 19: this file had an absent->25 case and an over-cap case for limit,
+// but its only present-null case (above) is for status, not limit - so a present-but-null
+// ?limit= had no case of its own. Per H9, ['limit' => null] IS the shape a real `?limit=`
+// delivers after TrimStrings + ConvertEmptyStringsToNull - present-and-null, not whitespace -
+// so this does not need a separate whitespace case the way status does.
+it('refuses a present-but-null limit with a 422, not DEFAULT_LIMIT (Amendment 7)', function (): void {
+    // 'integer' is present and 'nullable' is deliberately absent on limit's rule (unlike
+    // status): validateInteger(null) is false, so a present null 422s here rather than sailing
+    // through to intval(null) === 0. ReadsPageQuery's own docblock names this as the opposite
+    // choice from status, deliberately.
+    expect(fn () => validatedListPlansRequest(['limit' => null]))
+        ->toThrow(ValidationException::class);
+});
+
+// Residual 20: min:1 was deletable from rules() with the whole suite green, because the only
+// case that reads as coverage for limit=0 - see PlanRepositoryTest's "clamps a limit of 0" -
+// constructs PageQuery(0, null) directly and never calls rules() at all. This is the missing
+// half: a caller going through rules() with limit=0 must 422 here, not reach the repository as
+// an unclamped 0. Attributable to min:1 alone: 'integer' accepts '0' and 'max:100' accepts it
+// too, so only min:1 rejects this value.
+it('refuses limit 0 through rules(), not only through the repository clamp (residual 20)', function (): void {
+    expect(fn () => validatedListPlansRequest(['limit' => '0']))
+        ->toThrow(ValidationException::class);
+});
+
 // The two tests below are not in Task B's own brief. The context file controlling this task
 // names a live, measured trap landing squarely on ListPlansRequest: Illuminate\Foundation\Http\
 // Middleware\ConvertEmptyStringsToNull sits in Laravel's default global middleware stack and
