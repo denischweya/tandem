@@ -12,6 +12,8 @@ use Database\Factories\PlanMemberFactory;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
+use function Pest\Laravel\freezeTime;
+
 uses(RefreshDatabase::class);
 
 it('archives a Plan the way the application does, both fields', function (): void {
@@ -19,10 +21,35 @@ it('archives a Plan the way the application does, both fields', function (): voi
     // fixture that writes only status produces a shape no code path produces, and
     // PlanTest.php's "still lets forceFill and the factories write those columns" is exactly
     // that fixture.
+    //
+    // Residual 23: ->not->toBeNull() is green for any non-null value the factory happens to
+    // set, which is weaker than this it()'s own name promises for archived_at. PlanFactory::
+    // archived() writes 'archived_at' => now() (the bare helper, not Clock::now()), so
+    // freezeTime() pins what "the value the factory actually sets" actually is.
+    //
+    // Compared to the second, not the microsecond: residual 15 - setAttribute()'s own
+    // fromDateTime() call formats a date-cast value through Grammar::getDateFormat(), 'Y-m-d
+    // H:i:s', with no microseconds, the moment the attribute is assigned, before any DB round
+    // trip. $plan->archived_at is therefore already truncated in memory; $now (read straight
+    // off freezeTime(), never passed through a date-cast setter) still carries them. A
+    // microsecond-exact comparison would fail on that mismatch alone, not on the factory
+    // writing the wrong value.
+    $now = freezeTime();
+
     $plan = Plan::factory()->archived()->create();
 
     expect($plan->status)->toBe(PlanStatus::Archived->value);
-    expect($plan->archived_at)->not->toBeNull();
+    expect($plan->archived_at)->not->toBeNull('the factory must stamp archived_at, not merely leave status archived');
+
+    // Real narrowing, not relied on from the expect() above: Pest's assertion is a runtime
+    // check the static analyser cannot see through, so archived_at stays Carbon|null to
+    // PHPStan and ->format() below needs this `if` to be level-8 clean. Unreachable at
+    // runtime - the expect() above already failed the test if archived_at were null.
+    if ($plan->archived_at === null) {
+        throw new RuntimeException('unreachable: the expect() above already failed the test.');
+    }
+
+    expect($plan->archived_at->format('Y-m-d H:i:s'))->toBe($now->format('Y-m-d H:i:s'));
 });
 
 it('never produces an active membership without a joined_at', function (): void {
