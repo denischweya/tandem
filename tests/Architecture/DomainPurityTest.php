@@ -189,6 +189,16 @@ arch('only the activity writer, the activity reader, account deletion and the fa
 // room presumed under it. The positive assertion after the scan - that it actually found the
 // one match guaranteed to exist - exists so this test cannot pass by matching nothing: a
 // typo'd needle would make $offenders always [] and this guard would never have been exercised.
+//
+// Amendment 5 (controller-amendments.md) required this ceiling converted to exact equality in
+// the same commit that created EloquentPlanActivityRepository, naming both directions: a
+// seventh file reding it, and dropping the mention from one of the six reding it too. That
+// conversion was never done (wave-2-residuals.md item 18) - the ceiling plus the single
+// ->toContain() floor above left outward coverage live for exactly one of the six names, so
+// any of the other five could stop matching with nothing red. toEqualCanonicalizing() below
+// closes both directions at once over the full six-entry set, and it subsumes the positive
+// assertion two paragraphs up: it cannot pass against an empty $offenders while $allowed is
+// non-empty, so a typo'd needle still cannot pass by matching nothing.
 it('allows the literal table name "plan_activity" only where it already belongs', function (): void {
     // No uses() binding exists for tests/Architecture (tests/Pest.php:26 binds only Feature),
     // so this suite never boots the application - app_path() and the File facade both resolve
@@ -227,8 +237,12 @@ it('allows the literal table name "plan_activity" only where it already belongs'
 
     sort($offenders);
 
-    expect($offenders)->toContain('Models/PlanActivity.php')
-        ->and(array_diff($offenders, $allowed))->toBe([]);
+    // Exact equality, not a ceiling with a single ->toContain() floor: Amendment 5 names this
+    // project's most recurrent defect as a guard that is live inward (an unlisted file reds) but
+    // not outward (dropping an allow-listed file's own mention does not). toEqualCanonicalizing()
+    // fails on either an unexpected offender OR a missing one, in any order, which is both
+    // directions over all six entries at once.
+    expect($offenders)->toEqualCanonicalizing($allowed);
 });
 
 // Task 8's authorization-seam gate (fix round 1, 2026-10-16). findVisibleTo() is the one method
@@ -286,6 +300,14 @@ it('allows the literal table name "plan_activity" only where it already belongs'
 //
 // The positive assertion before the diff exists so this cannot pass by matching nothing: a
 // typo'd needle would leave $offenders empty and the guard would never have fired.
+//
+// Residual 21 (wave-2-residuals.md): this gate had Amendment 5's exact defect. Its outward
+// check named only the interface, Application/Plans/PlanRepository.php, so renaming, removing
+// or dynamically dispatching findById()/countActiveMembers() inside the IMPLEMENTATION,
+// EloquentPlanRepository.php, left this test green - the gate still found its one required
+// file and the diff was still empty. toEqualCanonicalizing() below over both allow-list entries
+// closes that: dropping either name out of either file now reds, not just adding an unlisted
+// one in.
 it('allows findById() and countActiveMembers() only where the authorization seam already admits them', function (): void {
     // Path computed from __DIR__ for the same reason the plan_activity scan does it: no uses()
     // binding exists for tests/Architecture, so this suite never boots the application and
@@ -323,6 +345,8 @@ it('allows findById() and countActiveMembers() only where the authorization seam
 
     sort($offenders);
 
-    expect($offenders)->toContain('Application/Plans/PlanRepository.php')
-        ->and(array_diff($offenders, $allowed))->toBe([]);
+    // Exact equality over both entries, not a ceiling: see the comment above this it() for why
+    // the ceiling plus a single ->toContain() floor let the implementation's own mentions of
+    // either name disappear with nothing red.
+    expect($offenders)->toEqualCanonicalizing($allowed);
 });
