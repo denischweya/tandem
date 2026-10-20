@@ -744,7 +744,7 @@ it('publishes the Plans list query parameters exactly as ListPlansRequest states
     // schema, so no assertion over components.schemas can see it. ROUND 1 CORRECTION: that is
     // NOT because of @query - RequestBodyExtension::handle() takes an early-return branch for
     // get/delete/head that converts every extracted parameter to a query parameter
-    // unconditionally, before @query/isInQuery is ever consulted. @query is inert on this route
+    // unconditionally, before @query/isInQuery is ever consulted. @query is redundant on this route
     // (confirmed: removing it from one key leaves the document byte-identical; removing all
     // three leaves it byte-identical, md5 unchanged - this task's report has both measurements).
     //
