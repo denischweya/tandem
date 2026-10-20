@@ -14,6 +14,41 @@ use function Pest\Laravel\withToken;
 
 uses(RefreshDatabase::class);
 
+// WHAT THIS FILE PROVES, AND WHERE IT IS SILENT. A file named for an invariant reads as the
+// place that invariant is guaranteed, so the false negatives are named here rather than left to
+// be discovered: spec §9.1 is asserted PER-TRANSITION, over the transitions these tests
+// actually drive - the deliberate ownership transfer through PATCH .../members/{user}, a
+// removal and a departure through DELETE .../members/{user}, and DeleteAccount's automatic
+// transfer and its archive branch through DELETE /me. This is not an audit of every
+// plan_members.role write path in the codebase, and real §9.1-adjacent defects are invisible to
+// it. Each is named below with the mutation that measures it and the test that does catch it:
+//
+//   - CreatePlan's owner-row write is NOT exercised here. Nothing below calls POST /plans; every
+//     Plan is seeded through the factory and the member() helper. Measured: writing the
+//     creator's own membership as `admin` instead of `owner` leaves this whole file green and
+//     reds CreatePlanTest's "writes the Plan, the owner active membership and one plan.created
+//     row" - that, and nothing else in the suite. Do not widen this file to cover it; that test
+//     is where it is covered.
+//
+//   - PlanPermissions::canRemoveMember's "nobody removes the Owner" rule is NOT exercised here
+//     and cannot be, whatever the mutation: the only removal below is the new owner removing the
+//     demoted outgoing one, so nothing here ever names an Owner as a removal target. Measured:
+//     letting both the Owner and the Admin arm permit an Owner target leaves this file green and
+//     reds PlanPermissionsTest's "matches blueprint section 3 point 3" matrix case and
+//     LeaveAndRemoveMemberTest's "lets an admin remove a member but not another admin, and
+//     never the owner" - those, and nothing else.
+//
+// AcceptInvite is the one Wave 2 write path that could break this invariant and that no test
+// guards, here or anywhere: it assigns plan_members.role from plan_invites.role, a string column
+// under no CHECK and with no enum cast, on a route a non-member can reach. It is not in the tree
+// yet, so nothing here can drive it - whichever change ships it owes its own
+// one-active-owner-row assertion.
+//
+// What this file does hold alone: the assertions below count rows that are role = owner AND
+// status = active, which nothing else in the suite does. So a defect in a path this file DOES
+// drive surfaces here under the name of the broken PROPERTY, and - for the transfer and the
+// removal - in the member-route tests too under the name of the missing WRITE.
+
 it('holds the one-owner invariant across a transfer, a removal and a departure', function (): void {
     // A local closure rather than a file-scope function: Pest loads each test file into the
     // global namespace, so a file-scope `function` is process-global and the second file that
