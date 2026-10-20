@@ -15,18 +15,29 @@ use function Pest\Laravel\withToken;
 uses(RefreshDatabase::class);
 
 it('lists the active members of a Plan the actor belongs to, longest-standing first', function (): void {
-    $owner = userWithPassword();
-    $second = User::factory()->hasProfile(['display_name' => 'Grace Hopper'])->create();
+    // Users created in the REVERSE of the order the list must return, deliberately, and
+    // BEFORE the Plan or any plan_members row: ids are UUIDv7 and therefore time-sortable, so
+    // this also puts plan_members.user_id in strictly descending order against the joined_at
+    // order the assertions below require. Measured rather than assumed to be unnecessary:
+    // with plan_members.plan_id = ? as the only equality predicate, Postgres chooses an Index
+    // Scan on plan_members_plan_id_user_id_unique(plan_id, user_id) - EXPLAIN confirms it -
+    // which returns rows in user_id order with NO ORDER BY at all. A fixture whose user_id
+    // order already agreed with joined_at order (creating $owner, then $second, then $third,
+    // in that order, as an earlier version of this fixture did) would stay green with both of
+    // `listActiveMembers()`'s ->orderBy() calls deleted, because the index scan's own order
+    // would satisfy the assertions by coincidence - the exact "sorted-by-accident pass" this
+    // comment warns against, just from a different accidental source than row-insertion order.
     $third = User::factory()->hasProfile(['display_name' => 'Ada Lovelace'])->create();
+    $second = User::factory()->hasProfile(['display_name' => 'Grace Hopper'])->create();
+    $owner = userWithPassword();
 
     $plan = Plan::factory()->create(['owner_id' => $owner->id]);
 
-    // Inserted in the REVERSE of the order the list must return, deliberately. Rows seeded in
-    // the expected order come back in it from Postgres often enough that an ORDER BY deleted
-    // from the query would leave this test green - a sorted-by-accident pass. The ids are
-    // UUIDv7 and therefore time-sortable, so insertion order is also id order, which is the
-    // list's own tie-break: seeding backwards puts the two orderings in opposition and only a
-    // real `ORDER BY joined_at ASC` can satisfy the assertions below.
+    // plan_members row insertion, ALSO scrambled, and independently of the user-id ordering
+    // above: this opposes a sort-by-accident from plan_members' own heap/TID order (or from a
+    // planner choice keyed on plan_members.id) the same way the paragraph above opposes one
+    // keyed on user_id. Only a real `ORDER BY joined_at ASC, id ASC` can satisfy every
+    // assertion below against both scrambles at once.
     member($plan, $third, MemberRole::Member, '2026-01-03 10:00:00.000003+00');
     member($plan, $owner, MemberRole::Owner, '2026-01-01 10:00:00.000001+00');
     member($plan, $second, MemberRole::Admin, '2026-01-02 10:00:00.000002+00');
