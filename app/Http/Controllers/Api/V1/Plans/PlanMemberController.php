@@ -55,8 +55,8 @@ final class PlanMemberController
         // handing that straight to additional() fails `make openapi` with
         // "[SE001] Schema UnknownType is not allowed" under --fail-on-unknown. No generic
         // argument, a declared accessor on CursorPage, and removing CursorPage's own
-        // @template tag were each measured and each fail identically (Task 18's report), so
-        // the fix is confined to this read site rather than to the shared DTO. The
+        // @template tag entirely were each measured and each fail identically, so the fix is
+        // confined to this read site rather than to the shared DTO. The
         // ternary forces a fresh, concrete type per branch - a literal null, and a `(string)`
         // cast whose result type does not depend on the unresolved template of its operand.
         // The cast is load-bearing: the ternary without it fails identically, and without

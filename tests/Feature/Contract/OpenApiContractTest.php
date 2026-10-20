@@ -390,14 +390,15 @@ it('wraps every success response in the data envelope', function (): void {
     }
 
     // Counted, so this cannot go vacuous again if the traversal ever stops finding anything.
-    // Eleven enveloped success responses before this task (register, login, refresh,
-    // verify-email, GET /me, PATCH /me, GET /plans/{plan}, POST /plans, PATCH /plans/{plan},
-    // POST /plans/{plan}/archive, GET /plans) and five bodyless ones (logout, DELETE /me,
-    // reset-password, forgot-password, DELETE /plans/{plan}). This task adds the twelfth
-    // enveloped response, GET /plans/{plan}/members -> 200, and no bodyless one: predicted
-    // +1/+0 before regenerating (per plan-corrections.md B21a - this literal is derived from
-    // the shape, not copied off the diff it produces), and confirmed against the regenerated
-    // document.
+    // True of all seventeen operations today and asserted nowhere else - the sum below,
+    // 12 + 5, already reads seventeen. Eleven enveloped success responses before this task
+    // (register, login, refresh, verify-email, GET /me, PATCH /me, GET /plans/{plan},
+    // POST /plans, PATCH /plans/{plan}, POST /plans/{plan}/archive, GET /plans) and five
+    // bodyless ones (logout, DELETE /me, reset-password, forgot-password,
+    // DELETE /plans/{plan}). This task adds the twelfth enveloped response,
+    // GET /plans/{plan}/members -> 200, and no bodyless one: the literal is derived from the
+    // shape rather than copied off the printed diff - predicted +1/+0 before regenerating, and
+    // confirmed against the regenerated document.
     expect([$enveloped, $bodyless])->toBe([12, 5]);
 });
 
@@ -581,10 +582,10 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // (Task 15, the first Wave 2 route to add a path parameter), three for Task 17's three
     // parameterised routes (PATCH /plans/{plan}, DELETE /plans/{plan} and
     // POST /plans/{plan}/archive each carry the one {plan} path parameter), and three for
-    // GET /plans's status, limit and cursor. This task adds three more (+3, per
-    // controller-amendments.md Amendment 2, measured by counting the `parameters` arrays in the
-    // regenerated document, not assumed from the route count): GET /plans/{plan}/members's
-    // {plan} path parameter plus its limit and cursor query parameters - fourteen today. A
+    // GET /plans's status, limit and cursor. This task adds three more (+3, measured by
+    // counting the `parameters` arrays in the regenerated document, not assumed from the route
+    // count): GET /plans/{plan}/members's {plan} path parameter plus its limit and cursor
+    // query parameters - fourteen today. A
     // Wave 2 route with a path or query parameter moves this number, and is meant to: any task
     // that adds one must update this literal in the same commit and state the arithmetic it
     // contributes (+1, +2, ...) in its report. Task 39 re-derives the final absolute count from
@@ -687,11 +688,10 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     //
     // Task 18 added exactly one more: GET /plans's 200 (Scramble's own inferred description for
     // an AnonymousResourceCollection return type, not authored prose - no #[Response] attribute
-    // exists on ListPlansController). This task adds exactly two more, both named in its report
-    // (controller-amendments.md Amendment 2): GET /plans/{plan}/members's 200 (Scramble's own
-    // inferred description for an AnonymousResourceCollection return type, the identical
-    // mechanism GET /plans added, not authored prose) and its 404 (the #[ResponseDoc] attribute
-    // on PlanMemberController::index()).
+    // exists on ListPlansController). This task adds exactly two more: GET /plans/{plan}/members's
+    // 200 (Scramble's own inferred description for an AnonymousResourceCollection return type,
+    // the identical mechanism GET /plans added, not authored prose) and its 404 (the
+    // #[ResponseDoc] attribute on PlanMemberController::index()).
     expect($allProsePaths)->toEqualCanonicalizing([
         'paths./auth/verify-email.post.summary',
         'paths./auth/verify-email.post.description',

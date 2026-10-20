@@ -36,8 +36,11 @@ it('lists the active members of a Plan the actor belongs to, longest-standing fi
     // plan_members row insertion, ALSO scrambled, and independently of the user-id ordering
     // above: this opposes a sort-by-accident from plan_members' own heap/TID order (or from a
     // planner choice keyed on plan_members.id) the same way the paragraph above opposes one
-    // keyed on user_id. Only a real `ORDER BY joined_at ASC, id ASC` can satisfy every
-    // assertion below against both scrambles at once.
+    // keyed on user_id. These three distinct joined_at values are a second apart, so this
+    // fixture exercises `ORDER BY joined_at ASC` alone - it proves nothing about the `id ASC`
+    // secondary key, because no two rows here ever tie on joined_at for it to break. The
+    // secondary key's own case is "breaks a joined_at tie by id, not by insertion order",
+    // below.
     member($plan, $third, MemberRole::Member, '2026-01-03 10:00:00.000003+00');
     member($plan, $owner, MemberRole::Owner, '2026-01-01 10:00:00.000001+00');
     member($plan, $second, MemberRole::Admin, '2026-01-02 10:00:00.000002+00');
@@ -68,6 +71,56 @@ it('lists the active members of a Plan the actor belongs to, longest-standing fi
     // and the missing envelope.
     expect($response->json('meta'))
         ->toBe(['next_cursor' => null], 'a single-page list must still publish the meta envelope');
+});
+
+it('breaks a joined_at tie by id, not by insertion order', function (): void {
+    $owner = userWithPassword();
+    $plan = Plan::factory()->create(['owner_id' => $owner->id]);
+
+    member($plan, $owner, MemberRole::Owner, '2026-01-01 10:00:00+00');
+
+    // Two members who join in the exact same instant - not a contrived edge case. Every
+    // timestamptz(6) column this schema writes receives whole seconds from the application's
+    // own writers (residual 15: the date-cast dirty check and every Carbon-backed write both
+    // truncate to the second), so two people accepting an invite inside one second is the
+    // production-likely case §6.3's secondary `id ASC` key exists for, not a corner one.
+    // `joined_at ASC` alone cannot order these two rows - only the secondary key can, and the
+    // test above never produces a tie for it to break.
+    //
+    // $tiedSecond's USER is created first (smaller user_id) but its plan_members ROW is
+    // inserted second (larger plan_members.id) - the opposite pairing from $tiedFirst.
+    // Measured rather than assumed to be necessary: a first version of this fixture created
+    // both the user and the plan_members row for $tiedFirst before either of $tiedSecond's,
+    // so user_id order and plan_members.id order agreed with each other, and the mutation this
+    // case exists to catch (deleting ->orderBy('plan_members.id') while keeping
+    // ->orderBy('plan_members.joined_at')) stayed green - Postgres's index scan on
+    // plan_members_plan_id_user_id_unique(plan_id, user_id) breaks a joined_at tie by user_id
+    // order with no explicit secondary key at all, so a fixture whose user_id order already
+    // agreed with the intended plan_members.id order would pass by the exact same coincidence
+    // the test above guards against, one column over. Scrambling the two orderings against
+    // each other is what makes the assertion below actually depend on the real secondary key.
+    $tiedSecond = User::factory()->hasProfile()->create();
+    $tiedFirst = User::factory()->hasProfile()->create();
+    $firstMembership = member($plan, $tiedFirst, MemberRole::Member, '2026-01-02 10:00:00+00');
+    $secondMembership = member($plan, $tiedSecond, MemberRole::Member, '2026-01-02 10:00:00+00');
+
+    // The expected order is id-ascending, derived from the two rows' own ids rather than
+    // assumed from call order: member() persists through PlanMember::factory()->create(), so
+    // $firstMembership's id is whichever actually sorted lower once both are written, and
+    // deriving it here means this test does not quietly depend on UUIDv7 monotonicity holding
+    // for the PlanMember rows the way it is only documented to for the User rows above.
+    [$expectedFirstUserId, $expectedSecondUserId] = $firstMembership->id < $secondMembership->id
+        ? [$tiedFirst->id, $tiedSecond->id]
+        : [$tiedSecond->id, $tiedFirst->id];
+
+    [, , $access] = signIn($owner);
+
+    withToken($access)->getJson("/api/v1/plans/{$plan->id}/members")
+        ->assertOk()
+        ->assertJsonCount(3, 'data')
+        ->assertJsonPath('data.0.user_id', $owner->id)
+        ->assertJsonPath('data.1.user_id', $expectedFirstUserId)
+        ->assertJsonPath('data.2.user_id', $expectedSecondUserId);
 });
 
 it('omits invited, left and removed rows, and says how many it expected', function (): void {
@@ -125,9 +178,9 @@ it('includes a suspended member and excludes a soft-deleted one', function (): v
     // §8.1: "A suspended member DOES appear: suspension is an account state, not a Plan state,
     // and hiding them would silently change a Plan's membership from the other members' point
     // of view. They cannot act - see §9.5." Residual, not fixed by this test: the repository
-    // read filters only plan_members.status, so a suspended member counts and appears here -
-    // latent per plan-corrections.md G8b, not live today because nothing in app/ writes
-    // suspended_at outside this test's direct column set.
+    // read filters only plan_members.status, so a suspended member counts and appears here.
+    // Latent rather than live today, because nothing in app/ writes suspended_at outside this
+    // test's own direct column set.
     withToken($access)->getJson("/api/v1/plans/{$plan->id}/members")
         ->assertOk()
         ->assertJsonCount(2, 'data')
