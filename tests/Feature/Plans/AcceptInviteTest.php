@@ -106,6 +106,18 @@ it('writes none of the three when the activity write fails, proving the transact
     // no call site is touched. The claim and the membership write genuinely execute first, so
     // the only thing that can explain their absence below is the rollback - the 500, which
     // arrives either way, is explicitly NOT the observation.
+    //
+    // THIS is the transaction's one partial-state proof. Deleting DB::transaction() from
+    // execute() also reds 'reports the already-a-member case when a concurrent join committed
+    // first' below, but that second red is NOT a second independent proof: it fails on a bare
+    // assertOk() status check, forced by Postgres's own abort semantics once the ambient
+    // connection is poisoned by 25P02 (no local transaction means no SAVEPOINT for the race
+    // case's duplicate-key insert, so the error propagates into the shared test transaction and
+    // every subsequent statement - including that test's own recovery read - 25P02s before any
+    // partial-state assertion of its own can run). It is a consequence of the same missing
+    // boundary this test proves directly, not a second measurement of it - if this test were
+    // ever weakened or deleted, that one would still fire and would still look like proof while
+    // only showing that the connection was poisoned.
     $owner = User::factory()->hasProfile()->create();
     $plan = ownedPlan($owner);
     [$invite, $token] = invited($plan, $owner, MemberRole::Member);
@@ -438,6 +450,57 @@ it('refuses an owner-role invite with 409, logs it, and writes no second active 
     expect(PlanActivity::query()->where('activity_type', ActivityType::MemberJoined->value)->count())->toBe(0);
 });
 
+it('refuses an owner-role invite with 409 even for an actor who is already an active member', function (): void {
+    // Pins a deliberate design choice that nothing else in this file exercises: the owner-role
+    // check sits BEFORE the already-active-member short-circuit (step 5), not after it, so it
+    // fires on every live presentation of such an invite regardless of the actor's existing
+    // membership - not only on the subset of attempts that would otherwise write a genuinely
+    // new row. Moving the check to AFTER the short-circuit leaves the rest of this file green
+    // (nothing else presents an owner-role invite to an already-active member), because that
+    // ordering would answer this actor's request with the short-circuit's silent 200/no-op
+    // before the check is ever reached - this is the one case that distinguishes the two
+    // orderings, and it is why the check is unconditional.
+    $owner = User::factory()->hasProfile()->create();
+    $plan = ownedPlan($owner);
+
+    $existing = userWithPassword();
+    member($plan, $existing, MemberRole::Member, '2026-01-02T00:00:00+00:00');
+
+    [$invite, $token] = invited($plan, $owner, MemberRole::Member);
+    DB::table('plan_invites')->where('id', $invite->id)->update(['role' => MemberRole::Owner->value]);
+
+    [, , $access] = signIn($existing);
+
+    $logs = captureLogs();
+
+    withToken($access)->postJson("/api/v1/plans/{$plan->id}/join", ['token' => $token])
+        ->assertStatus(409)
+        ->assertJsonPath(
+            'message',
+            'This invite cannot be accepted because it would make you a second owner of this Plan.',
+        );
+
+    $warnings = array_values(array_filter(
+        capturedLogRecords($logs),
+        fn (array $record): bool => $record['message'] === 'security.invite.owner_role_refused',
+    ));
+
+    expect($warnings)->toHaveCount(1);
+    expect($warnings[0]['context']['actor_id'] ?? null)->toBe($existing->id);
+
+    // The actor's own role is untouched - no promotion, no demotion, no second owner row.
+    expect(PlanMember::query()->where('user_id', $existing->id)->sole()->role)
+        ->toBe(MemberRole::Member->value);
+    expect(PlanMember::query()
+        ->where('plan_id', $plan->id)
+        ->where('role', MemberRole::Owner->value)
+        ->where('status', MemberStatus::Active->value)
+        ->count())->toBe(1, 'the §9.1 invariant: exactly one active owner row for the Plan, unchanged');
+
+    expect(DB::table('plan_invites')->where('id', $invite->id)->whereNull('accepted_at')->count())->toBe(1);
+    expect(PlanActivity::query()->where('activity_type', ActivityType::MemberJoined->value)->count())->toBe(0);
+});
+
 it('answers 422 for a token of the wrong length, before any invite lookup', function (): void {
     $owner = User::factory()->hasProfile()->create();
     $plan = ownedPlan($owner);
@@ -495,6 +558,11 @@ it('reports the already-a-member case when a concurrent join committed first', f
     // this interface's four-method shape was first drafted, so the double has to implement it
     // too or PHP fatals ("Class@anonymous ... must implement findActiveMemberView") before this
     // test ever runs.
+    //
+    // NOT a second atomicity proof. If DB::transaction() were ever removed from execute(), this
+    // case would also 500 (25P02, via the mechanism 'writes none of the three...' documents) -
+    // but that is a status-check red forced by a poisoned connection, not an independent
+    // partial-state observation. The transaction's proof lives on that other test alone.
     $owner = User::factory()->hasProfile()->create();
     $plan = ownedPlan($owner);
     [$invite, $token] = invited($plan, $owner, MemberRole::Admin);
