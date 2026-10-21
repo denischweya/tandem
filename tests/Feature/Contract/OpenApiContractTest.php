@@ -1083,9 +1083,14 @@ it('publishes no component schema without properties, so no native enum reaches 
     // schema to register. count($schemas) against the regenerated document is unchanged.
     //
     // InvitePreviewResource (GET /invites/{token}) adds ONE, raising the floor again.
+    //
+    // Task 26 adds TWO more: InvitePlanMemberRequest (a body FormRequest - its fields carry no
+    // /** @query */, so it publishes like ChangeMemberRoleRequest rather than like
+    // ListPlanMembersRequest) and PlanInviteCreatedResource, reachable from a route for the
+    // first time (POST /plans/{plan}/invites). The floor is raised again, in this same commit.
     expect(count($schemas))->toBeGreaterThanOrEqual(
-        14,
-        'components.schemas published fewer than the fourteen schemas this traversal expects to '
+        16,
+        'components.schemas published fewer than the sixteen schemas this traversal expects to '
         .'check, so most of them were skipped rather than verified.',
     );
 
@@ -1118,27 +1123,28 @@ it('publishes no *Resource schema with a $ref to a domain enum', function (): vo
     // since Task 21 routed PlanMemberResource. The hypothetical's force never depended on the
     // figure, so the figure is gone rather than corrected again.) Filtering
     // components.schemas's own keys by /Resource$/ instead means every name this walks is
-    // guaranteed to exist in the document - it cannot "walk" a name that was never there. Today
-    // that derived set is PlanMemberResource, PlanResource, SessionResource and UserResource
-    // (this task added PlanMemberResource); it will include this section's other four Plan
-    // Resources as the Plans section's remaining list routes land, with no edit here required
-    // for the $ref check itself.
+    // guaranteed to exist in the document - it cannot "walk" a name that was never there. The
+    // derived set grows as more of this section's Resources become reachable from a route (no
+    // snapshot of its current members is kept here - see the floor assertion right below, which
+    // IS re-measured on every task that moves it); no edit is required here for the $ref check
+    // itself when that happens, only for the floor.
     $resourceSchemaNames = array_values(array_filter(
         array_keys(Arr::wrap(data_get(openApiDocument(), 'components.schemas'))),
         fn (string $name): bool => (bool) preg_match('/Resource$/', $name),
     ));
 
-    // >= 5, not merely non-empty, for the reason the components.schemas case above carries a
+    // >= 6, not merely non-empty, for the reason the components.schemas case above carries a
     // floor rather than a bare not-empty check: measured today (InvitePreviewResource,
-    // PlanMemberResource, PlanResource, SessionResource, UserResource - this task raised this
-    // floor from four, having routed InvitePreviewResource). A number about a literal somewhere
-    // else in the file decays exactly like one about the file itself, so none is quoted here.
+    // PlanInviteCreatedResource, PlanMemberResource, PlanResource, SessionResource,
+    // UserResource - this task raised this floor from five, having routed
+    // PlanInviteCreatedResource for the first time). A number about a literal somewhere else in
+    // the file decays exactly like one about the file itself, so none is quoted here.
     // A document that lost every *Resource schema would still pass a bare not-empty check
     // while this walk verified nothing; growing the floor is this task's obligation whenever a
     // Plan Resource newly starts being returned by a route.
     expect(count($resourceSchemaNames))->toBeGreaterThanOrEqual(
-        5,
-        'fewer than five *Resource schemas are published, so this walk is checking almost '
+        6,
+        'fewer than six *Resource schemas are published, so this walk is checking almost '
         .'nothing - either the suffix filter stopped matching or a schema genuinely vanished',
     );
 
