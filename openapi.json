@@ -1013,6 +1013,102 @@
                 }
             }
         },
+        "/plans/{plan}/activity": {
+            "get": {
+                "operationId": "plans.activity.index",
+                "tags": [
+                    "PlanActivity"
+                ],
+                "parameters": [
+                    {
+                        "name": "plan",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100
+                        }
+                    },
+                    {
+                        "name": "cursor",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Array of `PlanActivityResource`",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/components/schemas/PlanActivityResource"
+                                            }
+                                        },
+                                        "meta": {
+                                            "type": "object",
+                                            "properties": {
+                                                "next_cursor": {
+                                                    "type": [
+                                                        "string",
+                                                        "null"
+                                                    ]
+                                                }
+                                            },
+                                            "required": [
+                                                "next_cursor"
+                                            ]
+                                        }
+                                    },
+                                    "required": [
+                                        "data",
+                                        "meta"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/AuthenticationException"
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/ValidationException"
+                    },
+                    "404": {
+                        "description": "No Plan with this id is visible to the signed-in user. A Plan that does not exist and a Plan the user is not an active member of answer identically.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/plans/{plan}/members": {
             "get": {
                 "operationId": "plans.members.index",
@@ -1843,6 +1939,60 @@
                     "password"
                 ],
                 "title": "LoginRequest"
+            },
+            "PlanActivityResource": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "activity_type": {
+                        "type": "string"
+                    },
+                    "actor_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "actor_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "subject_type": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "subject_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "metadata": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                },
+                "required": [
+                    "id",
+                    "activity_type",
+                    "actor_id",
+                    "actor_name",
+                    "subject_type",
+                    "subject_id",
+                    "metadata",
+                    "created_at"
+                ],
+                "title": "PlanActivityResource"
             },
             "PlanInviteCreatedResource": {
                 "type": "object",

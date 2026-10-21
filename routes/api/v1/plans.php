@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\Plans\GetPlanController;
 use App\Http\Controllers\Api\V1\Plans\InvitePlanMemberController;
 use App\Http\Controllers\Api\V1\Plans\ListPlanInvitesController;
 use App\Http\Controllers\Api\V1\Plans\ListPlansController;
+use App\Http\Controllers\Api\V1\Plans\PlanActivityController;
 use App\Http\Controllers\Api\V1\Plans\PlanMemberController;
 use App\Http\Controllers\Api\V1\Plans\RevokeInviteController;
 use App\Http\Controllers\Api\V1\Plans\UpdatePlanController;
@@ -149,6 +150,15 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::delete('/plans/{plan}/invites/{invite}', RevokeInviteController::class)
         ->middleware('verified')
         ->name('plans.invites.destroy');
+
+    // Deliberately NOT behind `verified`, and spec §7.5 is where the decision is argued: the
+    // gate covers every Plan route that acts on another member's behalf or creates state other
+    // members see, and it covers no read. A newly joined member on an unverified account has to
+    // be able to read the feed of the Plan they just joined. No throttle either: this is an
+    // authenticated read scoped to one Plan the caller is already a member of, and spec §13's
+    // limited routes do not include it. ActivityFeedTest asserts both the exemption and that
+    // GET is the only method published under this URI.
+    Route::get('/plans/{plan}/activity', PlanActivityController::class)->name('plans.activity.index');
 });
 
 // Outside the `auth:sanctum` group above, as its own standalone Route::post() with its own
