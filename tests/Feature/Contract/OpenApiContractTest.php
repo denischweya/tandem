@@ -13,6 +13,7 @@ use App\Http\Requests\Api\V1\Auth\VerifyEmailRequest;
 use App\Http\Requests\Api\V1\Plans\ChangeMemberRoleRequest;
 use App\Http\Requests\Api\V1\Plans\CreatePlanRequest;
 use App\Http\Requests\Api\V1\Plans\InvitePlanMemberRequest;
+use App\Http\Requests\Api\V1\Plans\JoinPlanRequest;
 use App\Http\Requests\Api\V1\Plans\ListPlansRequest;
 use App\Http\Requests\Api\V1\Plans\UpdatePlanRequest;
 use App\Http\Requests\Api\V1\UpdateProfileRequest;
@@ -264,6 +265,11 @@ it('declares every error status the application itself raises', function (): voi
         ['post', '/plans/{plan}/invites', '409'],
         // InvitePlanMemberTest: "rate limits invites to twenty an hour for one Plan"
         ['post', '/plans/{plan}/invites', '429'],
+        // AcceptInviteTest: "answers one byte-identical 404 for every way the join can fail"
+        ['post', '/plans/{plan}/join', '404'],
+        // AcceptInviteTest: "refuses an owner-role invite with 409, logs it, and writes no
+        // second active owner row"
+        ['post', '/plans/{plan}/join', '409'],
     ];
 
     foreach ($expected as [$method, $path, $status]) {
@@ -468,7 +474,11 @@ it('wraps every success response in the data envelope', function (): void {
     // number and not the second - the arithmetic check A29 names, `+ (1, 0)` against the
     // previous base of [13, 6]. If the diff ever prints a pair this reasoning does not predict,
     // something other than the task shipped - that is the defect, not the literal.
-    expect([$enveloped, $bodyless])->toBe([15, 6]);
+    //
+    // Task 27's own delta is also `+ (1, 0)` against the base of [15, 6] immediately above:
+    // POST /plans/{plan}/join's one 200 returns PlanResource (JsonResource, `data`-wrapped),
+    // and it adds no bodyless 2xx at all.
+    expect([$enveloped, $bodyless])->toBe([16, 6]);
 });
 
 it('publishes both session expiries as date-time, not as a bare string', function (): void {
@@ -507,6 +517,10 @@ it('publishes required-versus-optional exactly as the rules state it', function 
         // read. This one's single key carries no @query, so there is.
         'ChangeMemberRoleRequest' => ChangeMemberRoleRequest::class,
         'InvitePlanMemberRequest' => InvitePlanMemberRequest::class,
+        // The invites section's Task C. Its single `token` key carries no /** @query */, so it
+        // publishes a request BODY schema exactly as ChangeMemberRoleRequest and
+        // InvitePlanMemberRequest do, unlike ListPlanMembersRequest and ListPlansRequest.
+        'JoinPlanRequest' => JoinPlanRequest::class,
     ];
 
     foreach ($classes as $schemaName => $class) {
@@ -691,8 +705,11 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // that adds one must update this literal in the same commit and state the arithmetic it
     // contributes (+1, +2, ...) in its report. Task 39 re-derives the final absolute count from
     // the regenerated document rather than trusting any task's arithmetic forward.
+    //
+    // This task's own +1: POST /plans/{plan}/join's one {plan} path parameter - a NEW path
+    // (Amendment 2), not a second method on an already-published one, so no doubling applies.
     expect($parameterCount)->toBe(
-        20,
+        21,
         'The parameter walk above visited a different number of parameter objects than the '
         .'document publishes. Either a route gained or lost a parameter - in which case this '
         .'number moves with it (update the literal here in the same commit, and say by how much '
@@ -825,7 +842,7 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // 403, 404 and 409 (the three #[ResponseDoc] attributes on
     // PlanMemberController::destroy()).
     //
-    // This task adds three, all at GET /invites/{token}: its 200 (Scramble's own inferred
+    // Task 25 adds three, all at GET /invites/{token}: its 200 (Scramble's own inferred
     // description for an InvitePreviewResource return type - no #[Response] attribute exists
     // for it, since 200 needs no authoring the way 404 and 429 do) and its 404 and 429 (the
     // two #[Response] attributes on PreviewInviteController, both load-bearing per §6's note
@@ -833,6 +850,18 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // invisible to Scramble's own inference). No new $prose entry: this route publishes no
     // client-facing summary or description of its own beyond the per-response ones already
     // counted here, and if one ever appears it belongs in BOTH literals in the same commit.
+    //
+    // Task 26 adds five, all at POST /plans/{plan}/invites: its 201 (inferred, for the
+    // PlanInviteCreatedResource return type) and its 403, 404, 409 and 429 (the four
+    // #[Response] attributes on InvitePlanMemberController). Recorded here rather than left
+    // implicit - this paragraph was missing from that task's own commit, which added the five
+    // paths to the literal below without a matching attribution sentence; corrected in passing
+    // while adding this task's own paragraph to the same comment block.
+    //
+    // This task adds three, all at POST /plans/{plan}/join: its 200 (inferred, for the
+    // PlanResource return type) and its 404 and 409 (the two #[Response] attributes on
+    // AcceptInviteController - 404 for every unusable-invite case, 409 for the one Decision 9
+    // adds). No new $prose entry here either, for the same reason Task 25's three carry none.
     expect($allProsePaths)->toEqualCanonicalizing([
         'paths./auth/verify-email.post.summary',
         'paths./auth/verify-email.post.description',
@@ -888,6 +917,9 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         'paths./plans/{plan}/invites.post.responses.404.description',
         'paths./plans/{plan}/invites.post.responses.409.description',
         'paths./plans/{plan}/invites.post.responses.429.description',
+        'paths./plans/{plan}/join.post.responses.200.description',
+        'paths./plans/{plan}/join.post.responses.404.description',
+        'paths./plans/{plan}/join.post.responses.409.description',
         'components.responses.ValidationException.description',
         'components.responses.ValidationException.content.application/json.schema.properties.message.description',
         'components.responses.ValidationException.content.application/json.schema.properties.errors.description',
@@ -1088,9 +1120,13 @@ it('publishes no component schema without properties, so no native enum reaches 
     // /** @query */, so it publishes like ChangeMemberRoleRequest rather than like
     // ListPlanMembersRequest) and PlanInviteCreatedResource, reachable from a route for the
     // first time (POST /plans/{plan}/invites). The floor is raised again, in this same commit.
+    //
+    // This task adds ONE more: JoinPlanRequest, for the same reason InvitePlanMemberRequest did
+    // - its single `token` key carries no /** @query */, so it publishes a request body schema.
+    // PlanResource, this route's response, is already counted (Task 15) and adds nothing new.
     expect(count($schemas))->toBeGreaterThanOrEqual(
-        16,
-        'components.schemas published fewer than the sixteen schemas this traversal expects to '
+        17,
+        'components.schemas published fewer than the seventeen schemas this traversal expects to '
         .'check, so most of them were skipped rather than verified.',
     );
 

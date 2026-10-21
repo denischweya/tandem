@@ -97,4 +97,22 @@ final readonly class PlanInviteTokens
 
         return InviteState::Valid;
     }
+
+    /**
+     * Stamps the row single-use. PasswordResetTokens::claim() is this method with one fewer
+     * column - and the extra column is the point: accepted_by records who actually joined, which
+     * is the whole of §10.6's trail, because an invite with a non-null email may be accepted by
+     * any authenticated user who holds the token.
+     *
+     * forceFill, because nothing on PlanInvite is mass-assignable. No transaction of its own: it
+     * must join the caller's, so the claim, the membership row and the activity row commit or
+     * roll back together.
+     */
+    public function claim(PlanInvite $invite, User $acceptedBy): void
+    {
+        $invite->forceFill([
+            'accepted_at' => $this->clock->now(),
+            'accepted_by' => $acceptedBy->id,
+        ])->save();
+    }
 }

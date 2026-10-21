@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\V1\Plans\AcceptInviteController;
 use App\Http\Controllers\Api\V1\Plans\ArchivePlanController;
 use App\Http\Controllers\Api\V1\Plans\CreatePlanController;
 use App\Http\Controllers\Api\V1\Plans\DeletePlanController;
@@ -110,6 +111,25 @@ Route::middleware('auth:sanctum')->group(function (): void {
     // No `throttle:`: §13.4 limits plans-create, plan-invites and invite-lookup only.
     Route::delete('/plans/{plan}/members/{user}', [PlanMemberController::class, 'destroy'])
         ->name('plans.members.destroy');
+
+    // NOT gated on `verified`, and the exemption is written here with its reason, following the
+    // precedent this file's own DELETE /plans/{plan}/members/{user} comment sets. §7.5: joining
+    // is the one Plan action whose authority comes from a credential SOMEONE ELSE issued - an
+    // owner or admin minted the invite, and for the email channel the API delivered it to a
+    // specific address. Email verification exists to prove a registrant controls the address
+    // they claimed; requiring it before an email-addressed invite can be accepted demands the
+    // same proof twice, and for the link channel the token IS the proof. Spec §17.7 has the
+    // recipient "register, and join" with no verification step, so a `verified` entry here makes
+    // that criterion unsatisfiable.
+    //
+    // NOT throttled either (§13.4): the caller must already hold a 64-hex single-use invite, so
+    // there is nothing to brute-force and nothing a second request would gain. Issuance is where
+    // the limit belongs, and §13.2 puts it there.
+    //
+    // No per-route `auth:sanctum`: the enclosing group already applies it, exactly as
+    // plans.members.destroy's own comment records for the same reason.
+    Route::post('/plans/{plan}/join', AcceptInviteController::class)
+        ->name('plans.join');
 });
 
 // Outside the `auth:sanctum` group above, as its own standalone Route::post() with its own

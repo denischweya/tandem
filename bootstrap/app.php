@@ -6,6 +6,7 @@ use App\Application\Auth\InvalidRefreshToken;
 use App\Application\Plans\ActorEmailNotVerified;
 use App\Application\Plans\InviteNotUsable;
 use App\Application\Plans\OwnerCannotLeave;
+use App\Application\Plans\OwnerInviteNotAcceptable;
 use App\Application\Plans\PlanMemberNotFound;
 use App\Application\Plans\PlanNotEditable;
 use App\Application\Plans\PlanNotInvitable;
@@ -192,6 +193,19 @@ return Application::configure(basePath: dirname(__DIR__))
         // every closure above.
         $exceptions->render(fn (PlanNotInvitable $e) => new JsonResponse(
             ['message' => 'This Plan is private, so nobody else can be invited to it.'],
+            409,
+        ));
+
+        // 409, like PlanNotInvitable and PlanNotEditable above - the request is well-formed and
+        // the caller did nothing wrong, so this is a state conflict rather than a validation
+        // failure. UNLIKE every exception above, this class carries NO dontReport() entry: a
+        // non-member probing a Plan id or a dead invite link is expected traffic at a rate that
+        // scales with traffic, but a plan_invites row carrying role = 'owner' is a data-integrity
+        // signal - see OwnerInviteNotAcceptable's own docblock for the human ruling behind this.
+        // Leaving it reportable is what makes the accompanying Log::warning() in AcceptInvite
+        // mean something: this is the one refusal in the wave meant to be noticed, not absorbed.
+        $exceptions->render(fn (OwnerInviteNotAcceptable $e) => new JsonResponse(
+            ['message' => 'This invite cannot be accepted because it would make you a second owner of this Plan.'],
             409,
         ));
     })->create();
