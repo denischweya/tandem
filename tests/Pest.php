@@ -15,11 +15,13 @@ use App\Models\PlanMember;
 use App\Models\User;
 use Illuminate\Contracts\Translation\Translator;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\PendingCommand;
 use Illuminate\Translation\PotentiallyTranslatedString;
 use Monolog\Handler\TestHandler;
@@ -437,4 +439,226 @@ function recordingFailClosure(array &$failures): Closure
 
         return new PotentiallyTranslatedString($message, $translator);
     };
+}
+
+/**
+ * Every route the API publishes under api/v1, as [method, path-as-written-in-the-document, route].
+ *
+ * Read off Laravel's route table rather than off openapi.json, so an endpoint added without
+ * regenerating fails the assertions that use this instead of being skipped by them. The `api/v1`
+ * prefix is stripped because `servers` already carries it, which is why the document's keys are
+ * `/auth/login` and not `/api/v1/auth/login`.
+ *
+ * Moved here from tests/Feature/Contract/OpenApiContractTest.php, unchanged, because three
+ * files now want it and Pest loads each test file into the global namespace: a second copy
+ * would be a fatal "Cannot redeclare documentedRoutes()", not a test failure. Its remaining
+ * call sites in that file keep working, because this file is the one place Pest loads exactly
+ * once for every suite.
+ *
+ * @return list<array{string, string, RoutingRoute}>
+ */
+function documentedRoutes(): array
+{
+    $routes = [];
+
+    foreach (Route::getRoutes()->getRoutes() as $route) {
+        $uri = $route->uri();
+
+        if (! str_starts_with($uri, 'api/v1/')) {
+            continue;
+        }
+
+        foreach ($route->methods() as $method) {
+            if ($method === 'HEAD') {
+                continue;
+            }
+
+            $routes[] = [strtolower($method), '/'.substr($uri, strlen('api/v1/')), $route];
+        }
+    }
+
+    return $routes;
+}
+
+/**
+ * Every Plan route, as documentedRoutes() rows.
+ *
+ * The filter is on element [1], which documentedRoutes() has ALREADY stripped the `api/v1/`
+ * prefix from: the value is `/plans/{plan}`, never `api/v1/plans/{plan}`. A filter written
+ * against 'api/v1/plans' matches zero rows, every foreach over this helper never executes, and
+ * a refusal suite built on it passes having asserted nothing. That is why every such suite
+ * asserts a counter against a literal, and why one of them compares these keys against a
+ * hand-written list: a derived list and a literal cannot be emptied together.
+ *
+ * `=== '/plans'` is spelled out beside the prefix test rather than folded into
+ * str_starts_with($row[1], '/plans'), so that a future `/plansomething` route does not quietly
+ * join the matrix.
+ *
+ * Guarantee: every row this returns is a real, currently-registered route - it cannot go stale
+ * by omission, because it is filtered from documentedRoutes() rather than listed by hand. Limit:
+ * it only sees routes whose path IS `/plans` or starts with `/plans/`; a Plan-related route
+ * registered under a different prefix would silently escape every consumer of this helper, which
+ * is exactly why the accounting suite below checks documentedRoutes() against the union of this,
+ * Wave 1a's routes and a named exemption list, rather than trusting this helper alone.
+ *
+ * @return list<array{string, string, RoutingRoute}>
+ */
+function planRouteTable(): array
+{
+    return array_values(array_filter(
+        documentedRoutes(),
+        fn (array $row): bool => $row[1] === '/plans' || str_starts_with($row[1], '/plans/'),
+    ));
+}
+
+/**
+ * Every Plan route as "<method> <path>", sorted - the key every refusal matrix is written against.
+ *
+ * Guarantee: sorted ascending, derived from planRouteTable(), so two call sites comparing this
+ * against their own literals are comparing against the same order every time. Limit: sorting
+ * destroys registration order, which is why a test that needs to reason about WHICH row fails
+ * first (registration order matters for a shared-fixture control) reads planRouteTable()
+ * directly instead of this.
+ *
+ * @return list<string>
+ */
+function planRouteKeys(): array
+{
+    $keys = array_map(
+        fn (array $row): string => $row[0].' '.$row[1],
+        planRouteTable(),
+    );
+
+    sort($keys);
+
+    return $keys;
+}
+
+/**
+ * A concrete request URI for a documented path, with every path parameter substituted.
+ *
+ * The `/api/v1` prefix is added back here, because documentedRoutes() strips it.
+ *
+ * The throw is a growth guard. A route that gains a third path parameter would otherwise be
+ * requested with a literal `{thing}` segment, match no route, and answer the ROUTER's
+ * pretty-printed 404 - which a body assertion would then report as a wrong refusal body rather
+ * than as a missing parameter, sending the implementer after the wrong defect.
+ *
+ * Guarantee: throws rather than silently requesting a malformed URI. Limit: it does not know
+ * which parameters a given path actually needs - passing an unused name is silently harmless,
+ * and that is deliberate, because it lets one call site hand the same three-entry map to every
+ * route regardless of how many parameters each one takes.
+ *
+ * @param  array<string, string>  $parameters
+ */
+function planRouteUri(string $path, array $parameters): string
+{
+    $uri = $path;
+
+    foreach ($parameters as $name => $value) {
+        $uri = str_replace('{'.$name.'}', $value, $uri);
+    }
+
+    if (str_contains($uri, '{')) {
+        throw new RuntimeException("Unsubstituted path parameter in [{$uri}]: add it to the parameter map in the calling suite.");
+    }
+
+    return '/api/v1'.$uri;
+}
+
+/**
+ * A request body each Plan route's FormRequest accepts, keyed "<method> <path>".
+ *
+ * Every refusal suite needs these because validation runs BEFORE the repository: a FormRequest
+ * is resolved by the controller dispatcher's parameter resolution, and Laravel's
+ * registerRequestValidation() afterResolving hook calls validateResolved() there - so a
+ * bodyless PATCH /plans/{plan} answers 422 and never reaches findVisibleTo(). A suite that
+ * accepted "404 or 422" would pass for a route that never consulted the Plan at all.
+ *
+ * Keyed, rather than derived, because only the route's own FormRequest knows what it accepts.
+ * The keys are checked against planRouteKeys() by callers such as
+ * tests/Feature/Security/NonMemberRefusalTest.php, so a route added without a payload row
+ * fails the calling suite rather than being skipped by it.
+ *
+ * Guarantee: every entry here is valid against its route's real FormRequest at the time this
+ * comment was written (verified by reading each rules() method). Limit: this map is
+ * hand-written, so it cannot see a rule change in the FormRequest it describes - nothing forces
+ * it to stay accurate except the suites that exercise it; see planRouteKeys() for the one
+ * dimension (key coverage) that IS enforced mechanically.
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function planRoutePayloads(): array
+{
+    return [
+        'get /plans' => [],
+        'post /plans' => ['title' => 'Trip to Lisbon', 'timezone' => 'Europe/London'],
+        'get /plans/{plan}' => [],
+        'patch /plans/{plan}' => ['title' => 'Renamed by the refusal matrix'],
+        'delete /plans/{plan}' => [],
+        'post /plans/{plan}/archive' => [],
+        'get /plans/{plan}/members' => [],
+        'patch /plans/{plan}/members/{user}' => ['role' => 'admin'],
+        'delete /plans/{plan}/members/{user}' => [],
+        'post /plans/{plan}/invites' => ['email' => 'invitee@example.test', 'role' => 'member'],
+        'get /plans/{plan}/invites' => [],
+        'delete /plans/{plan}/invites/{invite}' => [],
+        // size:64 is JoinPlanRequest's rule, so a shorter value answers 422 before the
+        // credential is ever looked up. This route is outside the non-member and ordering
+        // suites (§17.2) and the row exists so that the key set stays complete.
+        'post /plans/{plan}/join' => ['token' => '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'],
+        'get /plans/{plan}/activity' => [],
+    ];
+}
+
+/**
+ * The request body for one Plan route, or a named failure.
+ *
+ * @return array<string, mixed>
+ */
+function planRoutePayload(string $key): array
+{
+    $payloads = planRoutePayloads();
+
+    if (! array_key_exists($key, $payloads)) {
+        throw new RuntimeException("No request payload is declared for [{$key}]: add one to planRoutePayloads() in tests/Pest.php.");
+    }
+
+    return $payloads[$key];
+}
+
+/**
+ * The Plan every refusal suite probes: active, with an owner, one other active member, and one
+ * outstanding invite.
+ *
+ * Every path parameter the Wave 2 route table declares has a REAL, valid value here - the Plan
+ * exists, {user} names an active member of it, {invite} names an invite of it - so when a
+ * non-member is refused, non-membership is the only thing left that can be causing it. A
+ * fixture whose Plan did not exist would answer 404 on every row with the membership check
+ * deleted, which is the vacuous shape an owner-side control exists to rule out.
+ *
+ * The owner arrives as a parameter because an owner-side control signs one owner in and then
+ * builds a fresh Plan per route: DELETE /plans/{plan} answers 204, and a shared Plan would make
+ * every later row 404 for an ordering reason.
+ *
+ * Guarantee: $plan is visible to $owner and to $activeMember, and $invite belongs to $plan.
+ * Limit: this does not sign anyone in and returns no bearer token - every caller supplies its
+ * own actor and token, which is what lets the same fixture serve both a non-member suite (whose
+ * caller is a THIRD party, authenticated separately) and an owner-side control.
+ *
+ * @return array{Plan, User, PlanInvite}
+ */
+function refusalFixture(User $owner): array
+{
+    $plan = ownedPlan($owner);
+
+    $activeMember = userWithPassword();
+    member($plan, $activeMember, MemberRole::Member, '2026-01-02T00:00:00+00:00');
+
+    $invite = PlanInvite::factory()->create([
+        'plan_id' => $plan->id,
+        'invited_by' => $owner->id,
+    ]);
+
+    return [$plan, $activeMember, $invite];
 }

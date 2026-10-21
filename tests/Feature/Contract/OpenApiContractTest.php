@@ -17,9 +17,7 @@ use App\Http\Requests\Api\V1\Plans\JoinPlanRequest;
 use App\Http\Requests\Api\V1\Plans\ListPlansRequest;
 use App\Http\Requests\Api\V1\Plans\UpdatePlanRequest;
 use App\Http\Requests\Api\V1\UpdateProfileRequest;
-use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Facades\Route;
 use Illuminate\Validation\Rules\Password;
 
 /**
@@ -43,39 +41,6 @@ use Illuminate\Validation\Rules\Password;
 function openApiDocument(): mixed
 {
     return json_decode((string) file_get_contents(base_path('openapi.json')), true);
-}
-
-/**
- * Every route the document covers, as [method, path-as-written-in-the-document, route].
- *
- * Read off Laravel's route table rather than off the document, so an endpoint added without
- * regenerating fails the assertions below instead of being skipped by them. The `api/v1`
- * prefix is stripped because `servers` already carries it, which is why the document's keys
- * are `/auth/login` and not `/api/v1/auth/login`.
- *
- * @return list<array{string, string, RoutingRoute}>
- */
-function documentedRoutes(): array
-{
-    $routes = [];
-
-    foreach (Route::getRoutes()->getRoutes() as $route) {
-        $uri = $route->uri();
-
-        if (! str_starts_with($uri, 'api/v1/')) {
-            continue;
-        }
-
-        foreach ($route->methods() as $method) {
-            if ($method === 'HEAD') {
-                continue;
-            }
-
-            $routes[] = [strtolower($method), '/'.substr($uri, strlen('api/v1/')), $route];
-        }
-    }
-
-    return $routes;
 }
 
 it('publishes every verify-email parameter in the query string and no request body', function (): void {
