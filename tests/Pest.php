@@ -3,11 +3,14 @@
 declare(strict_types=1);
 use App\Domain\Plans\MemberRole;
 use App\Domain\Plans\MemberStatus;
+use App\Domain\Users\Email;
 use App\Http\Requests\Concerns\ReadsPageQuery;
 use App\Infrastructure\Auth\EmailVerificationLink;
+use App\Infrastructure\Auth\PlanInviteTokens;
 use App\Infrastructure\Notifications\Mail\ResetPasswordMail;
 use App\Infrastructure\Outbox\OutboxDispatcher;
 use App\Models\Plan;
+use App\Models\PlanInvite;
 use App\Models\PlanMember;
 use App\Models\User;
 use Illuminate\Contracts\Translation\Translator;
@@ -276,6 +279,28 @@ function member(Plan $plan, User $user, MemberRole $role, string $joinedAt): Pla
         'status' => MemberStatus::Active->value,
         'joined_at' => $joinedAt,
     ]);
+}
+
+/**
+ * An invite issued through the production path, and its plaintext token.
+ *
+ * Through PlanInviteTokens::issue() rather than PlanInvite::factory(): plan_invites stores only
+ * sha256(plaintext), so a factory row is not a credential anything can present, and a fixture
+ * that hashed its own token would be a second definition of the token shape - which is exactly
+ * the drift PlanInviteFactory's docblock refuses for expires_at.
+ *
+ * @return array{PlanInvite, string}
+ */
+function invited(Plan $plan, User $invitedBy, MemberRole $role, ?string $email = null): array
+{
+    $issued = app(PlanInviteTokens::class)->issue(
+        $plan,
+        $invitedBy,
+        $email === null ? null : Email::fromString($email),
+        $role,
+    );
+
+    return [$issued->invite, $issued->token];
 }
 
 /**

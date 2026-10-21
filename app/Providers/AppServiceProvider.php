@@ -140,6 +140,21 @@ class AppServiceProvider extends ServiceProvider
         // cast with an E_WARNING the kernel promotes to an ErrorException, uncaught here)
         // before LoginRequest's own 'string' rule ever got a chance to reject it with a 422
         // - removing the closure removes that hazard along with the dead code.
+        // GET /invites/{token} is the only unauthenticated read in the API that touches Plan
+        // data. The limit does NOT protect the token: 256 bits is not guessable, which is the
+        // same reason /auth/reset-password carries no throttle at all ("the token itself is the
+        // credential"). What it bounds is scraping with a harvested list of links, and a looping
+        // client. 60/hour/IP leaves a household behind one NAT clicking invite links
+        // comfortably clear - a person opens an invite link once, maybe twice - while capping a
+        // single host at a rate no legitimate client reaches.
+        //
+        // Keyed on IP rather than on the token, because a per-token key would let one host walk
+        // a list of tokens unimpeded, which is the only attack shape that matters here. That key
+        // is NOT observable from a test in this suite: every request arrives with
+        // REMOTE_ADDR = 127.0.0.1, so no assertion here can tell an IP key from a constant one.
+        // The count is what PreviewInviteTest pins.
+        RateLimiter::for('invite-lookup', fn (Request $request) => Limit::perHour(60)->by($request->ip() ?? 'unknown'));
+
         $this->app->resolving(OutboxHandlers::class, function (OutboxHandlers $handlers): void {
             $handlers->register('user.registered', function (array $payload): void {
                 // The payload is decoded JSON, so every value is mixed. A user_id that is not

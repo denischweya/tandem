@@ -4,6 +4,7 @@ use App\Application\Auth\InvalidCredentials;
 use App\Application\Auth\InvalidPasswordResetToken;
 use App\Application\Auth\InvalidRefreshToken;
 use App\Application\Plans\ActorEmailNotVerified;
+use App\Application\Plans\InviteNotUsable;
 use App\Application\Plans\OwnerCannotLeave;
 use App\Application\Plans\PlanMemberNotFound;
 use App\Application\Plans\PlanNotEditable;
@@ -32,6 +33,7 @@ return Application::configure(basePath: dirname(__DIR__))
                     require __DIR__.'/../routes/api/v1/auth.php';
                     require __DIR__.'/../routes/api/v1/me.php';
                     require __DIR__.'/../routes/api/v1/plans.php';
+                    require __DIR__.'/../routes/api/v1/invites.php';
                 });
         },
     )
@@ -83,6 +85,11 @@ return Application::configure(basePath: dirname(__DIR__))
             // either - this one differs only in living in the Application layer, so it would
             // otherwise be the one `verified` refusal in the API that logged at ERROR.
             ActorEmailNotVerified::class,
+            // Every stale, revoked or mistyped invite link - unknown, malformed, expired,
+            // revoked, already accepted, or for a Plan that is no longer active - reaches this
+            // at a rate that scales with traffic, not with bugs. Listed alongside the other
+            // expected control-flow refusals above, for the same reason each of them is.
+            InviteNotUsable::class,
         ]);
 
         $exceptions->render(fn (InvalidCredentials $e) => new JsonResponse(
@@ -159,5 +166,16 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (ActorEmailNotVerified $e) => new JsonResponse(
             ['message' => 'Your email address is not verified.'],
             403,
+        ));
+
+        // One body for an unknown token, a malformed one, an expired one, a revoked one, one
+        // already accepted, one issued for a different Plan, and one whose Plan is no longer
+        // active - see InviteNotUsable. 404 rather than 422 because the accept-invite page has
+        // no field to attach an error to. Encoded compactly, like every closure above: Laravel's
+        // own handler pretty-prints, so a second 404 body arriving from there would differ from
+        // this one in whitespace as well as in text.
+        $exceptions->render(fn (InviteNotUsable $e) => new JsonResponse(
+            ['message' => 'This invite link is no longer valid. Ask whoever invited you for a new one.'],
+            404,
         ));
     })->create();

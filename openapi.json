@@ -1018,6 +1018,81 @@
                 }
             }
         },
+        "/invites/{token}": {
+            "get": {
+                "operationId": "invites.preview",
+                "tags": [
+                    "PreviewInvite"
+                ],
+                "parameters": [
+                    {
+                        "name": "token",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "`InvitePreviewResource`",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/components/schemas/InvitePreviewResource"
+                                        }
+                                    },
+                                    "required": [
+                                        "data"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "The invite link cannot be used: it is unknown, malformed, expired, revoked, already accepted, or for a Plan that is no longer active. One body for every case, so a captured link reveals nothing about which.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Too many invite lookups from this IP address: 60 per hour. Carries Retry-After.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": []
+            }
+        },
         "/auth/refresh": {
             "post": {
                 "operationId": "auth.refresh",
@@ -1298,6 +1373,33 @@
                     "email"
                 ],
                 "title": "ForgotPasswordRequest"
+            },
+            "InvitePreviewResource": {
+                "type": "object",
+                "properties": {
+                    "plan_id": {
+                        "type": "string"
+                    },
+                    "plan_title": {
+                        "type": "string"
+                    },
+                    "inviter_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "member_count": {
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "plan_id",
+                    "plan_title",
+                    "inviter_name",
+                    "member_count"
+                ],
+                "title": "InvitePreviewResource"
             },
             "LoginRequest": {
                 "type": "object",
