@@ -8,8 +8,10 @@ use App\Http\Controllers\Api\V1\Plans\CreatePlanController;
 use App\Http\Controllers\Api\V1\Plans\DeletePlanController;
 use App\Http\Controllers\Api\V1\Plans\GetPlanController;
 use App\Http\Controllers\Api\V1\Plans\InvitePlanMemberController;
+use App\Http\Controllers\Api\V1\Plans\ListPlanInvitesController;
 use App\Http\Controllers\Api\V1\Plans\ListPlansController;
 use App\Http\Controllers\Api\V1\Plans\PlanMemberController;
+use App\Http\Controllers\Api\V1\Plans\RevokeInviteController;
 use App\Http\Controllers\Api\V1\Plans\UpdatePlanController;
 use Illuminate\Support\Facades\Route;
 
@@ -130,6 +132,23 @@ Route::middleware('auth:sanctum')->group(function (): void {
     // plans.members.destroy's own comment records for the same reason.
     Route::post('/plans/{plan}/join', AcceptInviteController::class)
         ->name('plans.join');
+
+    // `verified`, per §7.5: listing invites reads addresses the inviter typed about people who
+    // are not members, which is not "reading the Plan" in the sense §7.5 exempts. Not
+    // throttled: nothing limits an authenticated read behind a role check.
+    //
+    // Inside the group, following plans.update's precedent for a `verified` write/read that
+    // needs no per-route auth:sanctum - the enclosing group already applies it.
+    Route::get('/plans/{plan}/invites', ListPlanInvitesController::class)
+        ->middleware('verified')
+        ->name('plans.invites.index');
+
+    // `verified`, per §7.5: revoking acts on another person's invitation and creates state
+    // other members see in the feed. Not throttled: nothing limits a write behind a role check
+    // on a list already bounded by the invite issuance limit.
+    Route::delete('/plans/{plan}/invites/{invite}', RevokeInviteController::class)
+        ->middleware('verified')
+        ->name('plans.invites.destroy');
 });
 
 // Outside the `auth:sanctum` group above, as its own standalone Route::post() with its own

@@ -7,6 +7,7 @@ use App\Application\Plans\ActorEmailNotVerified;
 use App\Application\Plans\InviteNotUsable;
 use App\Application\Plans\OwnerCannotLeave;
 use App\Application\Plans\OwnerInviteNotAcceptable;
+use App\Application\Plans\PlanInviteNotFound;
 use App\Application\Plans\PlanMemberNotFound;
 use App\Application\Plans\PlanNotEditable;
 use App\Application\Plans\PlanNotInvitable;
@@ -96,6 +97,12 @@ return Application::configure(basePath: dirname(__DIR__))
             // private. Expected control flow on the same argument as the entries above, and
             // its volume scales with traffic rather than with bugs.
             PlanNotInvitable::class,
+            // A revoke of an {invite} that is malformed, unknown, or belongs to a different
+            // Plan - a client acting on stale state, same argument as PlanMemberNotFound above.
+            // Appended here rather than placed in step with the render() closure below: nothing
+            // in this file relates the two lists' orders to each other, so there is no ordering
+            // to preserve.
+            PlanInviteNotFound::class,
         ]);
 
         $exceptions->render(fn (InvalidCredentials $e) => new JsonResponse(
@@ -207,5 +214,17 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (OwnerInviteNotAcceptable $e) => new JsonResponse(
             ['message' => 'This invite cannot be accepted because it would make you a second owner of this Plan.'],
             409,
+        ));
+
+        // One body for a malformed {invite}, an unknown one, and one that belongs to a
+        // different Plan - see PlanInviteNotFound. A caller who can see this Plan must not be
+        // able to tell "that invite exists, but not here" from "that invite does not exist",
+        // the same reasoning PlanMemberNotFound's closure above states for {user}. Encoded
+        // compactly, like every closure above it: Laravel's own handler pretty-prints, so a
+        // second 404 body arriving from there would differ from this one in whitespace as well
+        // as in text.
+        $exceptions->render(fn (PlanInviteNotFound $e) => new JsonResponse(
+            ['message' => 'That invite is no longer available.'],
+            404,
         ));
     })->create();

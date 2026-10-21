@@ -270,6 +270,16 @@ it('declares every error status the application itself raises', function (): voi
         // AcceptInviteTest: "refuses an owner-role invite with 409, logs it, and writes no
         // second active owner row"
         ['post', '/plans/{plan}/join', '409'],
+        // ListPlanInvitesTest: "refuses a plain member with 403 and a non-member with the
+        // Plan-not-found 404"
+        ['get', '/plans/{plan}/invites', '403'],
+        ['get', '/plans/{plan}/invites', '404'],
+        // RevokeInviteTest: "refuses a plain member with 403 and a non-member with the
+        // Plan-not-found 404"
+        ['delete', '/plans/{plan}/invites/{invite}', '403'],
+        ['delete', '/plans/{plan}/invites/{invite}', '404'],
+        // RevokeInviteTest: "refuses an archived Plan with 409 and writes nothing"
+        ['delete', '/plans/{plan}/invites/{invite}', '409'],
     ];
 
     foreach ($expected as [$method, $path, $status]) {
@@ -478,7 +488,14 @@ it('wraps every success response in the data envelope', function (): void {
     // Task 27's own delta is also `+ (1, 0)` against the base of [15, 6] immediately above:
     // POST /plans/{plan}/join's one 200 returns PlanResource (JsonResource, `data`-wrapped),
     // and it adds no bodyless 2xx at all.
-    expect([$enveloped, $bodyless])->toBe([16, 6]);
+    //
+    // This task's own delta is `+ (1, 1)` against the base of [16, 6] immediately above:
+    // GET /plans/{plan}/invites's one 200 returns PlanInviteResource::collection(...)
+    // (AnonymousResourceCollection, `data`-wrapped - the enveloped side), and
+    // DELETE /plans/{plan}/invites/{invite}'s one 204 has no body at all (the bodyless side).
+    // Predicted from the shape before regenerating, then confirmed against the regenerated
+    // document.
+    expect([$enveloped, $bodyless])->toBe([17, 7]);
 });
 
 it('publishes both session expiries as date-time, not as a bare string', function (): void {
@@ -708,8 +725,17 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     //
     // This task's own +1: POST /plans/{plan}/join's one {plan} path parameter - a NEW path
     // (Amendment 2), not a second method on an already-published one, so no doubling applies.
+    //
+    // This task's own +3: GET /plans/{plan}/invites's one {plan}, plus
+    // DELETE /plans/{plan}/invites/{invite}'s two ({plan} and {invite}). The GET shares an
+    // existing path with POST /plans/{plan}/invites, but the walk counts OPERATION-level
+    // `parameters` arrays and Scramble emits one per operation, so the GET's own {plan} is
+    // counted again rather than reused from the POST. The DELETE is a NEW path with two path
+    // parameters, the same shape PATCH/DELETE /plans/{plan}/members/{user} already established.
+    // Predicted +3 before regenerating (measured by counting the `parameters` arrays in the
+    // regenerated document, 24), then confirmed.
     expect($parameterCount)->toBe(
-        21,
+        24,
         'The parameter walk above visited a different number of parameter objects than the '
         .'document publishes. Either a route gained or lost a parameter - in which case this '
         .'number moves with it (update the literal here in the same commit, and say by how much '
@@ -862,6 +888,19 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // PlanResource return type) and its 404 and 409 (the two #[Response] attributes on
     // AcceptInviteController - 404 for every unusable-invite case, 409 for the one Decision 9
     // adds). No new $prose entry here either, for the same reason Task 25's three carry none.
+    //
+    // This task adds seven. Three at GET /plans/{plan}/invites: its 200 (inferred, for an
+    // AnonymousResourceCollection return type - no #[Response] attribute exists on
+    // ListPlanInvitesController) and its 403 and 404 (the two #[Response] attributes there).
+    // Four at DELETE /plans/{plan}/invites/{invite}: its 204 ('No content', Scramble's own
+    // fixed string - this task's SIXTH such 204 in the document) and its 403, 404 and 409 (the
+    // three #[ResponseAttribute] attributes on RevokeInviteController). No new $prose entry:
+    // neither route publishes a client-facing summary or description beyond the per-response
+    // ones counted here. Predicted as +7 before regenerating (matching the measured shape of
+    // every other Plan route this wave: one inferred 2xx plus one path per authored
+    // #[Response]), then confirmed by running the recursive walk against the regenerated
+    // document and diffing it against the committed literal, which named exactly these seven
+    // paths and no others.
     expect($allProsePaths)->toEqualCanonicalizing([
         'paths./auth/verify-email.post.summary',
         'paths./auth/verify-email.post.description',
@@ -909,6 +948,13 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         'paths./plans/{plan}/members/{user}.delete.responses.403.description',
         'paths./plans/{plan}/members/{user}.delete.responses.404.description',
         'paths./plans/{plan}/members/{user}.delete.responses.409.description',
+        'paths./plans/{plan}/invites.get.responses.200.description',
+        'paths./plans/{plan}/invites.get.responses.403.description',
+        'paths./plans/{plan}/invites.get.responses.404.description',
+        'paths./plans/{plan}/invites/{invite}.delete.responses.204.description',
+        'paths./plans/{plan}/invites/{invite}.delete.responses.403.description',
+        'paths./plans/{plan}/invites/{invite}.delete.responses.404.description',
+        'paths./plans/{plan}/invites/{invite}.delete.responses.409.description',
         'paths./invites/{token}.get.responses.200.description',
         'paths./invites/{token}.get.responses.404.description',
         'paths./invites/{token}.get.responses.429.description',
@@ -1124,8 +1170,13 @@ it('publishes no component schema without properties, so no native enum reaches 
     // This task adds ONE more: JoinPlanRequest, for the same reason InvitePlanMemberRequest did
     // - its single `token` key carries no /** @query */, so it publishes a request body schema.
     // PlanResource, this route's response, is already counted (Task 15) and adds nothing new.
+    //
+    // This task adds ONE more: PlanInviteResource, reachable from a route for the first time
+    // (GET /plans/{plan}/invites). The DELETE action adds none, for the same measured reason
+    // DELETE /plans/{plan}/members/{user} did not: it takes a plain Illuminate\Http\Request
+    // with no rules() to read and returns a bodyless 204 with no Resource.
     expect(count($schemas))->toBeGreaterThanOrEqual(
-        17,
+        18,
         'components.schemas published fewer than the seventeen schemas this traversal expects to '
         .'check, so most of them were skipped rather than verified.',
     );
@@ -1169,17 +1220,17 @@ it('publishes no *Resource schema with a $ref to a domain enum', function (): vo
         fn (string $name): bool => (bool) preg_match('/Resource$/', $name),
     ));
 
-    // >= 6, not merely non-empty, for the reason the components.schemas case above carries a
+    // >= 7, not merely non-empty, for the reason the components.schemas case above carries a
     // floor rather than a bare not-empty check: measured today (InvitePreviewResource,
-    // PlanInviteCreatedResource, PlanMemberResource, PlanResource, SessionResource,
-    // UserResource - this task raised this floor from five, having routed
-    // PlanInviteCreatedResource for the first time). A number about a literal somewhere else in
+    // PlanInviteCreatedResource, PlanInviteResource, PlanMemberResource, PlanResource,
+    // SessionResource, UserResource - this task raised this floor from six, having routed
+    // PlanInviteResource for the first time). A number about a literal somewhere else in
     // the file decays exactly like one about the file itself, so none is quoted here.
     // A document that lost every *Resource schema would still pass a bare not-empty check
     // while this walk verified nothing; growing the floor is this task's obligation whenever a
     // Plan Resource newly starts being returned by a route.
     expect(count($resourceSchemaNames))->toBeGreaterThanOrEqual(
-        6,
+        7,
         'fewer than six *Resource schemas are published, so this walk is checking almost '
         .'nothing - either the suffix filter stopped matching or a schema genuinely vanished',
     );
@@ -1221,27 +1272,27 @@ it('publishes no *Resource schema with a $ref to a domain enum', function (): vo
     // a Resource not yet in components.schemas is not a defect, it is not routed yet, and the
     // route that will add it is named so the gap is a disclosed fact instead of a silent one.
     // Measured against app/Http/Resources/Api/V1/Plans/: all six classes already exist, but
-    // Scramble registers a component schema only for a Resource reachable from a route. Four are
-    // reachable today: PlanResource (GET /plans/{plan}, POST /plans, GET /plans),
+    // Scramble registers a component schema only for a Resource reachable from a route. Five
+    // are reachable today: PlanResource (GET /plans/{plan}, POST /plans, GET /plans),
     // PlanMemberResource (GET /plans/{plan}/members), PlanInviteCreatedResource (POST
-    // /plans/{plan}/invites) and InvitePreviewResource (GET /invites/{token}). The other two are
-    // not yet routed by anything: PlanInviteResource (GET /plans/{plan}/invites) and
-    // PlanActivityResource (GET /plans/{plan}/activity).
+    // /plans/{plan}/invites), InvitePreviewResource (GET /invites/{token}) and - this task's
+    // own addition - PlanInviteResource (GET /plans/{plan}/invites). The other is not yet
+    // routed by anything: PlanActivityResource (GET /plans/{plan}/activity).
     //
     // The assertion below is what a misspelling break step targets: the intersection is computed
     // against $resourceSchemaNames, which comes from the document, so a typo below in either
     // name that IS currently routed drops it out of the intersection and reds here - proving the
-    // correspondence is checked rather than assumed. A typo in one of the two not-yet-routed
-    // names cannot be observed this way, because neither spelling is in the document yet; that
-    // is why each of those two is disclosed above by name instead of asserted here.
+    // correspondence is checked rather than assumed. A typo in the one not-yet-routed name
+    // cannot be observed this way, because that spelling is not in the document yet; that is why
+    // it is disclosed above by name instead of asserted here.
     $sixResourceNames = [
         'PlanResource', 'PlanMemberResource', 'PlanInviteResource',
         'PlanInviteCreatedResource', 'PlanActivityResource', 'InvitePreviewResource',
     ];
 
     expect(array_values(array_intersect($sixResourceNames, $resourceSchemaNames)))->toBe(
-        ['PlanResource', 'PlanMemberResource', 'PlanInviteCreatedResource', 'InvitePreviewResource'],
-        'exactly four of this section\'s six Resources should be reachable from a route today, '
+        ['PlanResource', 'PlanMemberResource', 'PlanInviteResource', 'PlanInviteCreatedResource', 'InvitePreviewResource'],
+        'exactly five of this section\'s six Resources should be reachable from a route today, '
         .'and each must be found by its exact name - if this fails with fewer entries, a routed '
         .'Resource stopped being routed or its name above no longer matches the document',
     );
