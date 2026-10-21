@@ -149,10 +149,16 @@ class AppServiceProvider extends ServiceProvider
         // single host at a rate no legitimate client reaches.
         //
         // Keyed on IP rather than on the token, because a per-token key would let one host walk
-        // a list of tokens unimpeded, which is the only attack shape that matters here. That key
-        // is NOT observable from a test in this suite: every request arrives with
-        // REMOTE_ADDR = 127.0.0.1, so no assertion here can tell an IP key from a constant one.
-        // The count is what PreviewInviteTest pins.
+        // a list of tokens unimpeded, which is the only attack shape that matters here. This IS
+        // observable from a test, and is observed: every OTHER request in this file arrives
+        // with the test client's default REMOTE_ADDR, which would leave an IP key
+        // indistinguishable from a constant one, but
+        // PreviewInviteTest::it('keys the invite-lookup limit on the IP and not on a shared
+        // bucket') drives two distinct REMOTE_ADDR values through withServerVariables(),
+        // exhausts one, and asserts the other is untouched - the property this limiter exists
+        // to provide. That test also pins the cache key SHAPE (md5('invite-lookup'.$ip)), the
+        // same way CreatePlanTest pins md5('plans-create'.$userId) for the per-user limiter.
+        // The count (60/hour) is what the OTHER PreviewInviteTest case pins.
         RateLimiter::for('invite-lookup', fn (Request $request) => Limit::perHour(60)->by($request->ip() ?? 'unknown'));
 
         $this->app->resolving(OutboxHandlers::class, function (OutboxHandlers $handlers): void {

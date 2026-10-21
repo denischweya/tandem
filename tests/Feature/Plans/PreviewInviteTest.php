@@ -11,10 +11,12 @@ use App\Models\PlanMember;
 use App\Models\User;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
 
 use function Pest\Laravel\getJson;
+use function Pest\Laravel\withServerVariables;
 
 uses(RefreshDatabase::class);
 
@@ -199,6 +201,47 @@ it('rate limits invite lookups to sixty an hour and answers with four headers', 
     expect($response->headers->get('X-RateLimit-Reset'))->toMatch('/^[0-9]+$/');
 
     expect($response->json('message'))->toBe('Too Many Attempts.');
+});
+
+it('keys the invite-lookup limit on the IP and not on a shared bucket', function (): void {
+    // T25-1: the test above this one (and the comment above the 'invite-lookup' limiter) pin
+    // only the COUNT (sixty) and the header set. Every request in that test, and every other
+    // request in this file, arrives with the test client's default REMOTE_ADDR, so nothing
+    // above distinguishes a per-IP key from a constant one - the suite would stay green if
+    // ->by($request->ip() ?? 'unknown') were replaced with ->by('constant'). This test exists
+    // to make that distinction observable, the way CreatePlanTest's own per-user limiter test
+    // distinguishes per-user from constant.
+    $owner = User::factory()->hasProfile()->create();
+    $plan = ownedPlan($owner);
+    [, $token] = invited($plan, $owner, MemberRole::Member);
+
+    // The key SHAPE, pinned the way CreatePlanTest pins md5('plans-create'.$userId):
+    // ThrottleRequests hashes $limiterName.$limit->key unconditionally
+    // (self::$shouldHashKeys = true), so one request from a known IP writes exactly to
+    // md5('invite-lookup'.$ip), with no further transformation - measured against the real
+    // ArrayStore CACHE_STORE=array this suite pins, which applies no prefix of its own. Value
+    // 1, not merely present: RateLimiter::hit() begins at 0 and increments once per call.
+    withServerVariables(['REMOTE_ADDR' => '203.0.113.10'])
+        ->getJson("/api/v1/invites/{$token}")->assertOk();
+
+    expect(Cache::get(md5('invite-lookup'.'203.0.113.10')))
+        ->toBe(1, 'one request from this IP must hit exactly this key, once');
+
+    // Exhaust that same IP's budget (one request already spent above).
+    for ($i = 2; $i <= 60; $i++) {
+        withServerVariables(['REMOTE_ADDR' => '203.0.113.10'])
+            ->getJson("/api/v1/invites/{$token}")->assertOk();
+    }
+
+    withServerVariables(['REMOTE_ADDR' => '203.0.113.10'])
+        ->getJson("/api/v1/invites/{$token}")->assertStatus(429);
+
+    // The property this test exists to prove: a DIFFERENT caller's budget is untouched by the
+    // first's exhaustion. Under a key that had stopped varying by IP - a constant string, a
+    // dropped ->by() clause - this request would share the first caller's now-exhausted bucket
+    // and 429 too.
+    withServerVariables(['REMOTE_ADDR' => '203.0.113.20'])
+        ->getJson("/api/v1/invites/{$token}")->assertOk();
 });
 
 it('does not report an unusable invite link as an application error', function (): void {
