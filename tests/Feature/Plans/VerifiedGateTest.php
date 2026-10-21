@@ -147,6 +147,7 @@ it('gates exactly the Plan routes spec 7.5 names, read off the route table', fun
         'plans.members.index' => true,
         'plans.members.update' => true,
         'plans.members.destroy' => true,
+        'plans.invites.store' => true,
     ], 'every Plan route resolves an actor, including join - plan_invites.accepted_by records who accepted');
 });
 

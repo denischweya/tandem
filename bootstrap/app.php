@@ -8,6 +8,7 @@ use App\Application\Plans\InviteNotUsable;
 use App\Application\Plans\OwnerCannotLeave;
 use App\Application\Plans\PlanMemberNotFound;
 use App\Application\Plans\PlanNotEditable;
+use App\Application\Plans\PlanNotInvitable;
 use App\Application\Plans\PlanNotVisible;
 use Illuminate\Auth\Middleware\EnsureEmailIsVerified;
 use Illuminate\Foundation\Application;
@@ -90,6 +91,10 @@ return Application::configure(basePath: dirname(__DIR__))
             // at a rate that scales with traffic, not with bugs. Listed alongside the other
             // expected control-flow refusals above, for the same reason each of them is.
             InviteNotUsable::class,
+            // An owner or admin attempting to invite someone to a Plan whose visibility is
+            // private. Expected control flow on the same argument as the entries above, and
+            // its volume scales with traffic rather than with bugs.
+            PlanNotInvitable::class,
         ]);
 
         $exceptions->render(fn (InvalidCredentials $e) => new JsonResponse(
@@ -177,5 +182,16 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (InviteNotUsable $e) => new JsonResponse(
             ['message' => 'This invite link is no longer valid. Ask whoever invited you for a new one.'],
             404,
+        ));
+
+        // 409, not 403: the refusal is about the Plan's STATE, not about who is asking - the
+        // owner of a private Plan is refused exactly as an admin is. Its own message rather than
+        // PlanNotEditable's, because "archived" and "private" are different facts and a client
+        // that cannot tell them apart cannot say anything useful. No remedy in the sentence,
+        // because `visibility` is not writable anywhere in Cycle 1. Encoded compactly, like
+        // every closure above.
+        $exceptions->render(fn (PlanNotInvitable $e) => new JsonResponse(
+            ['message' => 'This Plan is private, so nobody else can be invited to it.'],
+            409,
         ));
     })->create();

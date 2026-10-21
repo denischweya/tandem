@@ -12,6 +12,7 @@ use App\Domain\Shared\Clock;
 use App\Domain\Shared\SystemClock;
 use App\Http\Support\EmailInput;
 use App\Infrastructure\Auth\EmailVerificationLink;
+use App\Infrastructure\Notifications\Mail\PlanInviteMail;
 use App\Infrastructure\Notifications\Mail\ResetPasswordMail;
 use App\Infrastructure\Notifications\Mail\VerifyEmailMail;
 use App\Infrastructure\OpenApi\PasswordRuleTransformer;
@@ -21,6 +22,8 @@ use App\Infrastructure\Persistence\Eloquent\EloquentPlanActivityRepository;
 use App\Infrastructure\Persistence\Eloquent\EloquentPlanMemberRepository;
 use App\Infrastructure\Persistence\Eloquent\EloquentPlanRepository;
 use App\Models\PersonalAccessToken;
+use App\Models\Plan;
+use App\Models\PlanInvite;
 use App\Models\User;
 use Dedoc\Scramble\Scramble;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -161,6 +164,44 @@ class AppServiceProvider extends ServiceProvider
         // The count (60/hour) is what the OTHER PreviewInviteTest case pins.
         RateLimiter::for('invite-lookup', fn (Request $request) => Limit::perHour(60)->by($request->ip() ?? 'unknown'));
 
+        // §13.2. TWO limits from ONE named limiter, because RateLimiter::for() accepts an array
+        // of Limits - handleRequestUsingNamedLimiter() does Collection::wrap($limiterResponse)
+        // ->map(...) - which is simpler than two stacked throttle: entries and gives the
+        // arithmetic below for free.
+        //
+        // The arithmetic is sound and measured: handleRequest() checks tooManyAttempts for EVERY
+        // limit in one loop BEFORE hitting ANY limit in a second loop, so the 429 thrown by the
+        // per-plan limit does not increment the per-user bucket. That is what lets the two
+        // rate-limit tests in InvitePlanMemberTest exist without polluting each other.
+        //
+        // $request->user() is resolved here: Authenticate sorts before ThrottleRequests in
+        // Laravel's default middleware priority, in ANY declaration order - measured by
+        // reflecting the booted router, not inferred. The ?? $request->ip() fallback is
+        // therefore unreachable on this route, and is kept only because user() is declared
+        // nullable.
+        //
+        // The is_string() guard on the route parameter stays, but NOT because it protects
+        // against a bound model: SubstituteBindings sorts AFTER ThrottleRequests, so
+        // route('plan') is always a raw string here and the UrlRoutable branch is unreachable.
+        // It is cheap defence on a method declared string|UrlRoutable|null, and it is the same
+        // guard shape the forgot-password limiter needed for an expensive measured reason: an
+        // array value for a request field passed route dispatch, and a bare (string) cast
+        // emitted an E_WARNING the kernel promoted to an ErrorException INSIDE the closure - a
+        // reachable 500 before any FormRequest rule could answer 422.
+        // ?->getAuthIdentifier() rather than ?->id, for the same measured PHPStan reason the
+        // plans-create limiter above gives: level 8 flags a nullsafe PROPERTY fetch on the left
+        // of ?? as nullsafe.neverNull ("unnecessary, use -> instead"), regardless of whether the
+        // object is actually nullable, while a nullsafe METHOD call in the same position does
+        // not trip it. getAuthIdentifier() returns the same uuid $this->id would.
+        RateLimiter::for('plan-invites', function (Request $request): array {
+            $plan = $request->route('plan');
+
+            return [
+                Limit::perDay(50)->by('user:'.($request->user()?->getAuthIdentifier() ?? $request->ip() ?? 'unknown')),
+                Limit::perHour(20)->by('plan:'.(is_string($plan) ? $plan : 'unknown')),
+            ];
+        });
+
         $this->app->resolving(OutboxHandlers::class, function (OutboxHandlers $handlers): void {
             $handlers->register('user.registered', function (array $payload): void {
                 // The payload is decoded JSON, so every value is mixed. A user_id that is not
@@ -221,6 +262,68 @@ class AppServiceProvider extends ServiceProvider
             // leaving that hazard to a comment at one of three independent registration
             // sites.
             $handlers->register('user.deleted', function (array $payload): void {});
+
+            // The FOURTH outbox event type ('user.registered', 'password.reset_requested' and
+            // 'user.deleted' are already registered above). register() throws LogicException on
+            // a duplicate rather than silently replacing an earlier handler, so the literal only
+            // has to be new and a collision fails loudly at boot.
+            $handlers->register('plan.invited', function (array $payload): void {
+                // The payload is decoded JSON, so every value is mixed. An invite_id that is not
+                // a string is a malformed event, not something to look up.
+                $inviteId = $payload['invite_id'] ?? null;
+
+                $invite = is_string($inviteId) ? PlanInvite::query()->find($inviteId) : null;
+
+                // No invite row: its Plan was hard-deleted, which CASCADEs plan_invites away.
+                // No address: §14.1 clause 2 nulls the email of an unaccepted invite addressed
+                // to a user who has deleted their account, and honouring that deletion is the
+                // whole point of reading the address here instead of copying it into the
+                // payload. Either way there is nothing to send and nothing wrong - returning
+                // normally publishes the event rather than retrying it for ever.
+                if ($invite === null || $invite->email === null) {
+                    return;
+                }
+
+                $plan = Plan::query()->find($invite->plan_id);
+
+                if ($plan === null) {
+                    return;
+                }
+
+                $inviter = $invite->invited_by === null
+                    ? null
+                    : User::query()->with('profile')->find($invite->invited_by);
+
+                // An invitation that cannot name its sender is not sent. The only way to get
+                // here is an inviter whose account went away between the write and the
+                // dispatch, and §14.1 clause 1 revokes a departing user's outstanding invites
+                // anyway, so this invite is already finished - mailing a link for it would be
+                // worse than sending nothing.
+                if ($inviter === null) {
+                    return;
+                }
+
+                // Decrypt what InvitePlanMember encrypted. A malformed or foreign payload throws
+                // DecryptException rather than silently mailing a broken link, which the
+                // dispatcher records as a failed attempt and retries - the correct outcome, so
+                // this deliberately does not catch it.
+                $raw = $payload['token'] ?? null;
+                $token = Crypt::decryptString(is_string($raw) ? $raw : '');
+
+                // Blueprint §132's https://app.example.com/invite/{token}, exactly, built the
+                // way password.reset_requested's handler already builds its one. The API NEVER
+                // builds this URL - only this handler does, for the mail - because the 201
+                // returns the bare token and lets each client construct the link its own
+                // platform needs (app://invite/{token} on mobile, this form on web).
+                $url = rtrim((string) config('app.web_url'), '/').'/invite/'.$token;
+
+                Mail::to($invite->email)->send(new PlanInviteMail(
+                    $inviter->profile->display_name,
+                    $plan->title,
+                    $url,
+                    $token,
+                ));
+            });
         });
     }
 }

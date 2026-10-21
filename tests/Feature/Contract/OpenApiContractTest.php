@@ -12,6 +12,7 @@ use App\Http\Requests\Api\V1\Auth\ResetPasswordRequest;
 use App\Http\Requests\Api\V1\Auth\VerifyEmailRequest;
 use App\Http\Requests\Api\V1\Plans\ChangeMemberRoleRequest;
 use App\Http\Requests\Api\V1\Plans\CreatePlanRequest;
+use App\Http\Requests\Api\V1\Plans\InvitePlanMemberRequest;
 use App\Http\Requests\Api\V1\Plans\ListPlansRequest;
 use App\Http\Requests\Api\V1\Plans\UpdatePlanRequest;
 use App\Http\Requests\Api\V1\UpdateProfileRequest;
@@ -254,6 +255,15 @@ it('declares every error status the application itself raises', function (): voi
         ['get', '/invites/{token}', '404'],
         // PreviewInviteTest: "rate limits invite lookups to sixty an hour and answers with four headers"
         ['get', '/invites/{token}', '429'],
+        // InvitePlanMemberTest: "refuses a plain member with 403 and a non-member with the
+        // Plan-not-found 404"
+        ['post', '/plans/{plan}/invites', '403'],
+        ['post', '/plans/{plan}/invites', '404'],
+        // InvitePlanMemberTest: "refuses an archived Plan with 409 and a private Plan with its
+        // own 409"
+        ['post', '/plans/{plan}/invites', '409'],
+        // InvitePlanMemberTest: "rate limits invites to twenty an hour for one Plan"
+        ['post', '/plans/{plan}/invites', '429'],
     ];
 
     foreach ($expected as [$method, $path, $status]) {
@@ -458,7 +468,7 @@ it('wraps every success response in the data envelope', function (): void {
     // number and not the second - the arithmetic check A29 names, `+ (1, 0)` against the
     // previous base of [13, 6]. If the diff ever prints a pair this reasoning does not predict,
     // something other than the task shipped - that is the defect, not the literal.
-    expect([$enveloped, $bodyless])->toBe([14, 6]);
+    expect([$enveloped, $bodyless])->toBe([15, 6]);
 });
 
 it('publishes both session expiries as date-time, not as a bare string', function (): void {
@@ -496,6 +506,7 @@ it('publishes required-versus-optional exactly as the rules state it', function 
         // operation and there is no components.schemas entry for the three assertions below to
         // read. This one's single key carries no @query, so there is.
         'ChangeMemberRoleRequest' => ChangeMemberRoleRequest::class,
+        'InvitePlanMemberRequest' => InvitePlanMemberRequest::class,
     ];
 
     foreach ($classes as $schemaName => $class) {
@@ -681,7 +692,7 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // contributes (+1, +2, ...) in its report. Task 39 re-derives the final absolute count from
     // the regenerated document rather than trusting any task's arithmetic forward.
     expect($parameterCount)->toBe(
-        19,
+        20,
         'The parameter walk above visited a different number of parameter objects than the '
         .'document publishes. Either a route gained or lost a parameter - in which case this '
         .'number moves with it (update the literal here in the same commit, and say by how much '
@@ -872,6 +883,11 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         'paths./invites/{token}.get.responses.200.description',
         'paths./invites/{token}.get.responses.404.description',
         'paths./invites/{token}.get.responses.429.description',
+        'paths./plans/{plan}/invites.post.responses.201.description',
+        'paths./plans/{plan}/invites.post.responses.403.description',
+        'paths./plans/{plan}/invites.post.responses.404.description',
+        'paths./plans/{plan}/invites.post.responses.409.description',
+        'paths./plans/{plan}/invites.post.responses.429.description',
         'components.responses.ValidationException.description',
         'components.responses.ValidationException.content.application/json.schema.properties.message.description',
         'components.responses.ValidationException.content.application/json.schema.properties.errors.description',
@@ -1162,29 +1178,28 @@ it('publishes no *Resource schema with a $ref to a domain enum', function (): vo
     // This section owns six Resources (spec §6.1), named here explicitly rather than counted:
     // a Resource not yet in components.schemas is not a defect, it is not routed yet, and the
     // route that will add it is named so the gap is a disclosed fact instead of a silent one.
-    // Measured at this task's own start commit, against app/Http/Resources/Api/V1/Plans/: all
-    // six classes already exist, but Scramble registers a component schema only for a Resource
-    // reachable from a route. Three are reachable today: PlanResource (GET /plans/{plan}, POST
-    // /plans, GET /plans), PlanMemberResource (GET /plans/{plan}/members) and
-    // InvitePreviewResource (GET /invites/{token}, this task's route). The other three are not
-    // yet routed by anything: PlanInviteResource (GET /plans/{plan}/invites),
-    // PlanInviteCreatedResource (POST /plans/{plan}/invites) and PlanActivityResource
-    // (GET /plans/{plan}/activity).
+    // Measured against app/Http/Resources/Api/V1/Plans/: all six classes already exist, but
+    // Scramble registers a component schema only for a Resource reachable from a route. Four are
+    // reachable today: PlanResource (GET /plans/{plan}, POST /plans, GET /plans),
+    // PlanMemberResource (GET /plans/{plan}/members), PlanInviteCreatedResource (POST
+    // /plans/{plan}/invites) and InvitePreviewResource (GET /invites/{token}). The other two are
+    // not yet routed by anything: PlanInviteResource (GET /plans/{plan}/invites) and
+    // PlanActivityResource (GET /plans/{plan}/activity).
     //
     // The assertion below is what a misspelling break step targets: the intersection is computed
     // against $resourceSchemaNames, which comes from the document, so a typo below in either
     // name that IS currently routed drops it out of the intersection and reds here - proving the
-    // correspondence is checked rather than assumed. A typo in one of the three not-yet-routed
+    // correspondence is checked rather than assumed. A typo in one of the two not-yet-routed
     // names cannot be observed this way, because neither spelling is in the document yet; that
-    // is why each of those three is disclosed above by name instead of asserted here.
+    // is why each of those two is disclosed above by name instead of asserted here.
     $sixResourceNames = [
         'PlanResource', 'PlanMemberResource', 'PlanInviteResource',
         'PlanInviteCreatedResource', 'PlanActivityResource', 'InvitePreviewResource',
     ];
 
     expect(array_values(array_intersect($sixResourceNames, $resourceSchemaNames)))->toBe(
-        ['PlanResource', 'PlanMemberResource', 'InvitePreviewResource'],
-        'exactly three of this section\'s six Resources should be reachable from a route today, '
+        ['PlanResource', 'PlanMemberResource', 'PlanInviteCreatedResource', 'InvitePreviewResource'],
+        'exactly four of this section\'s six Resources should be reachable from a route today, '
         .'and each must be found by its exact name - if this fails with fewer entries, a routed '
         .'Resource stopped being routed or its name above no longer matches the document',
     );

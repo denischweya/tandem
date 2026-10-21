@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Plans\ArchivePlanController;
 use App\Http\Controllers\Api\V1\Plans\CreatePlanController;
 use App\Http\Controllers\Api\V1\Plans\DeletePlanController;
 use App\Http\Controllers\Api\V1\Plans\GetPlanController;
+use App\Http\Controllers\Api\V1\Plans\InvitePlanMemberController;
 use App\Http\Controllers\Api\V1\Plans\ListPlansController;
 use App\Http\Controllers\Api\V1\Plans\PlanMemberController;
 use App\Http\Controllers\Api\V1\Plans\UpdatePlanController;
@@ -110,3 +111,20 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::delete('/plans/{plan}/members/{user}', [PlanMemberController::class, 'destroy'])
         ->name('plans.members.destroy');
 });
+
+// Outside the `auth:sanctum` group above, as its own standalone Route::post() with its own
+// middleware array: this task does not depend on another section's group structure, and
+// appending it inside the group would apply `auth:sanctum` twice.
+//
+// Gated on `verified`, per §7.5: issuing an invite creates state other members see and acts on
+// another person's behalf. Two measured consequences of the middleware ORDER, recorded so
+// neither is rediscovered as a bug: `verified` sorts LAST - after ThrottleRequests - so an
+// unverified user's 403 still spends a plan-invites token, and ThrottleRequests::handleRequest()
+// calls hit() before $next($request), so a request that goes on to 404 or 403 spends its budget
+// too. The second means any authenticated user can exhaust any Plan's 20/hour bucket by POSTing
+// here twenty times and taking the 404 each time. Neither is fixable at the route; both are the
+// cost of route-level throttling, and §13 chose it because none of these limits has "a success
+// worth exempting".
+Route::post('/plans/{plan}/invites', InvitePlanMemberController::class)
+    ->middleware(['auth:sanctum', 'verified', 'throttle:plan-invites'])
+    ->name('plans.invites.store');
