@@ -272,9 +272,15 @@ it('refuses a second acceptance of the same invite, because an invite is single 
     // paste one invite link into a group chat and have five people join through it; five people
     // need five invites.
     //
-    // forgetAuthenticatedUser() is not optional. The guards cache the resolved user for the whole
-    // test, so without it the second request authenticates as $first no matter which bearer token
-    // it carries - measured, and recorded on the helper itself.
+    // forgetAuthenticatedUser(): correct general practice (the cached-guard hazard is real and
+    // measured elsewhere - the helper's own docblock). Disclosed rather than assumed for THIS
+    // test specifically: deleting this call does NOT red any assertion below, measured. The
+    // uniform InviteNotUsable refusal is identity-blind by design (§10.7 step 4 rejects an
+    // already-accepted invite the same way for anyone, before any actor-specific check runs),
+    // so no assertion in this test can distinguish "ran as $second" from "the guard cache
+    // answered as $first again" - the invite is already Accepted either way and 404s either
+    // way. Kept for correctness and as the documented convention, not because this test proves
+    // it load-bearing.
     forgetAuthenticatedUser();
 
     $second = userWithPassword();
