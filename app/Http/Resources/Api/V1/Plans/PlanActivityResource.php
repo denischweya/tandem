@@ -28,6 +28,7 @@ final class PlanActivityResource extends JsonResource
             'actor_name' => $this->actorName,
             'subject_type' => $this->subjectType,
             'subject_id' => $this->subjectId,
+            /** @var array<string, string|list<string>> */
             'metadata' => $this->metadata,
             /** @format date-time */
             'created_at' => (string) $this->createdAt->format(DATE_RFC3339_EXTENDED),
