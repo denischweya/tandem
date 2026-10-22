@@ -662,3 +662,78 @@ function refusalFixture(User $owner): array
 
     return [$plan, $activeMember, $invite];
 }
+
+/**
+ * Every call in $php to a RateLimiter FACADE method that takes a cache key, with its line.
+ *
+ * The seven method names below all take a cache KEY. The only keys a test could know are a named
+ * limiter's name - always wrong, because ThrottleRequests stores its bucket under
+ * md5($limiterName.$limit->key) (ThrottleRequests::$shouldHashKeys defaults true, and
+ * ThrottleRequests::handleRequestUsingNamedLimiter() is where that key is built) while
+ * RateLimiter::clear() applies no md5 at all - or LoginRateLimiter's literal
+ * 'auth-login:ip:<ip>' / 'auth-login:email:<email>' keys, which are private constants of a final
+ * readonly class that no test reads. So the call is forbidden outright rather than classified by
+ * its argument. for() and limiter() are deliberately absent: those two take a limiter NAME, which
+ * is what they are for.
+ *
+ * Tokens rather than a text search, measured: `grep -rn "RateLimiter::clear(" tests` reports
+ * several hits, most of which are prose inside comments that exist to explain why those files do
+ * NOT reset a limiter. A comment is a single T_COMMENT or T_DOC_COMMENT token, so the text inside
+ * one is never the three-token sequence <name> :: <method> and needs no special case; those two
+ * token types are dropped here, along with T_WHITESPACE, so that a comment or a newline written
+ * BETWEEN the three tokens cannot hide a real call either.
+ *
+ * The name is matched on its last segment, so RateLimiter::, \RateLimiter:: (the root facade
+ * alias - six of eight such aliases evaded this project's name-based arch rule, which is why
+ * phpstan-rules/src/DomainPurity exists) and Illuminate\Support\Facades\RateLimiter:: are all one
+ * call, while LoginRateLimiter:: is not.
+ *
+ * The method name is matched case-insensitively on both sides (strtolower()), because PHP method
+ * dispatch is case-insensitive while `in_array(..., true)` is not: RateLimiter::Clear() is a
+ * working call that a case-sensitive comparison would miss outright.
+ *
+ * @return list<string>
+ */
+function rateLimiterKeyCallsIn(string $php): array
+{
+    $forbidden = ['attempt', 'attempts', 'availablein', 'clear', 'hit', 'remaining', 'toomanyattempts'];
+
+    $tokens = array_values(array_filter(
+        token_get_all($php),
+        fn (array|string $token): bool => is_string($token)
+            || ! in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true),
+    ));
+
+    $calls = [];
+    $total = count($tokens);
+
+    for ($i = 0; $i + 2 < $total; $i++) {
+        $name = $tokens[$i];
+        $colons = $tokens[$i + 1];
+        $method = $tokens[$i + 2];
+
+        // A single-character token - '(', ';', '\\' and so on - arrives as a plain string with
+        // no type and no line, so none of the three positions can be one.
+        if (is_string($name) || is_string($colons) || is_string($method)) {
+            continue;
+        }
+
+        if (! in_array($name[0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
+            continue;
+        }
+
+        if ($colons[0] !== T_DOUBLE_COLON || $method[0] !== T_STRING) {
+            continue;
+        }
+
+        $segments = explode('\\', ltrim($name[1], '\\'));
+
+        if (end($segments) !== 'RateLimiter' || ! in_array(strtolower($method[1]), $forbidden, true)) {
+            continue;
+        }
+
+        $calls[] = 'RateLimiter::'.$method[1].'() on line '.$name[2];
+    }
+
+    return $calls;
+}

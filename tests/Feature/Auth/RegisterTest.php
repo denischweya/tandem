@@ -12,16 +12,21 @@ use App\Models\OutboxEvent;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
 
 use function Pest\Laravel\postJson;
 
 uses(RefreshDatabase::class);
 
+// No RateLimiter::clear('auth-register') here. It was a no-op dressed as protection: the
+// named-limiter middleware stores its bucket under md5($limiterName.$limit->key)
+// (Illuminate\Routing\Middleware\ThrottleRequests::handleRequestUsingNamedLimiter()), so clearing
+// the bare string 'auth-register' touched a key the limiter never writes. Nothing is needed in
+// its place: CACHE_STORE is 'array' under phpunit.xml and the application is rebuilt per test, so
+// limiter state never crosses a test boundary.
+// tests/Feature/RateLimit/LimiterKeyHygieneTest.php is the gate that keeps it deleted.
 beforeEach(function (): void {
     Mail::fake();
-    RateLimiter::clear('auth-register');
 });
 
 it('creates a user and a profile and returns the public shape', function (): void {

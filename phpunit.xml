@@ -22,6 +22,17 @@
         </include>
     </source>
     <php>
+        <!-- Not a project convention to copy casually: pinned because the suite's default CLI
+             memory_limit (128M) left only roughly 1.5MB of headroom at 607 tests (measured peak
+             132644864 bytes via memory_get_peak_usage(true)), and
+             tests/Feature/RateLimit/LimiterKeyHygieneTest.php's tree scan (File::allFiles()
+             plus token_get_all() over every file under tests/, which is what the gate is for)
+             costs roughly 2MB of peak usage by itself, pushing the bare "vendor/bin/pest"
+             invocation over the ceiling deterministically (measured peak 134742016 bytes with
+             it present, against a 134217728 byte limit). stan already pins its own ceiling the
+             same way, as a memory limit flag on its own command line; this is the equivalent
+             knob for "test", since phpunit.xml has no command line flag to carry it on. -->
+        <ini name="memory_limit" value="256M"/>
         <env name="APP_ENV" value="testing"/>
         <!-- Throwaway key, committed deliberately: Sanctum tokens, signed verification URLs
              and encrypted cookies all need a real APP_KEY, and .env.example ships one blank.
