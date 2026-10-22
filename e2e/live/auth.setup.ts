@@ -1,14 +1,19 @@
 import { expect, test as setup } from '@playwright/test';
 
-import { saveAccount, STORAGE_STATE_FILE, STRONG_PASSWORD, uniqueEmail } from '../support/accounts';
+import { saveAccount, STRONG_PASSWORD, uniqueEmail } from '../support/accounts';
 import { assertLinkTargetsThisApp, linkMatching } from '../support/mailpit';
 
 const DISPLAY_NAME = 'Ada Lovelace';
 
 /**
- * ACCEPTANCE CRITERION 1 end to end, and the fixture every other live test depends on: a user
- * registers on the web, receives a verification email through the real outbox and Mailpit,
- * and verifies.
+ * ACCEPTANCE CRITERION 1 end to end, and the one registration every other live test builds on:
+ * a user registers on the web, receives a verification email through the real outbox and
+ * Mailpit, and verifies.
+ *
+ * It hands the `live` project an ACCOUNT, not a signed-in browser. No storage state is saved -
+ * see `playwright.config.ts`'s comment on the `live` project for the measured reason (a shared
+ * session cannot survive this suite's own refresh and password-reset tests), and
+ * `e2e/support/session.ts` for what the live tests use instead.
  *
  * This is the suite's FIRST of exactly two registrations per run (the second is
  * `live/invite.spec.ts`'s §11 case 3), which keeps it inside `POST /auth/register`'s
@@ -64,9 +69,16 @@ setup(
     await page.goto('/plans');
     await expect(page.getByTestId('plans-verify-banner')).toHaveCount(0);
 
-    await page.context().storageState({ path: STORAGE_STATE_FILE });
     // Written to a file the other specs read, because `process.env` does not cross a Playwright
     // project boundary - each project runs in its own worker process. See `saveAccount`.
+    //
+    // This used to be preceded by `page.context().storageState({path: STORAGE_STATE_FILE})`.
+    // Removed, because nothing read it: all nine live tests discard the browser's cookies as
+    // their first action, and the saved state was two cookies plus `origins: []` (this app
+    // writes no localStorage, sessionStorage or IndexedDB anywhere), so `clearCookies()`
+    // removed the whole of it. Writing a session snapshot nothing reads would invite the next
+    // implementer to seed a test from it, which is the bug this suite had to diagnose around -
+    // see `playwright.config.ts`'s comment on the `live` project.
     saveAccount({ email, displayName: DISPLAY_NAME, password: STRONG_PASSWORD });
   },
 );

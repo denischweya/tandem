@@ -15,16 +15,29 @@ import { signIn, signInFresh } from '../support/session';
  * depends on; criterion 4 is mobile's (Task 9 Step 10) because §11's five web surfaces include
  * no profile page.
  *
- * Every test here starts from the setup project's storage state (`playwright.config.ts`'s
- * `live` project), so a test that needs a signed-out browser clears the cookies itself rather
- * than registering a second account - `POST /auth/register` is 5/hour/IP counting REQUESTS.
+ * EVERY TEST HERE STARTS SIGNED OUT AND ESTABLISHES ITS OWN SESSION - via
+ * `e2e/support/session.ts`'s `signInFresh` (or `freshSessionWithExpiredAccessToken` below,
+ * which begins with it). The `live` project seeds NO storage state, deliberately; see
+ * `playwright.config.ts`'s own comment on why that line was removed rather than left.
  *
- * Every sign-in reads the password from `e2e/.auth/account.json` at the moment it signs in,
- * never from the `STRONG_PASSWORD` constant, because the AC 3 test below genuinely rotates it
- * on the server and writes the new one back. `npm run e2e:live` pins `--workers=1` for the
- * same reason: these tests share ONE live account and one per-IP rate-limit budget, so
- * parallel workers would both multiply the budget pressure and race on that account's
- * password.
+ * Do not write a test here that depends on arriving already signed in. It would pass in
+ * isolation and fail in the suite, and the reason is real API behaviour rather than a test
+ * harness quirk: a refresh token is single-use (§9.1.1 rotates it on every use and reads an
+ * already-rotated one as a replay, revoking the lineage and deleting every access token the
+ * user holds), and the AC 3 test below completes a real password reset, which revokes every
+ * token the account holds on every device. Any session shared across these tests is dead the
+ * moment one of them refreshes or resets.
+ *
+ * What the setup project DOES hand over is the account itself, in `e2e/.auth/account.json`:
+ * one registration and one verification for the whole run, which is what keeps the suite
+ * inside `POST /auth/register`'s 5/hour/IP budget - a budget that counts REQUESTS, so it does
+ * not self-heal.
+ *
+ * Every sign-in reads the password from that file at the moment it signs in, never from the
+ * `STRONG_PASSWORD` constant, because the AC 3 test genuinely rotates it on the server and
+ * writes the new one back. `npm run e2e:live` pins `--workers=1` for the same reason: these
+ * tests share ONE live account and one per-IP rate-limit budget, so parallel workers would
+ * both multiply the budget pressure and race on that account's password.
  */
 
 const PLANS_EMPTY_STATE = 'Nothing planned yet.';
@@ -41,17 +54,18 @@ const PLANS_EMPTY_STATE = 'Nothing planned yet.';
  *    criterion 11 asserts, and it never reaches `refreshSession()` at all. Expiry does not
  *    remove the cookie; it makes the token stop being accepted. See `REJECTED_ACCESS_TOKEN`.
  *
- * 2. A FRESH SIGN-IN FIRST, rather than refreshing the storage state's own token. A REFRESH
- *    TOKEN IS SINGLE-USE: §9.1.1 rotates it on every use, and presenting an already-rotated
- *    one is read as a replay, which revokes the whole lineage AND deletes every access token
- *    the user holds. The `live` project seeds every test from one shared
- *    `e2e/.auth/user.json`, so the FIRST test to refresh rotates the token every LATER test
- *    would present - and the second such test replays it. Observed exactly once, before this
- *    helper existed: the AC 11 rotation test passed, the two-tab test that ran next landed on
- *    `/signin` showing "You were signed out. Sign in again.", and that replay would also have
- *    deleted the access token `live/invite.spec.ts`'s storage-state tests depend on. Signing
- *    in here mints a chain that belongs to this test alone, so no live test ever presents a
- *    rotated token and the suite is re-runnable in any order.
+ * 2. A FRESH SIGN-IN FIRST, rather than refreshing whatever session the browser arrived with.
+ *    A REFRESH TOKEN IS SINGLE-USE: §9.1.1 rotates it on every use, and presenting an
+ *    already-rotated one is read as a replay, which revokes the whole lineage AND deletes
+ *    every access token the user holds. The brief's design had the `live` project seed every
+ *    test from one shared `e2e/.auth/user.json`, which made the FIRST test to refresh rotate
+ *    the token every LATER test would present - and the second such test replay it. Observed
+ *    exactly once, before this helper existed: the AC 11 rotation test passed, the two-tab
+ *    test that ran next landed on `/signin` showing "You were signed out. Sign in again.",
+ *    and that replay also deleted the access token `live/invite.spec.ts`'s tests were relying
+ *    on. That seeding is gone (`playwright.config.ts`), and signing in here mints a chain
+ *    belonging to this test alone, so no live test ever presents a rotated token and the
+ *    suite is re-runnable in any order.
  */
 async function freshSessionWithExpiredAccessToken(
   page: Page,

@@ -33,9 +33,11 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
     {
-      // Registers, verifies and signs in ONE account, then saves its cookies. Every live test
-      // reuses that state, because POST /auth/register is 5/hour/IP counting REQUESTS (§8.2)
-      // and a suite that registers per test throttles itself inside one run.
+      // Registers and verifies ONE account and writes it to `e2e/.auth/account.json`. Every
+      // live test signs in as that account, because POST /auth/register is 5/hour/IP counting
+      // REQUESTS (§8.2) and a suite that registers per test throttles itself inside one run.
+      //
+      // It does NOT hand the live project a signed-in browser - see the `live` project below.
       name: 'live-setup',
       testMatch: /live\/auth\.setup\.ts/,
       // 60s, not the 30s default. MEASURED while running this task's own vacuity proof 2
@@ -50,11 +52,28 @@ export default defineConfig({
     {
       name: 'live',
       testMatch: /live\/.*\.spec\.ts/,
+      // `dependencies`, but deliberately NO `storageState`. The dependency is still
+      // load-bearing - it is what registers and verifies the account and writes
+      // `e2e/.auth/account.json`, which every live test reads - but a SEEDED SIGNED-IN
+      // BROWSER is not something this suite can use, and offering one invites the exact bug
+      // this task had to diagnose around.
+      //
+      // MEASURED, twice, against the real API: a refresh token is single-use (§9.1.1 rotates
+      // it on every use, and presenting an already-rotated one is read as a replay, which
+      // revokes the lineage AND deletes every access token the user holds), and a password
+      // reset revokes every token the account holds. Both are correct behaviour. Both mean a
+      // shared, pre-seeded session is dead the moment one test refreshes or resets - so all
+      // nine live tests discard it as their first action and establish their own via
+      // `e2e/support/session.ts`'s `signInFresh`. `storageState` here pointed at a file
+      // nothing read: the state holds two cookies and `origins: []` (this app writes no
+      // localStorage, sessionStorage or IndexedDB anywhere - grepped), so `clearCookies()`
+      // removed the whole of it. Removed rather than left as a comment, because a live
+      // `storageState` line reads as an invitation to depend on it.
       dependencies: ['live-setup'],
       // Same 60s, same reason: the AC 3 test also waits on a mail that only a running
       // dispatcher produces, and it does three authentication round trips besides.
       timeout: 60_000,
-      use: { ...devices['Desktop Chrome'], storageState: 'e2e/.auth/user.json' },
+      use: { ...devices['Desktop Chrome'] },
     },
   ],
 });

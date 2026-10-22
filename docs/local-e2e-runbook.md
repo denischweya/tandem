@@ -123,30 +123,37 @@ both of which cost a test run before they were understood:
 
 1. **A refresh token is single-use.** §9.1.1 rotates it on every use, and presenting an
    already-rotated one is read as a replay — which revokes the whole lineage _and deletes every
-   access token the user holds_. The `live` project seeds every test from one shared
-   `e2e/.auth/user.json`, so the first test to refresh rotates the token every later test would
-   present, and the second such test replays it. Observed: the AC 11 rotation test passed, and
+   access token the user holds_. The brief's design seeded every test from one shared
+   `e2e/.auth/user.json`, so the first test to refresh rotated the token every later test would
+   present, and the second such test replayed it. Observed: the AC 11 rotation test passed, and
    the test that ran next landed on `/signin` showing "You were signed out. Sign in again."
 2. **A password reset revokes every token the account holds, on every device** — by design. So
-   the AC 3 test invalidates the seeded storage state for everything that runs after it.
+   the AC 3 test invalidated that seeded session for everything that ran after it.
 
-Neither is a bug. The consequence for the suite is that **no live test may depend on the seeded
-cookies staying live**: a test that needs a signed-in browser calls
-`e2e/support/session.ts`'s `signInFresh`, and the seeded state's remaining job is to make the
-setup project's one registration the only one any of them needs.
+Neither is a bug. The consequence: **there is no seeded session at all.** The `live` project
+sets no `storageState` (see `playwright.config.ts`), every test that needs a signed-in browser
+calls `e2e/support/session.ts`'s `signInFresh`, and what the setup project hands over is the
+ACCOUNT in `e2e/.auth/account.json` — which is what keeps its one registration the only one any
+live test needs. **Do not add a test that depends on arriving already signed in**; it will pass
+in isolation and fail in the suite.
 
 ## Proving the suite is not vacuous
 
-A live suite that passes against a dead API is worse than none. Five break-and-restore proofs,
-each recorded with its output in this task's report
-(`tandem-docs/.superpowers/sdd/2026-10-10-cycle-1-wave-1b-clients/task-13-report.md`):
+A live suite that passes against a dead API is worse than none. Six break-and-restore proofs,
+each recorded with its full output in this task's report
+(`tandem-docs/.superpowers/sdd/2026-10-10-cycle-1-wave-1b-clients/task-13-report.md`, §5).
+Expected failures are what was **measured**, not what was predicted — two of the brief's own
+predictions were wrong, and rows 1 and 3 say so, because a reproduction that looks like a failed
+repro is worse than no reproduction.
 
-| Break                                                       | Expected failure                                                                           |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Stop `make api`                                             | the setup project fails at the first API call                                              |
-| Stop the dispatcher loop                                    | the setup project fails in `linkMatching` with "no message arrived"                        |
-| `refreshSession()` returns `false` without calling anything | AC 11's rotation test fails — the sign-in screen appears where `/plans` was expected       |
-| Remove the BroadcastChannel `claim`/wait                    | AC 11's second-tab test fails with a refresh count of 2                                    |
-| Comment out the reset-token replay assertion                | the AC 3 test still passes, which is what shows that assertion is the thing catching reuse |
+| #   | Break                                                              | Measured outcome                                                                                                                                                                                                                                                                                                                                |
+| --- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Stop `make api`                                                    | the setup project fails at the register **submit**, not at the first navigation — the app serves `/signup` fine with no API — rendering `HOUSE_NETWORK_MESSAGE`: "We couldn't reach Tandem. Check your connection and try again."                                                                                                               |
+| 2   | Stop the dispatcher loop                                           | the setup project fails in `linkMatching`: "No message to … arrived within 30000ms (0 message(s) to that address in Mailpit)". The Mailpit read is real, not satisfied by an empty inbox.                                                                                                                                                       |
+| 3   | `refreshSession()` returns `false` without calling anything        | **both** AC 11 tests fail. The rotation test renders `ErrorState` "Something went wrong" + a "Try again" button — **not** a sign-in screen. That is correct: `false` with both cookies intact is a TRANSIENT failure, `isNowSignedOut()` still answers `expired`, and `ExpiredSessionRefresh` deliberately declines to claim the session ended. |
+| 4   | Remove the BroadcastChannel `claim` broadcast                      | AC 11's second-tab test fails "the follower must not post its own refresh / Expected: 1 / Received: 2"                                                                                                                                                                                                                                          |
+| 4b  | Remove the module-level promise in `refreshSession`                | the live suite still passes 10/10 — recorded, not hidden: the app has one refresh initiator per document, so this half is only reachable from `src/lib/session/refresh-client.test.ts`, which the same break fails with 2 assertions. This is why row 4 breaks the election instead.                                                            |
+| 5a  | Comment out the reset-token replay assertion                       | the AC 3 test still passes, which is what shows that assertion is the only thing covering single-use                                                                                                                                                                                                                                            |
+| 5b  | Replay a **fresh, unused** reset token instead of the consumed one | the AC 3 test fails on `This link isn't usable` — so the dead-token assertions genuinely observe single-use rather than a page state that is always there                                                                                                                                                                                       |
 
 Re-run `docker compose exec -T redis redis-cli FLUSHALL` between proofs — each one registers.

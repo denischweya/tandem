@@ -21,7 +21,6 @@ export const STRONG_PASSWORD = 'correct-horse-battery';
 export const ROTATED_PASSWORD = 'tandem-live-rotated-1';
 
 export const ACCOUNT_FILE = 'e2e/.auth/account.json';
-export const STORAGE_STATE_FILE = 'e2e/.auth/user.json';
 
 export interface LiveAccount {
   readonly email: string;

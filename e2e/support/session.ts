@@ -9,22 +9,25 @@ import { loadAccount } from './accounts';
  * NOT IN THE BRIEF'S FILE LIST, and here is why it earns its place rather than being two
  * copies in two specs. MEASURED, in this order, on a full live run:
  *
- *   1. The `live` project seeds every test from `e2e/.auth/user.json`, which the setup project
- *      wrote - the brief's design, and the right one for keeping the suite inside
- *      `POST /auth/register`'s 5/hour/IP budget.
+ *   1. The brief had the `live` project seed every test from `e2e/.auth/user.json`, which the
+ *      setup project wrote - a reasonable design, and the right instinct for keeping the suite
+ *      inside `POST /auth/register`'s 5/hour/IP budget.
  *   2. `live/auth.spec.ts`'s AC 3 test completes a real password reset, which the API
  *      deliberately treats as "revoke every token this account holds, on every device"
  *      (§9.1.1 / `resetPasswordHandler`'s own docblock).
- *   3. Every later test's seeded cookies are therefore dead. Observed: `live/invite.spec.ts`'s
+ *   3. Every later test's seeded cookies were therefore dead. Observed: `live/invite.spec.ts`'s
  *      §11 case 1 rendered `/signin` with "You were signed out. Sign in again." instead of the
  *      invite's signed-in branch - the seeded access token 401'd, so `getSession()` answered
  *      `expired`, and `refreshSession()` then presented a refresh token the reset had revoked.
+ *      The AC 11 rotation test caused the same thing one step earlier, by using up the one
+ *      shared refresh token that every later test would go on to replay.
  *
  * That is correct product behaviour and a correct `ExpiredSessionRefresh` terminal-401 path;
- * it is the TEST that was wrong to assume a shared session survives a test that revokes
- * sessions. So no live test depends on the seeded cookies staying live: a test that needs a
- * signed-in browser calls `signInFresh`, and the seeded state's remaining job is to make the
- * setup project's one registration the only one any of them needs.
+ * it is the TEST that was wrong to assume a shared session survives tests that revoke
+ * sessions. So the seeding is gone - `playwright.config.ts`'s `live` project sets no
+ * `storageState` at all - and every test that needs a signed-in browser calls `signInFresh`
+ * below. What the setup project still hands over is the ACCOUNT, in `e2e/.auth/account.json`,
+ * which is what keeps its one registration the only one any live test needs.
  */
 export async function signIn(page: Page, password?: string): Promise<void> {
   const account = loadAccount();
