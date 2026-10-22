@@ -14,11 +14,19 @@ use App\Http\Requests\Api\V1\Plans\ChangeMemberRoleRequest;
 use App\Http\Requests\Api\V1\Plans\CreatePlanRequest;
 use App\Http\Requests\Api\V1\Plans\InvitePlanMemberRequest;
 use App\Http\Requests\Api\V1\Plans\JoinPlanRequest;
+use App\Http\Requests\Api\V1\Plans\ListPlanActivityRequest;
+use App\Http\Requests\Api\V1\Plans\ListPlanMembersRequest;
 use App\Http\Requests\Api\V1\Plans\ListPlansRequest;
 use App\Http\Requests\Api\V1\Plans\UpdatePlanRequest;
 use App\Http\Requests\Api\V1\UpdateProfileRequest;
+use Dedoc\Scramble\Attributes\Response as ScrambleResponseAttribute;
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
+use ReflectionMethod;
+use ReflectionNamedType;
 
 /**
  * Behavioural assertions about the committed openapi.json, as distinct from the byte-equality
@@ -41,6 +49,91 @@ use Illuminate\Validation\Rules\Password;
 function openApiDocument(): mixed
 {
     return json_decode((string) file_get_contents(base_path('openapi.json')), true);
+}
+
+/**
+ * The controller method a route's action actually dispatches to.
+ *
+ * NOT Route::getActionMethod(): that is built from $this->action['controller'], which for an
+ * invokable (single-action) controller registered as `Route::post($uri, FooController::class)`
+ * holds the bare class name with no `@__invoke` - measured on this route table, where every
+ * action but PlanMemberController's three is registered that way. Route::getAction('uses') is
+ * the field Laravel's own controller dispatcher resolves the method from
+ * (Route::getControllerMethod(), which is protected and so unreachable from a test), and
+ * Str::parseCallback splits it the same way: 'FQCN@__invoke' for an invokable controller,
+ * 'FQCN@index' for PlanMemberController::index().
+ */
+function routeActionMethod(RoutingRoute $route): string
+{
+    return Str::parseCallback((string) $route->getAction('uses'))[1] ?? '__invoke';
+}
+
+/**
+ * Every FormRequest subclass a route's own action declares as a parameter.
+ *
+ * Reflected off the route table rather than listed, so a FormRequest absent from the
+ * required-versus-optional map below cannot go unchecked in silence (spec §16.1 item 3): that
+ * map is a literal, and a literal nobody counts is exactly the hole this closes. Stays in this
+ * file rather than in tests/Pest.php for the reason openApiDocument() does - one consumer. If a
+ * second file ever wants it, it MOVES there whole; Pest loads every test file into the global
+ * namespace, so a second declaration is a fatal "Cannot redeclare".
+ *
+ * @return list<class-string<FormRequest>>
+ */
+function formRequestsFor(RoutingRoute $route): array
+{
+    $class = $route->getControllerClass();
+
+    if (! is_string($class) || $class === '') {
+        return [];
+    }
+
+    $classes = [];
+
+    foreach ((new ReflectionMethod($class, routeActionMethod($route)))->getParameters() as $parameter) {
+        $type = $parameter->getType();
+
+        if (! $type instanceof ReflectionNamedType || $type->isBuiltin()) {
+            continue;
+        }
+
+        if (is_subclass_of($type->getName(), FormRequest::class)) {
+            $classes[] = $type->getName();
+        }
+    }
+
+    return $classes;
+}
+
+/**
+ * Every status an authored #[Response] attribute declares on a route's own action.
+ *
+ * Amendment 6's third anchor: a source neither the document-derived $authored set nor the
+ * hand-written $expected table reads, inside "declares every error status the application
+ * itself raises" below. Matches the ATTRIBUTE CLASS via reflection, not the local import name -
+ * this codebase imports Dedoc\Scramble\Attributes\Response under three different names
+ * (`Response` in twelve controller files, `ResponseDoc` in two, `ResponseAttribute` in two, to
+ * dodge a same-file collision with Illuminate\Http\Response or a second Response import), so a
+ * name-based grep sees only the twelve and a reflection-based read is the only one that cannot
+ * miss the other four.
+ *
+ * @return list<string>
+ */
+function responseStatusesFor(RoutingRoute $route): array
+{
+    $class = $route->getControllerClass();
+
+    if (! is_string($class) || $class === '') {
+        return [];
+    }
+
+    $statuses = [];
+
+    foreach ((new ReflectionMethod($class, routeActionMethod($route)))->getAttributes(ScrambleResponseAttribute::class) as $attribute) {
+        $statuses[] = (string) $attribute->newInstance()->status;
+    }
+
+    return $statuses;
 }
 
 it('publishes every verify-email parameter in the query string and no request body', function (): void {
@@ -154,7 +247,7 @@ it('declares every error status the application itself raises', function (): voi
     // A literal table, deliberately - and not the only literal pin in this file, though it is
     // the only one here for THIS reason. Other literal pins exist for the opposite reason: an
     // anti-vacuity floor on a walk that CAN be derived from the document, pinned to catch the
-    // walk going silent rather than because nothing could be derived at all. $parameterCount
+    // walk going silent rather than because nothing could be derived at all. $queryParameterCount
     // and $allProsePaths below are two examples, not an enumeration - this file is a Modify
     // target for nearly every task in the wave, so a count written here would be the same
     // self-referential liability the sentence this replaced turned out to be, just one digit
@@ -373,6 +466,39 @@ it('declares every error status the application itself raises', function (): voi
         .'resolve a mismatch by pasting this list into the table - decide which side is wrong '
         .'first, because the whole value of the table is that each row has a test behind it.',
     );
+
+    // Amendment 6's third anchor. The forward-and-reverse check above compares $authored (read
+    // off openapi.json) against $expected (the hand-written table) - and `toEqualCanonicalizing`
+    // does not close the compensating-change class when BOTH sides are written: deleting a
+    // #[Response] attribute and its table row in one commit can leave that comparison green,
+    // because each side loses the same entry. What closes it is a THIRD set built from a source
+    // NEITHER existing side reads: responseStatusesFor() reflects the attribute straight off the
+    // controller action, independent of whether openapi.json has been regenerated to match.
+    //
+    // An authored status can only be inline, because the attribute's own toOpenApiResponse()
+    // resolves any reference into a concrete object before Scramble ever sees it - so attributes
+    // ↔ inline rows is an EQUIVALENCE, not a correlation, which is what makes this anchor sound
+    // rather than merely additional. The two sets below are expected to agree at every commit
+    // where openapi.json is up to date; where they do not, the committed document is stale
+    // relative to the controller it was supposedly generated from, and the reflected set says so
+    // without needing to regenerate anything first.
+    $reflected = [];
+
+    foreach (documentedRoutes() as [$method, $path, $route]) {
+        foreach (responseStatusesFor($route) as $status) {
+            $reflected[] = [$method, $path, $status];
+        }
+    }
+
+    expect(array_map($line, $reflected))->toEqualCanonicalizing(
+        array_map($line, $authored),
+        'Every #[Response] attribute reflected off a controller action must match the inline '
+        .'responses openapi.json actually publishes for that route. A line here that is not in '
+        .'the document is a committed openapi.json stale relative to the controller - run '
+        .'`make openapi`. A line in the document that is not here is an inline response with no '
+        .'attribute behind it at all, which should not be reachable in this codebase: every '
+        .'non-2xx inline response comes from an authored #[Response].',
+    );
 });
 
 it('wraps every success response in the data envelope', function (): void {
@@ -437,35 +563,19 @@ it('wraps every success response in the data envelope', function (): void {
     // fifty lines from a literal already summing to seventeen. Nothing reads a comment, so
     // nothing reds when one rots.
     //
-    // The two SETS, which do not decay the way their sizes do - not fully re-enumerated here
-    // (this comment's own list had already fallen behind the literal by the time this task
-    // read it, which is exactly the self-referential staleness the header above warns against;
-    // left rather than reconstructed by hand, since the per-task delta trail below is what each
-    // task actually verified). Examples of each: GET /plans/{plan}, POST /plans and
-    // GET /invites/{token} are enveloped; DELETE /me, reset-password and
+    // The two SETS, which do not decay the way their sizes do - not fully re-enumerated here,
+    // by examples of each rather than a growing per-task trail (a comment that tried to carry
+    // one, bracket-delta by bracket-delta, had already dropped a task's own contribution by the
+    // time this task read it - a gap, not a wrong total, but the same unasserted-count liability
+    // either way). GET /plans/{plan}, POST /plans, GET /invites/{token} and
+    // GET /plans/{plan}/activity are enveloped; DELETE /me, reset-password and
     // DELETE /plans/{plan}/members/{user} are bodyless.
     //
-    // This task's own delta was PREDICTED from the shape before regenerating and then confirmed
-    // against the regenerated document: GET /invites/{token} returns InvitePreviewResource (a
-    // JsonResource with no ->additional() and no ->withoutWrapping()), which adds to the first
-    // number and not the second - the arithmetic check A29 names, `+ (1, 0)` against the
-    // previous base of [13, 6]. If the diff ever prints a pair this reasoning does not predict,
-    // something other than the task shipped - that is the defect, not the literal.
-    //
-    // Task 27's own delta is also `+ (1, 0)` against the base of [15, 6] immediately above:
-    // POST /plans/{plan}/join's one 200 returns PlanResource (JsonResource, `data`-wrapped),
-    // and it adds no bodyless 2xx at all.
-    //
-    // The delta immediately above is `+ (1, 1)` against the base of [16, 6]:
-    // GET /plans/{plan}/invites's one 200 returns PlanInviteResource::collection(...)
-    // (AnonymousResourceCollection, `data`-wrapped - the enveloped side), and
-    // DELETE /plans/{plan}/invites/{invite}'s one 204 has no body at all (the bodyless side).
-    //
-    // This task's own delta is `+ (1, 0)` against the base of [17, 7] immediately above:
-    // GET /plans/{plan}/activity's one 200 returns PlanActivityResource::collection(...)
-    // (AnonymousResourceCollection, `data`-wrapped - the enveloped side), and it adds no
-    // bodyless 2xx at all. Predicted from the shape before regenerating, then confirmed against
-    // the regenerated document.
+    // 18 and 7, measured off the regenerated document (the command is in this task's report),
+    // not summed from any task's own arithmetic: every list-route controller adds one enveloped
+    // 2xx (its collection, `data`-wrapped) and every write-route controller adds either one
+    // enveloped 2xx (a Resource) or one bodyless 204, and nothing here needs that restated by
+    // hand once the pair above is read directly off the thing it counts.
     expect([$enveloped, $bodyless])->toBe([18, 7]);
 });
 
@@ -489,6 +599,56 @@ it('publishes required-versus-optional exactly as the rules state it', function 
     // ['sometimes', 'string', 'max:10'], which reads as "an empty string is fine" and was not
     // (ConvertEmptyStringsToNull makes it a 422), and tandem-shared had mirrored the written
     // rule rather than the behaviour.
+    //
+    // The map below is also a literal, and a literal nobody counts is the hole spec §16.1 item 3
+    // names: a FormRequest left out of it is UNCHECKED and nothing else notices. So its key set
+    // is derived off the route table and compared below, the way the security-correspondence
+    // case near the top of this file derives its own set rather than restating one.
+    //
+    // GET, DELETE and HEAD are skipped because a FormRequest on one of those publishes its
+    // rules() as `parameters` and registers NO component schema
+    // (RequestBodyExtension::HTTP_METHODS_WITHOUT_REQUEST_BODY, and FormRequestParametersExtractor
+    // passing in: 'query'), while the schema's own existence is the first thing the loop below
+    // checks - so such a class cannot be a member of this map at all. The three query
+    // FormRequests this excludes (ListPlansRequest, ListPlanMembersRequest,
+    // ListPlanActivityRequest) are asserted instead by "publishes every list filter as a query
+    // parameter and no request body" below.
+    //
+    // A FormRequest on a BODY-carrying route can also publish no schema, by marking every one of
+    // its keys @query: with no body parameters left, RequestBodyExtension returns before
+    // makeSchemaFromResults(). VerifyEmailRequest (POST /auth/verify-email) is that case, and is
+    // the reason this is two assertions rather than one - skipping such a class silently would
+    // reopen the hole from the other side, so the skipped set is itself pinned.
+    $bodyRequests = [];
+    $queryOnly = [];
+
+    foreach (documentedRoutes() as [$method, $path, $route]) {
+        if (in_array($method, ['get', 'delete', 'head'], true)) {
+            continue;
+        }
+
+        foreach (formRequestsFor($route) as $class) {
+            $name = class_basename($class);
+
+            if (data_get(openApiDocument(), "components.schemas.{$name}") === null) {
+                $queryOnly[$name] = $class;
+
+                continue;
+            }
+
+            $bodyRequests[$name] = $class;
+        }
+    }
+
+    expect(array_keys($queryOnly))->toEqualCanonicalizing(
+        ['VerifyEmailRequest'],
+        'A FormRequest on a body-carrying route that publishes no component schema has marked '
+        .'every one of its rules() keys @query. VerifyEmailRequest is the only one, and it has '
+        .'its own case at the top of this file. A second name here is a request class whose body '
+        .'went undocumented - exactly the defect that case was written for - and a name missing '
+        .'here means verify-email has started publishing a body no client can send.',
+    );
+
     $classes = [
         'RegisterRequest' => RegisterRequest::class,
         'LoginRequest' => LoginRequest::class,
@@ -510,6 +670,14 @@ it('publishes required-versus-optional exactly as the rules state it', function 
         // InvitePlanMemberRequest do, unlike ListPlanMembersRequest and ListPlansRequest.
         'JoinPlanRequest' => JoinPlanRequest::class,
     ];
+
+    expect(array_keys($classes))->toEqualCanonicalizing(
+        array_keys($bodyRequests),
+        'Every FormRequest reachable on a body-carrying route must be in the map above, or its '
+        .'required-versus-optional contract is unchecked and nothing else will notice. A name '
+        .'missing here is a new request class; a name that is extra is a class no route reaches '
+        .'any more.',
+    );
 
     foreach ($classes as $schemaName => $class) {
         $rules = (new $class)->rules();
@@ -605,7 +773,7 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // ROUND 1, PROVEN rather than hypothetical: GET /plans (the first paginated list) now
     // exists, and its controller's ->additional(['meta' => ['next_cursor' => ...]]) now gives
     // this position something to leak. A break step placed a `//` comment immediately above
-    // that 'next_cursor' key and regenerated: neither $prose nor $parameterCount above moved -
+    // that 'next_cursor' key and regenerated: neither $prose nor either parameter count above moved -
     // both stayed green, exactly as the untested version of this paragraph predicted - and the
     // leaked comment published at
     // paths./plans.get.responses.200.content.application/json.schema.properties.meta.properties.next_cursor.description,
@@ -627,7 +795,8 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // assumed. Both that gap and the sixth position above are closed at the COUNT level, not the
     // name level, by the recursive walk at the end of this test.
     $prose = [];
-    $parameterCount = 0;
+    $pathParameterCount = 0;
+    $queryParameterCount = 0;
 
     foreach (Arr::wrap(data_get(openApiDocument(), 'paths')) as $path => $operations) {
         foreach (Arr::wrap($operations) as $method => $operation) {
@@ -640,7 +809,11 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
             }
 
             foreach (Arr::wrap(data_get($operation, 'parameters')) as $index => $parameter) {
-                $parameterCount++;
+                if (data_get($parameter, 'in') === 'path') {
+                    $pathParameterCount++;
+                } else {
+                    $queryParameterCount++;
+                }
 
                 foreach (['description', 'schema.description'] as $key) {
                     $value = data_get($parameter, $key);
@@ -666,58 +839,47 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     }
 
     // Counted, for the reason the envelope case above is counted: a traversal that stopped
-    // finding parameter objects would build an empty $prose and pass while watching nothing.
+    // finding parameter objects would build an empty $prose and pass while watching nothing. The
+    // two positions below are split (Task 39/C10) because they decay differently.
     //
-    // No running total in prose, only the per-route contributions, each of which stays true
-    // however the sum moves - the literal below is the sum, and it is the only place written.
-    // POST /auth/verify-email contributes four query parameters; GET /plans/{plan} one {plan}
-    // (Task 15, the first Wave 2 route to add a path parameter); PATCH /plans/{plan},
-    // DELETE /plans/{plan} and POST /plans/{plan}/archive one {plan} each (Task 17);
-    // GET /plans three, its status, limit and cursor; GET /plans/{plan}/members three, its
-    // {plan} plus limit and cursor; PATCH /plans/{plan}/members/{user} two, the first route in
-    // the document with TWO path parameters; DELETE /plans/{plan}/members/{user} two more; and
-    // GET /invites/{token} one {token} - this task's +1 (Amendment 2: every task that adds a
-    // parameterised route owes this literal in the same commit, with the arithmetic stated).
+    // The PATH half is DERIVED off the route table rather than pinned as a literal: a route
+    // added without regenerating fails here on its own, with no maintenance owed by any task. A
+    // literal summing every task's `+1`/`+2`/`+3` was tried first and is what this replaces -
+    // every one of those deltas was correct when written and the arithmetic trail itself became
+    // exactly the kind of prose this file's own standing rule now rejects (a count nothing
+    // computes, maintained by hand across a dozen tasks). The derivation below is the fix: it
+    // sums count($route->parameterNames()) over documentedRoutes(), which is the route table
+    // itself, not a copy of it.
     //
-    // The earlier +2 (DELETE /plans/{plan}/members/{user}) is the one worth stating the
-    // mechanism for, because it reads like a double-count and is not: the walk counts
-    // OPERATION-level `parameters` arrays, and Scramble emits one per operation, so a second
-    // method on an ALREADY-PUBLISHED path contributes its own copy of both path parameters
-    // rather than reusing the first method's. This task's own +1 is a NEW path
-    // (GET /invites/{token}), not a second method on an existing one, so no such doubling
-    // applies - it is one operation's one path parameter. Measured by counting the
-    // `parameters` arrays in the regenerated document (19), not assumed from the route count -
-    // and predicted as +1 before regenerating, then confirmed.
-    //
-    // A Wave 2 route with a path or query parameter moves this number, and is meant to: any task
-    // that adds one must update this literal in the same commit and state the arithmetic it
-    // contributes (+1, +2, ...) in its report. Task 39 re-derives the final absolute count from
-    // the regenerated document rather than trusting any task's arithmetic forward.
-    //
-    // This task's own +1: POST /plans/{plan}/join's one {plan} path parameter - a NEW path
-    // (Amendment 2), not a second method on an already-published one, so no doubling applies.
-    //
-    // This task's own +3: GET /plans/{plan}/invites's one {plan}, plus
-    // DELETE /plans/{plan}/invites/{invite}'s two ({plan} and {invite}). The GET shares an
-    // existing path with POST /plans/{plan}/invites, but the walk counts OPERATION-level
-    // `parameters` arrays and Scramble emits one per operation, so the GET's own {plan} is
-    // counted again rather than reused from the POST. The DELETE is a NEW path with two path
-    // parameters, the same shape PATCH/DELETE /plans/{plan}/members/{user} already established.
-    // Predicted +3 before regenerating (measured by counting the `parameters` arrays in the
-    // regenerated document, 24), then confirmed.
-    //
-    // This task's own +3: GET /plans/{plan}/activity's one {plan} path parameter, plus its
-    // `limit` and `cursor` query parameters (ListPlanActivityRequest's two /** @query */
-    // rules() keys). A NEW path, so no doubling applies. Predicted +3 before regenerating
-    // (measured by counting the `parameters` arrays in the regenerated document, 27), then
-    // confirmed.
-    expect($parameterCount)->toBe(
-        27,
-        'The parameter walk above visited a different number of parameter objects than the '
-        .'document publishes. Either a route gained or lost a parameter - in which case this '
-        .'number moves with it (update the literal here in the same commit, and say by how much '
-        .'in your report) - or the walk stopped finding them, in which case the two parameter '
-        .'positions are no longer being checked at all.',
+    // The QUERY half stays a literal, because deriving it would mean instantiating the same four
+    // FormRequest classes a second time - VerifyEmailRequest for the case at the top of this
+    // file, and the three list requests for "publishes every list filter as a query parameter",
+    // which already does exactly that. Eleven, from those four classes and no others:
+    // VerifyEmailRequest's id/hash/expires/signature (4), ListPlansRequest's
+    // status/limit/cursor (3), ListPlanMembersRequest's limit/cursor (2) and
+    // ListPlanActivityRequest's limit/cursor (2) - each of those four counts is independently
+    // asserted by name, by the two cases named above, so this literal is not the only thing
+    // that would catch one of them drifting. No other route has a query FormRequest.
+    $expectedPathParameterCount = 0;
+
+    foreach (documentedRoutes() as [$method, $path, $route]) {
+        $expectedPathParameterCount += count($route->parameterNames());
+    }
+
+    expect($pathParameterCount)->toBe(
+        $expectedPathParameterCount,
+        'The parameter walk above visited a different number of PATH parameters than the route '
+        .'table implies. Either a route was added without regenerating the document, or the '
+        .'walk has stopped visiting parameters, in which case this position is no longer being '
+        .'checked at all.',
+    );
+
+    expect($queryParameterCount)->toBe(
+        11,
+        'The parameter walk above visited a different number of QUERY parameters than the four '
+        .'FormRequests with query keys publish - VerifyEmailRequest (4), ListPlansRequest (3), '
+        .'ListPlanMembersRequest (2) and ListPlanActivityRequest (2). A new filter on one of '
+        .'those four moves this number and is meant to.',
     );
 
     expect($prose)->toEqualCanonicalizing([
@@ -736,13 +898,13 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
 
     // B37a: the two checks above name five positions by hand and excuse three more as
     // authored. Both leave the sixth position described above - and any position nobody here
-    // has thought to name - completely unwatched: a string landing there moves neither
-    // $parameterCount nor $prose. Two independent shapes of that leak, same consequence either
+    // has thought to name - completely unwatched: a string landing there moves neither the
+    // parameter counts nor $prose. Two independent shapes of that leak, same consequence either
     // way: a `//` comment above a future 'next_cursor' => $page->nextCursor (a sibling position
     // to the sixth), or a `//` comment one level deeper than $prose's own properties walk goes -
     // inside a Resource field that is itself an object, e.g. a Resource publishing a field as
-    // {value: {description: ...}} instead of a bare scalar. Either would leave $parameterCount
-    // and $prose green and the byte gate would reproduce the leak forever. This closes that at
+    // {value: {description: ...}} instead of a bare scalar. Either would leave the parameter
+    // counts and $prose green and the byte gate would reproduce the leak forever. This closes that at
     // the only level a blind-spot-by-definition CAN be closed at - not by naming the position,
     // which would make it not a blind spot - but by walking every description/summary in the
     // WHOLE document, at any depth, by key name alone, and pinning the full PATH SET.
@@ -766,7 +928,7 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // Any task adding a new deliberate position (client-facing prose the way verify-email's
     // #[Endpoint] text already is) must add its path to BOTH this list and $prose's allow-list
     // in the same commit, and say which path was added in its report - the same obligation
-    // Amendment 2 states for $parameterCount, extended to this literal by the same ruling
+    // Amendment 2 states for the parameter count, extended to this literal by the same ruling
     // (controller-amendments.md Amendment 2).
     $allProsePaths = [];
 
@@ -962,97 +1124,159 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         'paths./plans/{plan}/activity.get.responses.200.description',
         'paths./plans/{plan}/activity.get.responses.404.description',
     ], 'The document now publishes a different set of description/summary paths than were last '
-        .'enumerated here, in a position neither $prose nor $parameterCount names above. The '
+        .'enumerated here, in a position neither $prose nor either parameter count names above. The '
         .'diff names the exact path that was added, removed or changed - add it to $prose\'s '
         .'allow-list if it is deliberate client-facing prose, or trace and remove the docblock '
         .'comment that leaked it, and update this list either way in the same commit (say which '
         .'path was added, in your report - controller-amendments.md Amendment 2).');
 });
 
-it('publishes the Plans list query parameters exactly as ListPlansRequest states them', function (): void {
+it('publishes every list filter as a query parameter and no request body', function (): void {
     // The parallel of "publishes required-versus-optional exactly as the rules state it", for
     // the position that test cannot reach: every rules() key of a BODYLESS-method FormRequest
     // (GET here) is published as a paths.*.*.parameters[n] entry and never as a components
-    // schema, so no assertion over components.schemas can see it. ROUND 1 CORRECTION: that is
-    // NOT because of @query - RequestBodyExtension::handle() takes an early-return branch for
+    // schema, so no assertion over components.schemas can see it. @query is REDUNDANT on a GET,
+    // not load-bearing: RequestBodyExtension::handle() takes an early-return branch for
     // get/delete/head that converts every extracted parameter to a query parameter
-    // unconditionally, before @query/isInQuery is ever consulted. @query is redundant on this route
-    // (confirmed: removing it from one key leaves the document byte-identical; removing all
-    // three leaves it byte-identical, md5 unchanged - this task's report has both measurements).
+    // unconditionally, before @query/isInQuery is ever consulted - confirmed by removing it from
+    // a key and regenerating: the document is byte-identical either way, and removing it from
+    // all three of ListPlansRequest's keys leaves the document's md5 unchanged too.
     //
-    // Derived from rules() rather than restated, so a fourth parameter cannot be added without
-    // appearing here - but two of the checks below cannot fail on a route shaped like this one,
-    // and that needs saying rather than leaving implied. (The sentence read "two of the four"
-    // while naming two that cannot fail and three that can, against a case that makes five
-    // assertions; the subtotals are what matters and they are both stated, so the total is not.)
+    // DERIVED path set (B39a), not the hardcoded three-element list an earlier round of this
+    // case carried: a hardcoded list is reached by a RENAME of one of the three (the entry just
+    // stops matching, and the diff below names it) but not by an ADDITION - a fourth paginated
+    // list could land and this case would never learn its path exists. A paginated list IS, in
+    // this codebase, exactly a GET route whose action declares a FormRequest: measured, every
+    // other GET action takes a plain Illuminate\Http\Request or no request object at all
+    // (GetPlanController; ListPlanInvitesController, deliberately unpaginated per spec §6.3;
+    // PreviewInviteController; MeController::show).
     //
-    //   - the key-set equality two lines down is nearly as weak: Scramble publishes every
-    //     rules() key automatically for a bodyless method, so adding or removing a rule key
-    //     moves both sides of that comparison together.
-    //   - the `in === 'query'` check inside the loop below is fully tautological: it is `query`
-    //     for every parameter extracted from a bodyless method, independent of anything
-    //     ListPlansRequest declares.
-    //
-    // The three checks that do carry force: the loop's required-flag check (derived from
-    // `sometimes`, broken deliberately by dropping it from `limit` and watched to red - this
-    // task's report has the output) and the two assertions after the loop - status's full enum
-    // (also broken deliberately, by narrowing the rule, and watched to red) and limit's published
-    // maximum against PageQuery::MAX_LIMIT (a direct equality against a named constant, which
-    // needs no break step to be load-bearing: change the constant or stop publishing the
-    // keyword and this fails without any mutation at all).
-    $rules = (new ListPlansRequest)->rules();
+    // Derived from rules() rather than restated, so a filter added to any of the three without
+    // reaching the document fails here - but two of the per-field checks below cannot fail on a
+    // route shaped like this one, and that needs saying rather than leaving implied: the key-set
+    // equality is nearly as weak, because Scramble publishes every rules() key automatically for
+    // a bodyless method, so adding or removing a rule key moves both sides of that comparison
+    // together; and the `in === 'query'` check is fully tautological, because it is `query` for
+    // every parameter extracted from a bodyless method regardless of what the class declares.
+    // The checks that do carry force: the required-flag check (derived from `sometimes`), the
+    // no-request-body and no-component-schema checks, limit's published maximum against
+    // PageQuery::MAX_LIMIT (all three of these FormRequests share that rule), and status's full
+    // enum (ListPlansRequest's alone - the only one of the three with a status filter).
+    $classes = [];
 
-    $parameters = collect(Arr::wrap(data_get(openApiDocument(), 'paths./plans.get.parameters')))
-        ->keyBy(fn (mixed $parameter): string => (string) data_get($parameter, 'name'));
+    foreach (documentedRoutes() as [$method, $path, $route]) {
+        if ($method !== 'get') {
+            continue;
+        }
 
-    expect($parameters->keys()->all())->toEqualCanonicalizing(
-        array_keys($rules),
-        'every rules() key of ListPlansRequest must be published as a query parameter, and nothing else may be',
-    );
-
-    foreach ($rules as $field => $fieldRules) {
-        $flat = array_map(
-            fn (mixed $rule): string => is_string($rule) ? $rule : '',
-            Arr::wrap($fieldRules),
-        );
-
-        $parameter = $parameters->get($field);
-
-        expect(data_get($parameter, 'in'))->toBe(
-            'query',
-            "{$field} must be published in the query, not as a body field of a GET",
-        );
-        expect((bool) data_get($parameter, 'required'))->toBe(
-            ! in_array('sometimes', $flat, true),
-            "{$field}'s published `required` must follow its `sometimes` rule",
-        );
+        foreach (formRequestsFor($route) as $class) {
+            $classes[$path] = $class;
+        }
     }
 
-    // `status` carries `nullable`, unlike `limit` and `cursor` - ListPlansRequest's own
-    // docblock argues why, and this task left that asymmetry in place rather than rewriting it.
-    // Scramble publishes a nullable Rule::in() with `null` appended to the enum list itself, not
-    // as a bare three-value enum with nullability expressed some other way, so the expectation
-    // is derived from the same rule the loop above already flattened rather than restated as a
-    // three-element literal that would fail against what `nullable` actually publishes.
-    $statusRules = array_map(
-        fn (mixed $rule): string => is_string($rule) ? $rule : '',
-        Arr::wrap($rules['status']),
+    expect($classes)->not->toBe(
+        [],
+        'no GET route declares a FormRequest any more, so this case checked nothing at all - '
+        .'either every paginated list was removed, or the derivation above stopped finding them',
     );
-    $expectedStatusValues = in_array('nullable', $statusRules, true)
-        ? [...array_column(PlanStatus::cases(), 'value'), null]
-        : array_column(PlanStatus::cases(), 'value');
 
-    expect(Arr::wrap(data_get($parameters->get('status'), 'schema.enum')))->toEqualCanonicalizing(
-        $expectedStatusValues,
-        'the status filter must publish every PlanStatus case - cancelled is accepted and matches nothing (spec §7.3), so leaving it out would document a narrower filter than the one that runs',
-    );
-    expect(data_get($parameters->get('limit'), 'schema.maximum'))->toBe(
-        PageQuery::MAX_LIMIT,
-        'limit must publish the maximum it enforces, or a client cannot know 101 is a 422',
-    );
+    foreach ($classes as $path => $class) {
+        $name = class_basename($class);
+
+        // Not (new $class)->rules(): formRequestsFor()'s return type is
+        // class-string<FormRequest>, and the base FormRequest declares no rules() at all (every
+        // subclass is expected to add its own), so PHPStan level 8 correctly refuses to call a
+        // method it cannot see declared anywhere in the hierarchy. The array-callable form is
+        // the same call with no suppression: is_callable() narrows it for both PHP and PHPStan,
+        // and every class formRequestsFor() returns genuinely has one, which is what the
+        // vacuity guard right below this exists to keep true rather than merely assumed.
+        $callable = [new $class, 'rules'];
+        $rules = is_callable($callable) ? $callable() : [];
+
+        expect($rules)->not->toBe(
+            [],
+            "{$name}::rules() returned nothing, so this case checked nothing for GET {$path}.",
+        );
+
+        $operation = data_get(openApiDocument(), "paths.{$path}.get");
+
+        expect($operation)->not->toBeNull(
+            "GET {$path} is not in the document at all, so nothing below this line checked "
+            .'anything for it. Either the route was renamed or moved to another HTTP method, or '
+            .'it was added without regenerating openapi.json.',
+        );
+
+        // Filtered to `in === 'query'` before the key-set comparison below: two of these three
+        // routes (GET /plans/{plan}/members, GET /plans/{plan}/activity) ALSO carry a path
+        // parameter in the same operation-level `parameters` array - a mix the single /plans
+        // route this case generalised from never had reason to filter.
+        $parameters = collect(Arr::wrap(data_get($operation, 'parameters')))
+            ->filter(fn (mixed $parameter): bool => data_get($parameter, 'in') === 'query')
+            ->keyBy(fn (mixed $parameter): string => (string) data_get($parameter, 'name'));
+
+        expect($parameters->keys()->all())->toEqualCanonicalizing(
+            array_keys($rules),
+            "every rules() key of {$name} must be published as a query parameter on GET {$path}, and nothing else may be",
+        );
+
+        foreach ($rules as $field => $fieldRules) {
+            $flat = array_map(
+                fn (mixed $rule): string => is_string($rule) ? $rule : '',
+                Arr::wrap($fieldRules),
+            );
+
+            $parameter = $parameters->get($field);
+
+            expect(data_get($parameter, 'in'))->toBe(
+                'query',
+                "GET {$path}'s {$field} must be published in the query, not as a body field of a GET",
+            );
+            expect((bool) data_get($parameter, 'required'))->toBe(
+                ! in_array('sometimes', $flat, true),
+                "GET {$path}'s {$field} published `required` must follow its `sometimes` rule",
+            );
+
+            if ($field === 'limit') {
+                expect(data_get($parameter, 'schema.maximum'))->toBe(
+                    PageQuery::MAX_LIMIT,
+                    "GET {$path}'s limit must publish the maximum it enforces, or a client cannot know a value past it is a 422",
+                );
+            }
+
+            if ($field === 'status') {
+                // `status` carries `nullable`, unlike `limit` and `cursor` - ListPlansRequest's
+                // own docblock argues why. Scramble publishes a nullable Rule::in() with `null`
+                // appended to the enum list itself, not as a bare enum with nullability expressed
+                // some other way, so the expectation is derived from the same rule just
+                // flattened above rather than restated as a literal that would fail against what
+                // `nullable` actually publishes.
+                $expectedStatusValues = in_array('nullable', $flat, true)
+                    ? [...array_column(PlanStatus::cases(), 'value'), null]
+                    : array_column(PlanStatus::cases(), 'value');
+
+                expect(Arr::wrap(data_get($parameter, 'schema.enum')))->toEqualCanonicalizing(
+                    $expectedStatusValues,
+                    'the status filter must publish every PlanStatus case - cancelled is '
+                    .'accepted and matches nothing (spec §7.3), so leaving it out would '
+                    .'document a narrower filter than the one that runs',
+                );
+            }
+        }
+
+        expect(data_get($operation, 'requestBody'))->toBeNull(
+            "GET {$path} must publish no request body at all: a documented body on a GET "
+            .'describes a request no client can send.',
+        );
+
+        expect(data_get(openApiDocument(), "components.schemas.{$name}"))->toBeNull(
+            "A GET route registers no component schema for its FormRequest, so {$name} must not "
+            .'appear in components.schemas - and must not be added to the required-versus-optional '
+            .'map above, whose first assertion is that the schema exists.',
+        );
+    }
 });
 
-it('publishes the cursor-page envelope, with next_cursor nullable rather than null', function (): void {
+it('publishes the cursor envelope on every paginated list, with meta.next_cursor by name', function (): void {
     // Why this exists as its own case: "wraps every success response in the data envelope"
     // passes with `meta` ENTIRELY ABSENT, because a collection resource that forgot
     // ->additional([...]) still publishes a well-formed {data: [...]}. So the envelope test
@@ -1063,21 +1287,44 @@ it('publishes the cursor-page envelope, with next_cursor nullable rather than nu
     // {"type": "null"}, which is a wrong-but-stable schema - the byte gate reproduces it for
     // ever and a generated client types next_cursor as `null`, making the second page
     // unreachable in TypeScript.
-    $schema = data_get(openApiDocument(), 'paths./plans.get.responses.200.content.application/json.schema');
+    //
+    // DERIVED path set (B39a), the same derivation "publishes every list filter as a query
+    // parameter and no request body" above uses: a paginated list is exactly a GET route whose
+    // action declares a FormRequest. GET /plans/{plan}/invites is deliberately excluded by that
+    // derivation - it is a GET route with NO FormRequest (a plain Illuminate\Http\Request),
+    // because spec §6.3 does not paginate it: the 20/hour/plan invite limit and the 14-day TTL
+    // already bound the list's size.
+    $paths = [];
 
-    expect(Arr::wrap(data_get($schema, 'required')))->toEqualCanonicalizing(
-        ['data', 'meta'],
-        'both envelope keys must be required: a client that has to test for meta cannot page',
+    foreach (documentedRoutes() as [$method, $path, $route]) {
+        if ($method === 'get' && formRequestsFor($route) !== []) {
+            $paths[] = $path;
+        }
+    }
+
+    expect($paths)->not->toBe(
+        [],
+        'no GET route declares a FormRequest any more, so this case checked nothing at all - '
+        .'either every paginated list was removed, or the derivation above stopped finding them',
     );
-    expect(data_get($schema, 'properties.data.type'))->toBe('array');
-    expect(Arr::wrap(data_get($schema, 'properties.meta.required')))->toEqualCanonicalizing(
-        ['next_cursor'],
-        'next_cursor must be present-but-nullable, never optional',
-    );
-    expect(Arr::wrap(data_get($schema, 'properties.meta.properties.next_cursor.type')))->toEqualCanonicalizing(
-        ['string', 'null'],
-        'next_cursor must publish as string|null - {"type":"null"} means Scramble narrowed it from a literal null in the controller',
-    );
+
+    foreach ($paths as $path) {
+        $schema = data_get(openApiDocument(), "paths.{$path}.get.responses.200.content.application/json.schema");
+
+        expect(Arr::wrap(data_get($schema, 'required')))->toEqualCanonicalizing(
+            ['data', 'meta'],
+            "GET {$path}: both envelope keys must be required - a client that has to test for meta cannot page",
+        );
+        expect(data_get($schema, 'properties.data.type'))->toBe('array', "GET {$path} must publish `data` as an array");
+        expect(Arr::wrap(data_get($schema, 'properties.meta.required')))->toEqualCanonicalizing(
+            ['next_cursor'],
+            "GET {$path}: next_cursor must be present-but-nullable, never optional",
+        );
+        expect(Arr::wrap(data_get($schema, 'properties.meta.properties.next_cursor.type')))->toEqualCanonicalizing(
+            ['string', 'null'],
+            "GET {$path}: next_cursor must publish as string|null - {\"type\":\"null\"} means Scramble narrowed it from a literal null in the controller",
+        );
+    }
 });
 
 it('publishes no group_id on the Plan write surface', function (): void {
