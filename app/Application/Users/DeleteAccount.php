@@ -14,6 +14,7 @@ use App\Models\Group;
 use App\Models\GroupMember;
 use App\Models\Plan;
 use App\Models\PlanActivity;
+use App\Models\PlanInvite;
 use App\Models\PlanMember;
 use App\Models\User;
 use DateTimeImmutable;
@@ -25,6 +26,15 @@ use Illuminate\Support\Facades\DB;
  * narrower than full §127 because there are no calendar connections, provider tokens or
  * linked OAuth identities yet; the calendar cycle adds the revocation steps where those
  * connections first exist.
+ *
+ * Plus the two clauses the Wave 2 design document's §14.1 adds to spec §9.3 (recorded in its
+ * §19 amendment table): the departing user's outstanding invites are revoked, and the `email`
+ * of unaccepted invites addressed to them is nulled. Wave 1a Task 8 resolved `plan_invites`
+ * as out of scope here and answered only half of it - the schema handles the historical trail
+ * at hard-delete time, through `invited_by`/`accepted_by`'s `nullOnDelete`, which says nothing
+ * about whether a LIVE credential issued by a deleted account keeps working. It does not, as
+ * of §14.1: an invite is an exercise of the inviter's authority over a Plan, and the 14-day
+ * TTL is a product convenience rather than a security bound.
  */
 final readonly class DeleteAccount
 {
@@ -86,6 +96,59 @@ final readonly class DeleteAccount
                     'status' => MemberStatus::Left->value,
                     'role' => MemberRole::Member->value,
                 ]);
+
+            // §14.1 clause 1. Every invite this user sent that nobody has accepted and nobody
+            // has revoked. Without it, a live credential issued by an account that no longer
+            // exists stays acceptable for the rest of PlanInviteTokens::TTL_DAYS (14) - and the
+            // Plan it opens may be one resolvePlanOwnership() handed to an admin six lines
+            // above, who never approved that invite. The one person who could have revoked it no
+            // longer exists.
+            //
+            // NOT plan-scoped, deliberately: an invite this user sent as an admin on somebody
+            // else's Plan is still this user's exercise of authority.
+            //
+            // `revoked_at IS NULL` as well as `accepted_at IS NULL`: without it, an invite
+            // revoked three weeks ago is re-stamped with this instant, which rewrites the trail
+            // that this table's nullOnDelete choices exist to protect. An accepted invite is
+            // exempt because somebody joined through it - there is no live credential left to
+            // end, and the row is the membership history blueprint §127 step 6 preserves.
+            //
+            // No plan_activity row for either clause. Step 4 above has already nulled actor_id
+            // for this user, so a row written here with actor_id = $user->id would escape the
+            // anonymisation this same transaction just performed, and a row written before step
+            // 4 would be anonymised into "someone revoked an invite". The user.deleted outbox
+            // event below is the record of the deletion.
+            PlanInvite::query()
+                ->where('invited_by', $user->id)
+                ->whereNull('accepted_at')
+                ->whereNull('revoked_at')
+                ->update(['revoked_at' => $now]);
+
+            // §14.1 clause 2. Blueprint §127 step 3 requires removing personal information, and
+            // an unaccepted invite row carrying a deleted user's address is exactly that, with no
+            // trail value because nobody joined through it. An ACCEPTED invite keeps its address:
+            // accepted_by makes it part of the Plan's membership history, which blueprint §127
+            // step 6 preserves, and which is what both resource layers argue
+            // PlanInviteView::$invitedByName's nullability from.
+            //
+            // Legal rather than a 23514: plan_invites' lowercase constraint is NULL-tolerant by
+            // construction - CHECK (email IS NULL OR email = lower(email)), measured in
+            // 2026_10_06_000200_create_plan_tables.php - so NULL is a value it admits.
+            //
+            // The equality needs no lower() on either side, and adding one would be worse than
+            // noise: users.email carries CHECK (email = lower(email)) and plan_invites.email
+            // carries the NULL-tolerant form of the same rule, so both are lowercase at the
+            // database level, and a case-insensitive comparison here would hide a constraint
+            // violation that cannot occur.
+            //
+            // No `revoked_at IS NULL` here, unlike clause 1: an invite that was revoked and never
+            // accepted still carries the address, and revocation is not erasure. Read $user->email
+            // before step 5 purely for readability - the soft delete below leaves the attribute
+            // in memory, so this is not a dependency.
+            PlanInvite::query()
+                ->where('email', $user->email)
+                ->whereNull('accepted_at')
+                ->update(['email' => null]);
 
             // Step 1. Every refresh token and every Sanctum access token the account holds.
             // revokeAllFor() rather than a third copy of $user->tokens()->delete(), simply so

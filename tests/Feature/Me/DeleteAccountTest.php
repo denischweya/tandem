@@ -11,6 +11,7 @@ use App\Models\GroupMember;
 use App\Models\OutboxEvent;
 use App\Models\Plan;
 use App\Models\PlanActivity;
+use App\Models\PlanInvite;
 use App\Models\PlanMember;
 use App\Models\RefreshToken;
 use App\Models\User;
@@ -22,6 +23,7 @@ use function Pest\Laravel\assertDatabaseEmpty;
 use function Pest\Laravel\assertNotSoftDeleted;
 use function Pest\Laravel\assertSoftDeleted;
 use function Pest\Laravel\deleteJson;
+use function Pest\Laravel\getJson;
 use function Pest\Laravel\postJson;
 use function Pest\Laravel\withToken;
 
@@ -287,7 +289,18 @@ it('anonymizes the departing user in the activity feed instead of deleting it', 
 });
 
 it('does nothing at all if any step fails', function (): void {
-    [$user, , $access] = signIn();
+    // A pinned address rather than the factory's random one, so the §14.1 assertion at the
+    // bottom of this test has a literal to fail against.
+    [$user, , $access] = signIn(userWithPassword(attributes: ['email' => 'ada@example.test']));
+
+    // One plan_invites row that BOTH §14.1 clauses match - sent by this user, addressed to this
+    // user, neither accepted nor revoked. Both clauses are writes inside the same transaction as
+    // steps 1-5, so both roll back with it; a clause written outside DB::transaction() would
+    // commit on its own and this test is the only thing in the suite that would notice.
+    $plan = ownedPlan($user);
+    $invite = PlanInvite::factory()->create([
+        'plan_id' => $plan->id, 'invited_by' => $user->id, 'email' => 'ada@example.test',
+    ]);
 
     // A Group whose owner_id points at a user row that will not be deletable is not
     // reproducible here; instead, assert the transaction boundary directly by forcing the
@@ -311,6 +324,13 @@ it('does nothing at all if any step fails', function (): void {
     // revoked, user row intact - is the worst outcome available.
     assertNotSoftDeleted('users', ['id' => $user->id]);
     expect(RefreshToken::whereNull('revoked_at')->count())->toBe(1);
+
+    // §14.1's two clauses are inside that same boundary. An invite revoked or anonymised by a
+    // deletion that did not happen is worse than one that was never touched: the Plan's owner
+    // can no longer tell whether the link they sent is live, and the row is unrecoverable.
+    expect($invite->refresh()->email)->toBe('ada@example.test');
+    expect(DB::table('plan_invites')->where('id', $invite->id)->whereNull('revoked_at')->count())
+        ->toBe(1);
 });
 
 it('does not hand a plan to a soft-deleted member', function (): void {
@@ -420,4 +440,202 @@ it('leaves no purgeable user owning a plan or a group, which is what makes the p
     expect(User::withTrashed()->whereKey($owner->id)->exists())->toBeFalse();
     expect(Plan::query()->whereKey($plan->id)->exists())->toBeFalse();
     expect(Group::query()->whereKey($group->id)->exists())->toBeFalse();
+});
+
+it('revokes the outstanding invites the departing user sent, and nothing else', function (): void {
+    // §14.1 clause 1. An invite is an exercise of the inviter's authority over a Plan; when the
+    // account ends, that authority ends with it, and the one person who could have revoked the
+    // invite no longer exists.
+    [$user, , $access] = signIn();
+    $stranger = User::factory()->hasProfile()->create();
+
+    $ownPlan = ownedPlan($user);
+    $othersPlan = ownedPlan($stranger);
+    // An admin on somebody else's Plan: clause 1 is not Plan-scoped, and an invite sent from
+    // here is still this user's exercise of authority.
+    member($othersPlan, $user, MemberRole::Admin, '2026-02-01 00:00:00');
+
+    $sent = PlanInvite::factory()->create(['plan_id' => $ownPlan->id, 'invited_by' => $user->id]);
+    // email IS NULL: §10.5's link-only channel. Clause 1 never reads email, so this row is
+    // revoked on exactly the same terms as an emailed one - which is the half of the behaviour
+    // a predicate written on `email` instead of `invited_by` would silently lose.
+    $sentLinkOnly = PlanInvite::factory()->linkOnly()
+        ->create(['plan_id' => $ownPlan->id, 'invited_by' => $user->id]);
+    $sentElsewhere = PlanInvite::factory()
+        ->create(['plan_id' => $othersPlan->id, 'invited_by' => $user->id]);
+    $sentByStranger = PlanInvite::factory()
+        ->create(['plan_id' => $othersPlan->id, 'invited_by' => $stranger->id]);
+    // Accepted: somebody already joined through it, so there is no live credential to end and
+    // the row is part of the Plan's membership history (blueprint §127 step 6).
+    $alreadyAccepted = PlanInvite::factory()->accepted()
+        ->create(['plan_id' => $ownPlan->id, 'invited_by' => $user->id]);
+    $alreadyRevoked = PlanInvite::factory()->revoked()->create([
+        'plan_id' => $ownPlan->id,
+        'invited_by' => $user->id,
+        'revoked_at' => '2026-09-01 08:00:00',
+    ]);
+
+    withToken($access)->deleteJson('/api/v1/me')->assertNoContent();
+
+    // A map rather than six separate expectations: a predicate that is too wide and a predicate
+    // that is too narrow then fail in the same assertion, by name, with a diff that says which
+    // row moved. Six independent toBeNull()/not->toBeNull() calls report the first failure only,
+    // and report it as an exported Carbon object.
+    expect([
+        'sent by them' => $sent->refresh()->revoked_at !== null,
+        'sent by them, link-only' => $sentLinkOnly->refresh()->revoked_at !== null,
+        'sent by them on a Plan they do not own' => $sentElsewhere->refresh()->revoked_at !== null,
+        'sent by somebody else' => $sentByStranger->refresh()->revoked_at !== null,
+        'sent by them and already accepted' => $alreadyAccepted->refresh()->revoked_at !== null,
+    ])->toBe([
+        'sent by them' => true,
+        'sent by them, link-only' => true,
+        'sent by them on a Plan they do not own' => true,
+        'sent by somebody else' => false,
+        'sent by them and already accepted' => false,
+    ]);
+
+    // The accepted row keeps its acceptance, which is the thing that made it exempt.
+    expect($alreadyAccepted->refresh()->accepted_at)->not->toBeNull();
+
+    // Not re-stamped. Clause 1's `revoked_at IS NULL` is what keeps an invite revoked weeks ago
+    // carrying its own timestamp: re-stamping it would rewrite the trail plan_invites'
+    // nullOnDelete choices exist to protect. ?-> because the datetime cast makes this
+    // Carbon|null and PHPStan runs at level 8.
+    expect($alreadyRevoked->refresh()->revoked_at?->toDateTimeString())->toBe('2026-09-01 08:00:00');
+});
+
+it('makes an invite issued by a deleted account unacceptable immediately, not in fourteen days', function (): void {
+    // The security statement §14.1 exists to make, through real routes rather than through a
+    // column assertion: without clause 1 the credential below stays acceptable for the rest of
+    // its 14 days, and the Plan it opens has by then been handed to an admin who never approved
+    // it.
+    [$inviter, , $access] = signIn();
+    $successor = User::factory()->hasProfile()->create();
+    $outsider = userWithPassword(attributes: ['email' => 'outsider@example.test']);
+
+    $plan = ownedPlan($inviter);
+    // A second active member, so ownership TRANSFERS rather than the Plan being archived. That
+    // is §14.1's scenario exactly - "a Plan whose ownership has since transferred to someone who
+    // never approved it" - and it is also what stops the two 404s below passing because the Plan
+    // itself went read-only.
+    member($plan, $successor, MemberRole::Admin, '2026-02-01 00:00:00');
+
+    [$invite, $token] = invited($plan, $inviter, MemberRole::Member, 'outsider@example.test');
+
+    // The control. Without it, both 404s below would pass just as happily against an invite that
+    // was never acceptable in the first place.
+    getJson("/api/v1/invites/{$token}")
+        ->assertOk()
+        ->assertJsonPath('data.plan_id', $plan->id);
+
+    withToken($access)->deleteJson('/api/v1/me')->assertNoContent();
+
+    // Auth::forgetGuards(). The guard caches the resolved user for the rest of the request
+    // lifecycle, and the next authenticated request below belongs to a different account; without
+    // this, "the outsider cannot join" could be passing because the outsider was never the one
+    // asking.
+    forgetAuthenticatedUser();
+
+    expect($plan->refresh()->owner_id)->toBe($successor->id);
+    expect($plan->refresh()->status)->toBe(PlanStatus::Active->value);
+    expect($invite->refresh()->revoked_at)->not->toBeNull();
+
+    // The unauthenticated preview, which is the only thing a holder of this link can reach
+    // without an account at all.
+    getJson("/api/v1/invites/{$token}")->assertNotFound();
+
+    [, , $outsiderAccess] = signIn($outsider);
+
+    $join = withToken($outsiderAccess)
+        ->postJson("/api/v1/plans/{$plan->id}/join", ['token' => $token])
+        ->assertNotFound();
+
+    // BYTE-identical, not merely equal JSON: a router miss, a ModelNotFoundException or
+    // Laravel's own handler would render the same message through prepareJsonResponse() with
+    // JSON_PRETTY_PRINT, and assertExactJson would pass for both. This body can only have come
+    // from the InviteNotUsable render() closure, which is the refusal §10.7 specifies.
+    expect((string) $join->getContent())
+        ->toBe('{"message":"This invite link is no longer valid. Ask whoever invited you for a new one."}');
+
+    // And no membership row was created on the way to that 404.
+    expect(PlanMember::where('plan_id', $plan->id)->where('user_id', $outsider->id)->exists())
+        ->toBeFalse();
+});
+
+it('nulls the email of unaccepted invites addressed to the departing user', function (): void {
+    // §14.1 clause 2, and blueprint §127 step 3: an unaccepted invite row carrying a deleted
+    // user's address is personal information with no trail value, because nobody joined through
+    // it. Every row below was sent by somebody else, so clause 1 cannot be what moves them.
+    [$user, , $access] = signIn(userWithPassword(attributes: ['email' => 'ada@example.test']));
+    $stranger = User::factory()->hasProfile()->create();
+
+    $plan = ownedPlan($stranger);
+    member($plan, $user, MemberRole::Member, '2026-02-01 00:00:00');
+
+    $addressed = PlanInvite::factory()->create([
+        'plan_id' => $plan->id, 'invited_by' => $stranger->id, 'email' => 'ada@example.test',
+    ]);
+    // Revoked but never accepted: clause 2 carries no revoked_at predicate, unlike clause 1,
+    // because revocation is not erasure and this row still carries the address.
+    $addressedAndRevoked = PlanInvite::factory()->revoked()->create([
+        'plan_id' => $plan->id, 'invited_by' => $stranger->id, 'email' => 'ada@example.test',
+    ]);
+    // Accepted BY this user: accepted_by makes it part of the Plan's membership history, which
+    // blueprint §127 step 6 preserves, so the address stays. This is the row persistence and
+    // resources both argue PlanInviteView::$invitedByName's nullability from - it survives here
+    // to lose invited_by to the day-30 purge instead.
+    $acceptedByThem = PlanInvite::factory()->accepted()->create([
+        'plan_id' => $plan->id, 'invited_by' => $stranger->id,
+        'email' => 'ada@example.test', 'accepted_by' => $user->id,
+    ]);
+    $someoneElse = PlanInvite::factory()->create([
+        'plan_id' => $plan->id, 'invited_by' => $stranger->id, 'email' => 'grace@example.test',
+    ]);
+
+    withToken($access)->deleteJson('/api/v1/me')->assertNoContent();
+
+    expect([
+        'unaccepted, addressed to them' => $addressed->refresh()->email,
+        'unaccepted and revoked, addressed to them' => $addressedAndRevoked->refresh()->email,
+        'accepted by them' => $acceptedByThem->refresh()->email,
+        'addressed to somebody else' => $someoneElse->refresh()->email,
+    ])->toBe([
+        'unaccepted, addressed to them' => null,
+        'unaccepted and revoked, addressed to them' => null,
+        'accepted by them' => 'ada@example.test',
+        'addressed to somebody else' => 'grace@example.test',
+    ]);
+
+    // Clause 2 nulls the address and nothing else, so this invite is now link-only and still
+    // live. That widens nothing: §10.6 already does not require accepted_by to match email, so
+    // the address was addressing and never authorization, and the credential is the 64-hex token
+    // either way. Clause 1 does not reach this row because invited_by is the stranger.
+    //
+    // Counted off the raw column rather than asserted as `->revoked_at` toBeNull(): a null
+    // assertion against the datetime cast reports an exported Carbon object on failure, and
+    // "Failed asserting that 0 is identical to 1" is the message a break step can be written
+    // against.
+    expect(DB::table('plan_invites')->where('id', $addressed->id)->whereNull('revoked_at')->count())
+        ->toBe(1);
+});
+
+it('revokes and anonymises the one row where the departing user invited their own address', function (): void {
+    // The overlap. Both clauses match this row, and the order between them is immaterial -
+    // clause 1's predicate never reads email and clause 2's never reads revoked_at, so whichever
+    // runs first leaves the other's predicate intact. Asserted rather than reasoned about,
+    // because "the order is immaterial" is exactly the claim this use case's own comments record
+    // having got wrong once.
+    [$user, , $access] = signIn(userWithPassword(attributes: ['email' => 'ada@example.test']));
+
+    $plan = ownedPlan($user);
+    $both = PlanInvite::factory()->create([
+        'plan_id' => $plan->id, 'invited_by' => $user->id, 'email' => 'ada@example.test',
+    ]);
+
+    withToken($access)->deleteJson('/api/v1/me')->assertNoContent();
+
+    expect($both->refresh()->email)->toBeNull();
+    expect(DB::table('plan_invites')->where('id', $both->id)->whereNotNull('revoked_at')->count())
+        ->toBe(1);
 });
