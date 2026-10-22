@@ -25,8 +25,6 @@ use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
-use ReflectionMethod;
-use ReflectionNamedType;
 
 /**
  * Behavioural assertions about the committed openapi.json, as distinct from the byte-equality
@@ -471,9 +469,23 @@ it('declares every error status the application itself raises', function (): voi
     // off openapi.json) against $expected (the hand-written table) - and `toEqualCanonicalizing`
     // does not close the compensating-change class when BOTH sides are written: deleting a
     // #[Response] attribute and its table row in one commit can leave that comparison green,
-    // because each side loses the same entry. What closes it is a THIRD set built from a source
-    // NEITHER existing side reads: responseStatusesFor() reflects the attribute straight off the
-    // controller action, independent of whether openapi.json has been regenerated to match.
+    // because each side loses the same entry. What closes THAT scenario is a THIRD set built
+    // from a source NEITHER existing side reads: responseStatusesFor() reflects the attribute
+    // straight off the controller action, independent of whether openapi.json has been
+    // regenerated to match - so deleting the attribute and the table row while leaving a stale,
+    // unregenerated document in place now reds here, because $reflected has lost the entry and
+    // $authored (still read off the old document) has not.
+    //
+    // MEASURED LIMIT, stated plainly rather than implied: this does not make the error-status
+    // table unfalsifiable. A commit that deletes the attribute, the table row, AND regenerates
+    // openapi.json to match - all three in one place - leaves $reflected, $authored and
+    // $expected in agreement, because none of the three sources disagrees about what the
+    // document should say once all three have been edited together. No comparison among these
+    // three sets can catch that case, because by construction none of them encodes what the
+    // *spec* requires independently of what the code and the document currently say. What this
+    // anchor removes is the specific hole Amendment 6 named - two hand-written sides edited
+    // together while a third, independently-derived source is left behind - not every way a
+    // status could be silently dropped.
     //
     // An authored status can only be inline, because the attribute's own toOpenApiResponse()
     // resolves any reference into a concrete object before Scramble ever sees it - so attributes
