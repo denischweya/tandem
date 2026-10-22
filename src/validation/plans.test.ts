@@ -7,7 +7,9 @@ import {
   InvitePlanMemberRequestSchema,
   JoinPlanRequestSchema,
   PlanActivityResourceSchema,
+  PlanInviteCreatedResourceSchema,
   PlanPageSchema,
+  UpdatePlanRequestSchema,
 } from './plans';
 
 /**
@@ -49,6 +51,27 @@ describe('CreatePlanRequestSchema', () => {
 
   it('rejects an omitted timezone, which the API requires rather than defaulting', () => {
     expect(CreatePlanRequestSchema.safeParse({ title: 'Birthday weekend' }).success).toBe(false);
+  });
+});
+
+describe('UpdatePlanRequestSchema', () => {
+  it('accepts a title at the 255-character limit and rejects 256', () => {
+    expect(UpdatePlanRequestSchema.safeParse({ title: 'a'.repeat(255) }).success).toBe(true);
+    expect(UpdatePlanRequestSchema.safeParse({ title: 'a'.repeat(256) }).success).toBe(false);
+  });
+
+  it('accepts a description at the 2000-character limit and rejects 2001', () => {
+    expect(UpdatePlanRequestSchema.safeParse({ description: 'a'.repeat(2000) }).success).toBe(true);
+    expect(UpdatePlanRequestSchema.safeParse({ description: 'a'.repeat(2001) }).success).toBe(
+      false,
+    );
+  });
+
+  it('rejects a whitespace-only timezone, which is also a 422 upstream when sent', () => {
+    // Every field here is optional - omitting it leaves the value unchanged - but `.trim()`
+    // ahead of `.min(1)` is what makes a SENT empty value a rejection rather than a silent no-op,
+    // matching ConvertEmptyStringsToNull turning '' into null before `required` runs upstream.
+    expect(UpdatePlanRequestSchema.safeParse({ timezone: '   ' }).success).toBe(false);
   });
 });
 
@@ -106,6 +129,29 @@ describe('PlanPageSchema', () => {
 
   it('rejects an absent meta, which is what a list that forgot ->additional() would send', () => {
     expect(PlanPageSchema.safeParse({ data: [] }).success).toBe(false);
+  });
+});
+
+describe('PlanInviteCreatedResourceSchema', () => {
+  const invite = {
+    id: '018f0f4e-0000-7000-8000-000000000003',
+    email: 'invitee@example.test',
+    role: 'member',
+    expires_at: '2026-10-10T09:00:00.000+00:00',
+    accepted_at: null,
+    revoked_at: null,
+    invited_by_name: 'Ada Lovelace',
+    token: 'a'.repeat(64),
+  };
+
+  it('accepts a 64-character token and rejects 63', () => {
+    // The server mints bin2hex(random_bytes(32)) - 64 lowercase hex characters - so this is the
+    // UserSchema.id argument plans.ts records: a different length is impossible, not merely
+    // unexpected, and openapi.json states no constraint for this field at all.
+    expect(PlanInviteCreatedResourceSchema.safeParse(invite).success).toBe(true);
+    expect(
+      PlanInviteCreatedResourceSchema.safeParse({ ...invite, token: 'a'.repeat(63) }).success,
+    ).toBe(false);
   });
 });
 
