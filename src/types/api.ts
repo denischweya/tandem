@@ -4,6 +4,70 @@
  */
 
 export interface paths {
+    "/plans/{plan}/join": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["plans.join"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/{plan}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["plans.archive"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["plans.index"];
+        put?: never;
+        post: operations["plans.store"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/{plan}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["plans.show"];
+        put?: never;
+        post?: never;
+        delete: operations["plans.destroy"];
+        options?: never;
+        head?: never;
+        patch: operations["plans.update"];
+        trace?: never;
+    };
     "/auth/forgot-password": {
         parameters: {
             query?: never;
@@ -14,6 +78,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["auth.forgot-password"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/{plan}/invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["plans.invites.index"];
+        put?: never;
+        post: operations["plans.invites.store"];
         delete?: never;
         options?: never;
         head?: never;
@@ -68,6 +148,70 @@ export interface paths {
         patch: operations["me.update"];
         trace?: never;
     };
+    "/plans/{plan}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["plans.activity.index"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/{plan}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["plans.members.index"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/{plan}/members/{user}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["plans.members.destroy"];
+        options?: never;
+        head?: never;
+        patch: operations["plans.members.update"];
+        trace?: never;
+    };
+    "/invites/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["invites.preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/refresh": {
         parameters: {
             query?: never;
@@ -116,6 +260,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plans/{plan}/invites/{invite}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["plans.invites.destroy"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/verify-email": {
         parameters: {
             query?: never;
@@ -140,10 +300,40 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ChangeMemberRoleRequest */
+        ChangeMemberRoleRequest: {
+            /** @enum {string} */
+            role: "owner" | "admin" | "member";
+        };
+        /** CreatePlanRequest */
+        CreatePlanRequest: {
+            title: string;
+            description?: string;
+            /** @description An IANA time zone identifier, such as "Europe/London" or "America/New_York". */
+            timezone: string;
+        };
         /** ForgotPasswordRequest */
         ForgotPasswordRequest: {
             /** Format: email */
             email: string;
+        };
+        /** InvitePlanMemberRequest */
+        InvitePlanMemberRequest: {
+            /** Format: email */
+            email?: string;
+            /** @enum {string} */
+            role?: "admin" | "member";
+        };
+        /** InvitePreviewResource */
+        InvitePreviewResource: {
+            plan_id: string;
+            plan_title: string;
+            inviter_name: string | null;
+            member_count: number;
+        };
+        /** JoinPlanRequest */
+        JoinPlanRequest: {
+            token: string;
         };
         /** LoginRequest */
         LoginRequest: {
@@ -153,6 +343,74 @@ export interface components {
             install_id?: string;
             /** @enum {string} */
             platform?: "ios" | "android" | "web";
+        };
+        /** PlanActivityResource */
+        PlanActivityResource: {
+            id: string;
+            activity_type: string;
+            actor_id: string | null;
+            actor_name: string | null;
+            subject_type: string | null;
+            subject_id: string | null;
+            metadata: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            created_at: string;
+        };
+        /** PlanInviteCreatedResource */
+        PlanInviteCreatedResource: {
+            id: string;
+            email: string | null;
+            role: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: date-time */
+            accepted_at: string | null;
+            /** Format: date-time */
+            revoked_at: string | null;
+            invited_by_name: string | null;
+            token: string;
+        };
+        /** PlanInviteResource */
+        PlanInviteResource: {
+            id: string;
+            email: string | null;
+            role: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: date-time */
+            accepted_at: string | null;
+            /** Format: date-time */
+            revoked_at: string | null;
+            invited_by_name: string | null;
+        };
+        /** PlanMemberResource */
+        PlanMemberResource: {
+            user_id: string;
+            display_name: string;
+            role: string;
+            status: string;
+            /** Format: date-time */
+            joined_at: string;
+        };
+        /** PlanResource */
+        PlanResource: {
+            id: string;
+            title: string;
+            description: string | null;
+            status: string;
+            visibility: string;
+            timezone: string;
+            owner_id: string;
+            member_count: number;
+            viewer_role: string;
+            /** Format: date-time */
+            archived_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
         };
         /** RefreshTokenRequest */
         RefreshTokenRequest: {
@@ -184,6 +442,12 @@ export interface components {
             /** Format: date-time */
             refresh_token_expires_at: string;
             user: components["schemas"]["UserResource"];
+        };
+        /** UpdatePlanRequest */
+        UpdatePlanRequest: {
+            title?: string;
+            description?: string;
+            timezone?: string;
         };
         /** UpdateProfileRequest */
         UpdateProfileRequest: {
@@ -250,6 +514,328 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "plans.join": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JoinPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description `PlanResource` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PlanResource"];
+                    };
+                };
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description The invite cannot be used: the token is unknown, malformed, expired, revoked or already accepted, it was issued for a different Plan, or the Plan is no longer active. One body for every case, so a captured link reveals nothing about which. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description The invite carries the owner role, which would make the accepting user a second owner of this Plan. Reachable only by a row written outside the API. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            422: components["responses"]["ValidationException"];
+        };
+    };
+    "plans.archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description `PlanResource` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PlanResource"];
+                    };
+                };
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description Only the Plan owner can archive a Plan, and the owner account must have a verified email address. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description No Plan with this identifier is visible to you. A Plan you are not an active member of is indistinguishable from one that does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    "plans.index": {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+                status?: "active" | "archived" | "cancelled" | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of `PlanResource` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PlanResource"][];
+                        meta: {
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["AuthenticationException"];
+            422: components["responses"]["ValidationException"];
+        };
+    };
+    "plans.store": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePlanRequest"];
+            };
+        };
+        responses: {
+            /** @description `PlanResource` */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PlanResource"];
+                    };
+                };
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description Your email address is not verified. Creating a Plan is one of the actions that needs a verified address, because everyone you invite will see it. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            422: components["responses"]["ValidationException"];
+            /** @description Too many Plans created from this account: 30 per hour. Carries Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    "plans.show": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description `PlanResource` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PlanResource"];
+                    };
+                };
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description No Plan with this identifier is visible to you. A Plan you are not an active member of is indistinguishable from one that does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    "plans.destroy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description Only the Plan owner can delete a Plan, and the owner account must have a verified email address. An Admin can edit a Plan but not delete it. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description No Plan with this identifier is visible to you. A Plan you are not an active member of is indistinguishable from one that does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    "plans.update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["UpdatePlanRequest"];
+            };
+        };
+        responses: {
+            /** @description `PlanResource` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PlanResource"];
+                    };
+                };
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description You are not allowed to edit this Plan: your role is Member, or your email address is not verified. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description No Plan with this identifier is visible to you. A Plan you are not an active member of is indistinguishable from one that does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description This Plan has been archived, so it can no longer be edited. Archived Plans stay readable, and can still be deleted by their owner. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            422: components["responses"]["ValidationException"];
+        };
+    };
     "auth.forgot-password": {
         parameters: {
             query?: never;
@@ -271,6 +857,127 @@ export interface operations {
             };
             422: components["responses"]["ValidationException"];
             /** @description Too many reset requests for this address: 3 per hour per email address. Carries Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    "plans.invites.index": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of `PlanInviteResource` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PlanInviteResource"][];
+                    };
+                };
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description The signed-in member may not read this Plan's invites. Listing invites requires Owner or Admin, because the list carries the addresses the inviter typed. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description No Plan with this id is visible to the signed-in user. The same body is returned for a Plan that does not exist and for one the user is not an active member of. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    "plans.invites.store": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["InvitePlanMemberRequest"];
+            };
+        };
+        responses: {
+            /** @description `PlanInviteCreatedResource` */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PlanInviteCreatedResource"];
+                    };
+                };
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description The signed-in member may not invite people to this Plan, or may not invite them with the role requested. Inviting requires Owner or Admin; only an Owner may invite an Admin. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description No Plan with this id is visible to the signed-in user. The same body is returned for a Plan that does not exist and for one the user is not an active member of. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description The Plan cannot be invited to: it has been archived, or its visibility is private. The message distinguishes the two. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            422: components["responses"]["ValidationException"];
+            /** @description Too many invites: 50 per day per user, and 20 per hour per Plan. Carries Retry-After. */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -426,6 +1133,257 @@ export interface operations {
             422: components["responses"]["ValidationException"];
         };
     };
+    "plans.activity.index": {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                plan: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of `PlanActivityResource` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PlanActivityResource"][];
+                        meta: {
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description No Plan with this id is visible to the signed-in user. A Plan that does not exist and a Plan the user is not an active member of answer identically. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            422: components["responses"]["ValidationException"];
+        };
+    };
+    "plans.members.index": {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                plan: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of `PlanMemberResource` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PlanMemberResource"][];
+                        meta: {
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description Either no Plan with this id exists, or the signed-in user is not an active member of it. The two answers are deliberately identical. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            422: components["responses"]["ValidationException"];
+        };
+    };
+    "plans.members.destroy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description The signed-in user may not do this: the Plan owner cannot leave their own Plan, an admin cannot remove another admin or the owner, a member cannot remove anyone, and removing another member requires a verified email address. The body says which. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description Either the Plan is not visible to the signed-in user, or the named user is not an active member of it. Both are 404 so that a non-member cannot learn whether the Plan exists; the body says which. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description The Plan is archived, so another member cannot be removed from it. Leaving an archived Plan is always allowed. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    "plans.members.update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeMemberRoleRequest"];
+            };
+        };
+        responses: {
+            /** @description `PlanMemberResource` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PlanMemberResource"];
+                    };
+                };
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description The signed-in user is a member of this Plan but may not make this change: only the owner can change a member role, the owner role itself is never edited directly, and the signed-in user must have verified their email address. The body says which. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description Either the Plan is not visible to the signed-in user, or the named user is not an active member of it. Both are 404 so that a non-member cannot learn whether the Plan exists; the body says which. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description The Plan is archived. An archived Plan is read-only: its members and their roles cannot be changed. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            422: components["responses"]["ValidationException"];
+        };
+    };
+    "invites.preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description `InvitePreviewResource` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["InvitePreviewResource"];
+                    };
+                };
+            };
+            /** @description The invite link cannot be used: it is unknown, malformed, expired, revoked, already accepted, or for a Plan that is no longer active. One body for every case, so a captured link reveals nothing about which. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description Too many invite lookups from this IP address: 60 per hour. Carries Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
     "auth.refresh": {
         parameters: {
             query?: never;
@@ -523,6 +1481,61 @@ export interface operations {
                 content?: never;
             };
             422: components["responses"]["ValidationException"];
+        };
+    };
+    "plans.invites.destroy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+                invite: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description The signed-in member may not revoke this Plan's invites. Revoking requires Owner or Admin, the same capability as inviting. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description Either no Plan with this id is visible to the signed-in user, or no invite with this id belongs to that Plan. The two carry different messages; an invite that belongs to a different Plan is indistinguishable from one that does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description The Plan has been archived, so it can no longer be written to. Reading its invites still works. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
         };
     };
     "auth.verify-email": {
