@@ -44,6 +44,9 @@ next-env.d.ts
 !.env.example
 /test-results/
 /playwright-report/
+# The live suite's storage state and the account it registered. Both hold a REAL session
+# (access + refresh cookie) and a real password for a real local account - never committed.
+/e2e/.auth/
 
 # Vendor agent files: `next dev` regenerates these, and this project keeps its
 # agent conventions in tandem-docs. Ignored so a routine `git add -A` cannot

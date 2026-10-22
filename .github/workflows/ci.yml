@@ -20,4 +20,14 @@ jobs:
       - run: npm ci
       - run: npm run verify
       - run: npx playwright install --with-deps chromium
+
+      # The live suite (e2e/live/**) needs tandem-api with Postgres 17, Redis 7 and Mailpit,
+      # which needs tandem-api checked out into this job - a cross-repo checkout token or a
+      # published API image, neither of which exists yet. It is a LOCAL acceptance gate with a
+      # committed runbook (docs/local-e2e-runbook.md) until one does. A CI job gated on a
+      # possibly-absent secret would skip silently, which is the failure mode this project has
+      # already shipped three times. Tracked as a spec §16 prerequisite in the Wave 1b plan.
+      #
+      # `npm run e2e` is `--project=fixture`, which `testIgnore: /live\//` scopes to the specs
+      # that need no API. `npm run e2e:live` is the all-projects command the runbook drives.
       - run: npm run e2e
