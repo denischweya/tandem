@@ -188,6 +188,16 @@ function planRoleMatrix(): array
                     // an actionable message rather than the generic one. strcasecmp($user,
                     // $actor->id) === 0 in PlanMemberController::destroy() is what routes this
                     // to LeavePlan, where canLeave(Owner) is false.
+                    //
+                    // Disclosed false negative ([[A2]]): this case's admin/member rows dispatch
+                    // to LeavePlan::execute(), and the 'remove a member'/'remove an admin' cases
+                    // below dispatch to RemoveMember::execute() - but both use cases end in an
+                    // identical `response()->noContent()` (204, no body). This matrix's verdicts
+                    // are status-and-body only, so an 'allowed' row here cannot tell them apart.
+                    // What actually distinguishes them is the resulting plan_members row:
+                    // LeavePlan writes status=left and leaves role untouched; RemoveMember
+                    // writes status=removed and demotes role to member. That assertion belongs
+                    // to tests/Feature/Plans/LeaveAndRemoveMemberTest.php, not this file.
                     'case' => 'leave',
                     'target' => 'self',
                     'payload' => [],
@@ -304,7 +314,7 @@ function planRoleMatrix(): array
  * /plans/{plan} answers 204 and takes the Plan with it, POST /plans/{plan}/archive leaves a
  * Plan that answers 409 to every write, and PATCH /plans/{plan}/members/{user} rewrites a role.
  * The five users are created once by the caller and re-membered into each fresh Plan, so the
- * suite needs three logins rather than fifty-one.
+ * suite needs three logins rather than one per request.
  *
  * joined_at is explicit and ascending, because §9.3's successor rule is "longest-standing
  * remaining member by created_at ASC, id ASC" and a fixture with ties is a fixture whose
