@@ -494,6 +494,35 @@ describe("the contract's own constraints", () => {
     // comment, so this table is the only place in this repo that can hold upstream to it.
     ['SessionResource', 'access_token_expires_at', { format: 'date-time' }],
     ['SessionResource', 'refresh_token_expires_at', { format: 'date-time' }],
+    // --- Wave 2. Request-side lengths and enums, the end of the chain openapi-typescript erases.
+    ['CreatePlanRequest', 'title', { maxLength: 255 }],
+    ['CreatePlanRequest', 'description', { maxLength: 2000 }],
+    ['UpdatePlanRequest', 'title', { maxLength: 255 }],
+    ['UpdatePlanRequest', 'description', { maxLength: 2000 }],
+    ['ChangeMemberRoleRequest', 'role', { enum: ['owner', 'admin', 'member'] }],
+    ['InvitePlanMemberRequest', 'email', { maxLength: 254, format: 'email' }],
+    ['InvitePlanMemberRequest', 'role', { enum: ['admin', 'member'] }],
+    ['JoinPlanRequest', 'token', { minLength: 64, maxLength: 64 }],
+    // The response side. Every one of these is parsed with z.iso.datetime({ offset: true }), and
+    // openapi-typescript erases `format` into a comment, so this table is the only place in this
+    // repository that can hold upstream to publishing them as date-time at all.
+    //
+    // The five NULLABLE timestamps are here too, and that is measured rather than assumed (D11a):
+    // Scramble turns a `string|null` into a StringType with nullable = true, not into a union
+    // object, and Type::toArray() emits `type: ["string","null"]` and `format: "date-time"` out of
+    // the same array_filter - so a nullable timestamp publishes BOTH. toMatchObject() checks the
+    // listed keys only, so a row naming `format` says nothing about `type` either way.
+    ['PlanResource', 'created_at', { format: 'date-time' }],
+    ['PlanResource', 'updated_at', { format: 'date-time' }],
+    ['PlanResource', 'archived_at', { format: 'date-time' }],
+    ['PlanMemberResource', 'joined_at', { format: 'date-time' }],
+    ['PlanInviteResource', 'expires_at', { format: 'date-time' }],
+    ['PlanInviteResource', 'accepted_at', { format: 'date-time' }],
+    ['PlanInviteResource', 'revoked_at', { format: 'date-time' }],
+    ['PlanInviteCreatedResource', 'expires_at', { format: 'date-time' }],
+    ['PlanInviteCreatedResource', 'accepted_at', { format: 'date-time' }],
+    ['PlanInviteCreatedResource', 'revoked_at', { format: 'date-time' }],
+    ['PlanActivityResource', 'created_at', { format: 'date-time' }],
   ];
 
   const loadConstraints = async (): Promise<z.infer<typeof ConstraintDocument>> => {
@@ -504,6 +533,16 @@ describe("the contract's own constraints", () => {
   };
 
   it('still states every length, format and enum the schemas encode', async () => {
+    // The same argument the schemaCount floor in 'the assertion harness itself' makes, applied
+    // to this table's own length, because the table had no such floor and the two waves grew it
+    // from 16 rows to 35. Without this, a row DELETED here takes its constraint out of the
+    // anti-drift chain and leaves the loop below iterating a shorter list, all green - which is
+    // the one failure this table cannot otherwise see, since every assertion it makes is about
+    // rows that are present. A floor rather than an exact count, so adding a thirty-sixth row
+    // with its constraint must not fail; it has to MOVE with each wave for the same reason the
+    // schema floor does.
+    expect(ENCODED.length).toBeGreaterThanOrEqual(35);
+
     const document = await loadConstraints();
 
     for (const [schema, field, constraints] of ENCODED) {
@@ -589,8 +628,10 @@ describe('the assertion harness itself', () => {
    *     `prettier`, at which point the anchor sees it. Indentation, the other half of the same
    *     hole, IS handled: the anchor allows leading spaces and tabs, while a docblock's ` * `
    *     and a `//` comment still cannot match it.
-   *   - Anything outside src/validation/. The scan is recursive now, so src/validation/plans/
-   *     is covered, but this reads a directory tree rather than the module graph.
+   *   - Anything outside src/validation/. The scan is recursive now, so a nested directory
+   *     under src/validation/ would be covered, but this reads a directory tree rather than
+   *     the module graph. (Wave 2's plans.ts is a flat file; the recursion is kept because the
+   *     reason for it is independent of that.)
    */
   /**
    * Capture group 1 of every match, in order. Named for what it returns rather than for what
@@ -611,10 +652,11 @@ describe('the assertion harness itself', () => {
   it('pairs an assignability assertion to every exported schema', async () => {
     const directory = new URL('.', import.meta.url);
 
-    // Recursive, because Wave 1b adds src/validation/plans/index.ts and a non-recursive
-    // readdir would never look inside it - the schema would be unscanned rather than
-    // unproven, which is the failure mode this whole test exists to rule out. The separator
-    // swap is for the Windows spelling readdir returns; `new URL` wants forward slashes.
+    // Recursive, because Wave 2 adds src/validation/plans.ts and a non-recursive readdir
+    // would never look inside a nested directory - a schema there would be unscanned rather
+    // than unproven, which is the failure mode this whole test exists to rule out. The
+    // separator swap is for the Windows spelling readdir returns; `new URL` wants forward
+    // slashes.
     const files = (await readdir(directory, { recursive: true }))
       .map((name) => name.split(sep).join('/'))
       .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'));
@@ -623,7 +665,9 @@ describe('the assertion harness itself', () => {
     // covered without anyone remembering to add it here. The guard below is what stops that
     // convenience from making the test vacuous: an empty scan, or a regex that stopped
     // matching, would find nothing to pair and pass.
-    expect(files).toEqual(expect.arrayContaining(['auth.ts', 'session.ts', 'users.ts']));
+    expect(files).toEqual(
+      expect.arrayContaining(['auth.ts', 'plans.ts', 'session.ts', 'users.ts']),
+    );
 
     let schemaCount = 0;
 
@@ -645,9 +689,54 @@ describe('the assertion harness itself', () => {
       schemaCount += schemas.length;
     }
 
-    // The ten schemas this wave specifies. A floor rather than an exact count - adding an
-    // eleventh WITH its assertion must not fail - so that a regex which stopped matching is
-    // still caught, since pairing an empty list against an empty list would otherwise pass.
-    expect(schemaCount).toBeGreaterThanOrEqual(10);
+    // The twenty-seven schemas these two waves specify: ten from Wave 1a (auth 7, users 1,
+    // session 2) and seventeen from Wave 2 (six resources, three cursor pages, five request
+    // bodies, three error shapes). A floor rather than an exact count - adding a twenty-eighth
+    // WITH its assertion must not fail - but it has to MOVE with each wave, because a floor left
+    // behind is slack: at 27 actual against a floor of 10, a regex that stopped matching would
+    // leave 12 >= 10 and this gate green, which is the one thing it exists to catch.
+    expect(schemaCount).toBeGreaterThanOrEqual(27);
+  });
+
+  it('exports every schema in this directory from the package entry point', async () => {
+    // The one gap nothing closed: a schema can be written, proved by an Expect<...> and counted
+    // toward the floor above, and never exported from src/index.ts - with every gate in this
+    // repository green and the schema unreachable from either client. Measured before this
+    // existed: `grep -rn "index.ts" src/ scripts/ eslint.config.mjs tsconfig.json` found exactly
+    // one reference, a comment in this file.
+    //
+    // Set equality in both directions, so it also catches the reverse - a name left in index.ts
+    // after its schema was renamed, which is a build error for every consumer and nothing here.
+    //
+    // WHAT THIS DOES NOT CATCH, stated rather than implied: index.ts is scanned for every
+    // \w*Schema\w* identifier anywhere in the file rather than only inside its export lists,
+    // because `export { A } from '...'` and a prettier-wrapped multi-line list are different
+    // shapes and the regex that reads both reads comments too. So a schema NAMED in a comment in
+    // index.ts counts as exported. That is a false pass in one direction only, it needs someone
+    // to write the name in a comment, and closing it means parsing the module rather than
+    // reading it.
+    const directory = new URL('.', import.meta.url);
+
+    const files = (await readdir(directory, { recursive: true }))
+      .map((name) => name.split(sep).join('/'))
+      .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'));
+
+    const declared: string[] = [];
+
+    for (const file of files) {
+      const source = await readFile(new URL(file, directory), 'utf8');
+      declared.push(...captured(/^[ \t]*export const (\w*Schema\w*)\b/gm, source));
+    }
+
+    const entry = await readFile(new URL('../index.ts', directory), 'utf8');
+    const exported = [...new Set(captured(/\b(\w*Schema\w*)\b/g, entry))];
+
+    // No floor here, and none needed: if either scan broke, one list is empty and the other is
+    // not, and the comparison fails. An empty-against-empty pass is the failure mode a floor
+    // exists to rule out, and set equality against a non-empty counterpart already rules it out.
+    expect(
+      [...exported].sort(),
+      'src/index.ts does not export exactly the schemas in this directory',
+    ).toEqual([...declared].sort());
   });
 });
