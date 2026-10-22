@@ -1975,7 +1975,19 @@
                     },
                     "metadata": {
                         "type": "object",
-                        "additionalProperties": {}
+                        "additionalProperties": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            ]
+                        }
                     },
                     "created_at": {
                         "type": "string",

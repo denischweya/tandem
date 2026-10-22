@@ -220,36 +220,11 @@ export type _PlanInviteCreatedResourceAcceptsCreateResponse = Expect<
  * defensive guess: account deletion sets plan_activity.actor_id to NULL across the feed, and the
  * client renders a placeholder for the row.
  *
- * `metadata` IS THE ONE FIELD IN THIS FILE THAT IS NOT PINNED, and that is upstream's doing
- * rather than a choice made here. The writer produces a closed set - {"from":"member","to":
- * "admin"} for a role change, {"fields":["title"]} for an update (FIELD NAMES ONLY, never
- * values), {"channel":"link","role":"member"} for an invite, and {} for everything else - so
- * `z.record(z.string(), z.union([z.string(), z.array(z.string())]))` is the parser this field
- * wants, and it is what every client would rather import.
- *
- * It cannot be that today. PlanActivityResource's `metadata` key carries no `@var` tag, and a
- * Resource key's published type comes from a docblock on the KEY - the producing summary
- * object's own typed property does not reach the document. So the document publishes
- * `{"type":"object","additionalProperties":{}}`, openapi-typescript renders that
- * `{ [key: string]: unknown }`, and `unknown` is not mutually assignable with a union of string
- * and string[]. Measured: the union form fails BOTH the resource proof and the page proof that
- * nests it, with the TS2344 every broken proof in this repository produces.
- *
- * So this matches the document instead, which keeps the invariant the other sixteen schemas
- * here satisfy - the parser accepts exactly what the contract permits, no more and no less -
- * rather than shipping a parser that is narrower than the published contract and cannot prove
- * itself. The honest cost is stated plainly: a metadata VALUE whose type changes upstream is
- * invisible to every gate in this package. The key itself is still pinned, because an indexed
- * access on a renamed or dropped `metadata` is a compile error here.
- *
- * THE FIX IS ONE LINE UPSTREAM: a `/** @var array<string, string|list<string>> *\/` docblock
- * above PlanActivityResource's `metadata` key - the tag alone, with no trailing description,
- * because a docblock above a Resource's toArray() key publishes as that property's public
- * `description`. Confirmed by regenerating the document with the tag in place: it publishes
- * `additionalProperties: {anyOf: [{type: string}, {type: array, items: {type: string}}]}`, adds
- * no `description`, and leaves the API's own suite and document gates green. When that lands,
- * tighten this field to the union above and restore plans.test.ts's rejection case, which is
- * written to go red at exactly that moment.
+ * `metadata` is the writer's closed set - {"from":"member","to":"admin"} for a role change,
+ * {"fields":["title"]} for an update (FIELD NAMES ONLY, never values), {"channel":"link",
+ * "role":"member"} for an invite, and {} for everything else - published via the `@var` tag on
+ * PlanActivityResource's `metadata` key, the same mechanism every other field in this file relies
+ * on for its wire type.
  */
 export const PlanActivityResourceSchema = z.object({
   id: z.uuid(),
@@ -258,7 +233,7 @@ export const PlanActivityResourceSchema = z.object({
   actor_name: z.string().nullable(),
   subject_type: z.string().nullable(),
   subject_id: z.uuid().nullable(),
-  metadata: z.record(z.string(), z.unknown()),
+  metadata: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
   created_at: apiTimestamp,
 });
 

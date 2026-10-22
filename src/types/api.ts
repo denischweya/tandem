@@ -353,7 +353,7 @@ export interface components {
             subject_type: string | null;
             subject_id: string | null;
             metadata: {
-                [key: string]: unknown;
+                [key: string]: string | string[];
             };
             /** Format: date-time */
             created_at: string;

@@ -132,18 +132,9 @@ describe('PlanActivityResourceSchema', () => {
     }
   });
 
-  it('accepts a metadata value the writer never produces, because the document permits it', () => {
-    // NOT the contract anyone wants, and the reason is upstream: PlanActivityResource's
-    // `metadata` key carries no `@var` tag, so the document publishes
-    // `additionalProperties: {}` and openapi-typescript renders that `{ [key: string]: unknown }`.
-    // plans.ts's docblock for this field records the one-line upstream fix and why a narrower
-    // parser cannot pass its own symmetric proof until that fix lands.
-    //
-    // This case is deliberately written to go RED when the fix lands - `{ count: 3 }` stops
-    // parsing the moment the field is typed - which is the signal to tighten the parser to a
-    // record of string-or-list-of-strings and turn this back into a rejection case.
+  it('rejects a metadata value that is neither a string nor a list of strings', () => {
     expect(PlanActivityResourceSchema.safeParse({ ...row, metadata: { count: 3 } }).success).toBe(
-      true,
+      false,
     );
   });
 
