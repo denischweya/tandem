@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Models\Plan;
+use App\Models\PlanActivity;
 use App\Models\PlanInvite;
 use App\Models\PlanMember;
 use App\Models\User;
@@ -42,6 +43,25 @@ uses(RefreshDatabase::class);
  * LeavePlan, where canLeave(Owner) is false, so the owner gets 403 with OwnerCannotLeave's body,
  * not a 2xx and not a 404 - so adding it is a deliberate extension of this file, not a drop-in
  * row, and is left to whichever task picks the gap up.
+ *
+ * WHICH ROWS PROVE THE WRITE, NOT ONLY THE RESPONSE: every row's body is checked, but a body
+ * comparison can only prove what produced that body. On `{user}`-from-another-Plan, the PATCH
+ * route's 404 is produced by findActiveMemberView()'s OWN, independently plan_id-scoped re-read
+ * - not by the write-side guard (activeMemberQuery()'s shared plan_id predicate, also used by
+ * findTransferTarget()) holding - so a body comparison alone cannot tell "the write-side guard
+ * held" from "the write-side guard failed but the re-read masked it" on that one row. That is
+ * why the `{user}`-from-another-Plan variant additionally reads the target's own plan_members
+ * row and the plan_activity table directly, below, for BOTH `{user}` routes (DELETE's write has
+ * no such re-read to mask behind, so its body already discriminated correctly - the direct read
+ * is added there too, for the same property, rather than only where it was missing). The
+ * `{invite}`-from-another-Plan row needs no equivalent: RevokeInvite's write has no later
+ * plan-scoped re-read standing in front of its response, so its body already proves the guard
+ * (confirmed: removing EloquentInviteRepository::findForPlan()'s plan_id predicate flips that
+ * row's response itself to 204, with nothing to mask it). Every other row (this Plan, left,
+ * removed, non-uuid, unknown uuid) asserts the body only, because none of them has a
+ * guard-vs-readback distinction to lose: the row named either does not exist, is not active, or
+ * is shaped wrong, and no write is reachable in any of those cases regardless of which guard
+ * runs.
  */
 
 /**
@@ -225,8 +245,10 @@ it('answers the vague body to a non-member and the precise body to a member who 
     [, $outsiderAccess] = authenticatedUser();
 
     // A second Plan, so "a real row of another Plan" names rows that genuinely exist.
+    // $strangerPlan is kept (not discarded) so the cross-Plan state check below can read the
+    // target's own plan_members row back by its real (plan_id, user_id) pair.
     $strangerOwner = userWithPassword();
-    [, $otherMember, $otherInvite] = refusalFixture($strangerOwner);
+    [$strangerPlan, $otherMember, $otherInvite] = refusalFixture($strangerOwner);
 
     $variantsChecked = 0;
     $requestsMade = 0;
@@ -250,6 +272,16 @@ it('answers the vague body to a non-member and the precise body to a member who 
 
             $uri = planRouteUri($path, ['plan' => $plan->id, $parameter => $value]);
             $payload = planRoutePayload($key);
+
+            // T33-1 (round 1 fix): captured BEFORE either request, for the one variant whose
+            // body cannot discriminate "the write-side guard held" from "it failed but a
+            // downstream read masked it" (see this file's top docblock). Reading the row
+            // directly, rather than through the application's own plan-scoped re-read, is what
+            // makes the discrimination possible: forceFill()+save() persists before any later
+            // read can stand in front of it.
+            $crossPlanMemberBefore = $parameter === 'user' && $variant === 'a real row of another Plan'
+                ? PlanMember::query()->where('plan_id', $strangerPlan->id)->where('user_id', $otherMember->id)->first()
+                : null;
 
             // The non-member. Byte-exact against the vague body, which subsumes "never the
             // precise body": if the content IS this, it is not the other. A companion
@@ -275,6 +307,27 @@ it('answers the vague body to a non-member and the precise body to a member who 
             } else {
                 expect([$ownerResponse->getStatusCode(), $ownerResponse->getContent()])
                     ->toBe([404, $precise], "{$key} with {$variant} as the {$parameter} must answer the precise subresource body to the Plan's owner (§5.2)");
+            }
+
+            if ($crossPlanMemberBefore !== null) {
+                // T33-1: the state assertion the body comparison above cannot make, for the
+                // reason stated beside $crossPlanMemberBefore's capture and in this file's top
+                // docblock. A fresh read, not the one in memory - RefreshDatabase runs this
+                // whole test in one transaction, so a fresh query sees the HTTP requests' own
+                // writes, including one the application's own response might not disclose.
+                $crossPlanMemberAfter = PlanMember::query()->find($crossPlanMemberBefore->id);
+
+                if ($crossPlanMemberAfter === null) {
+                    throw new RuntimeException(
+                        "{$key} with {$variant} as the {$parameter}: the cross-Plan target's plan_members row disappeared, which no code path in this repository does."
+                    );
+                }
+
+                expect([$crossPlanMemberAfter->role, $crossPlanMemberAfter->status])
+                    ->toBe([$crossPlanMemberBefore->role, $crossPlanMemberBefore->status], "{$key} with {$variant} as the {$parameter} must leave another Plan's member row untouched - the response body cannot prove this on its own (T33-1)");
+
+                expect(PlanActivity::query()->where('subject_id', $otherMember->id)->count())
+                    ->toBe(0, "{$key} with {$variant} as the {$parameter} must write no plan_activity row for a user who is not this Plan's member");
             }
 
             $variantsChecked++;
