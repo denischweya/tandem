@@ -184,7 +184,11 @@ it('answers 200, 201 or 204 on the same routes for the Plan owner', function ():
 
         // A fresh Plan per route, because the row for `delete /plans/{plan}` answers 204 and
         // takes the Plan with it, and `post /plans/{plan}/archive` leaves an archived Plan that
-        // answers 409 to three of the other rows.
+        // answers 409 on several of the other rows - every write whose use case checks
+        // PlanNotEditable (revoking an invite, removing a member, changing a role, updating
+        // the Plan, inviting someone). No count stated: nothing in this file asserts one, and a
+        // stated number here would be a comment nobody re-derives the day a route's behaviour
+        // changes.
         [$plan, $activeMember, $invite] = refusalFixture($owner);
 
         $uri = planRouteUri($path, [

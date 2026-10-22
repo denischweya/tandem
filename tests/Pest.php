@@ -449,8 +449,8 @@ function recordingFailClosure(array &$failures): Closure
  * prefix is stripped because `servers` already carries it, which is why the document's keys are
  * `/auth/login` and not `/api/v1/auth/login`.
  *
- * Moved here from tests/Feature/Contract/OpenApiContractTest.php, unchanged, because three
- * files now want it and Pest loads each test file into the global namespace: a second copy
+ * Moved here from tests/Feature/Contract/OpenApiContractTest.php, unchanged, because more than
+ * one file now wants it and Pest loads each test file into the global namespace: a second copy
  * would be a fatal "Cannot redeclare documentedRoutes()", not a test failure. Its remaining
  * call sites in that file keep working, because this file is the one place Pest loads exactly
  * once for every suite.
@@ -514,8 +514,8 @@ function planRouteTable(): array
 /**
  * Every Plan route as "<method> <path>", sorted - the key every refusal matrix is written against.
  *
- * Guarantee: sorted ascending, derived from planRouteTable(), so two call sites comparing this
- * against their own literals are comparing against the same order every time. Limit: sorting
+ * Guarantee: sorted ascending, derived from planRouteTable(), so every caller comparing this
+ * against its own literal is comparing against the same order every time. Limit: sorting
  * destroys registration order, which is why a test that needs to reason about WHICH row fails
  * first (registration order matters for a shared-fixture control) reads planRouteTable()
  * directly instead of this.
@@ -546,8 +546,8 @@ function planRouteKeys(): array
  *
  * Guarantee: throws rather than silently requesting a malformed URI. Limit: it does not know
  * which parameters a given path actually needs - passing an unused name is silently harmless,
- * and that is deliberate, because it lets one call site hand the same three-entry map to every
- * route regardless of how many parameters each one takes.
+ * and that is deliberate, because it lets a caller hand the same parameter map to every route
+ * regardless of how many of those parameters each one actually takes.
  *
  * @param  array<string, string>  $parameters
  */
