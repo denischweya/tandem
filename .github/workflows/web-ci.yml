@@ -38,7 +38,7 @@ jobs:
 
       - run: npm run verify --workspace=packages/shared
       - run: npm run verify --workspace=apps/web
-      - run: npx playwright install --with-deps chromium --prefix apps/web
+      - run: npx playwright install --with-deps chromium
 
       # The gap tandem-web's own CI comment named: the live suite needs tandem-api checked
       # out into this job. It now is, in the same checkout, for free.
