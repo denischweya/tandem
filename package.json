@@ -1,0 +1,11 @@
+{
+  "name": "tandem",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "apps/web",
+    "packages/shared"
+  ]
+}
