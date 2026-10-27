@@ -61,18 +61,11 @@ jobs:
       - run: npm run verify --workspace=packages/shared
       - run: npm run verify --workspace=apps/web
       - run: npx playwright install --with-deps chromium
+      - run: npm run e2e --workspace=apps/web
 
-      # The gap tandem-web's own CI comment named: the live suite needs tandem-api checked
-      # out into this job. It now is, in the same checkout, for free.
-      - name: Live e2e suite (needs backend/ running)
-        working-directory: apps/web
-        run: |
-          cd ../../backend
-          cp .env.example .env
-          php artisan key:generate
-          make up
-          make migrate
-          make api &
-          php artisan outbox:dispatch --once || true
-          cd ../apps/web
-          APP_WEB_URL_OVERRIDE_PORT=3100 npm run e2e:live
+      # A "Live e2e suite" step (npm run e2e:live, against a real backend/) was removed
+      # here: making it CI-safe needs a postgres/redis/mailpit services block, a background
+      # outbox-dispatcher loop, APP_WEB_URL set in backend/.env, and a health-check wait —
+      # a real, separate engineering task, not a one-line step. Tracked in ADR 0010
+      # (tandem-docs). Until that lands, the live suite stays a local acceptance gate; see
+      # apps/web/docs/local-e2e-runbook.md.
