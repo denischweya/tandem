@@ -2,9 +2,31 @@ name: Web/Shared CI
 on:
   push:
     branches: [main]
-    paths: ['apps/web/**', 'packages/shared/**']
+    paths:
+      [
+        'apps/web/**',
+        'packages/shared/**',
+        'backend/openapi.json',
+        'package.json',
+        'package-lock.json',
+        '.npmrc',
+        '.nvmrc',
+        'scripts/**',
+        '.github/workflows/web-ci.yml',
+      ]
   pull_request:
-    paths: ['apps/web/**', 'packages/shared/**']
+    paths:
+      [
+        'apps/web/**',
+        'packages/shared/**',
+        'backend/openapi.json',
+        'package.json',
+        'package-lock.json',
+        '.npmrc',
+        '.nvmrc',
+        'scripts/**',
+        '.github/workflows/web-ci.yml',
+      ]
 
 jobs:
   verify:
