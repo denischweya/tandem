@@ -12,6 +12,12 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "$CURRENT_BRANCH" != "main" ]]; then
+  echo "Must be run from main (currently on $CURRENT_BRANCH)." >&2
+  exit 1
+fi
+
 VERSION="$(node -p "require('./packages/shared/package.json').version")"
 TAG="shared-v${VERSION}"
 
