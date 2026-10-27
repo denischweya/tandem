@@ -1,0 +1,47 @@
+name: CI
+on:
+  push: { branches: [main, wave-0-foundation] }
+  pull_request:
+  # The upstream drift gate in the verify job below only tells the truth when something
+  # re-runs it, and nothing in tandem-api can. A contract change merged there leaves this
+  # repo's last run green while its committed openapi.json has silently gone stale - the
+  # half of I2 that the gate itself does not close. A nightly run bounds that blind window
+  # to 24 hours and needs no credentials of any kind. The precise fix is a
+  # repository_dispatch sent from tandem-api's main-branch workflow, which requires a
+  # cross-repo token this project has not issued; until it does, this is the honest
+  # approximation. workflow_dispatch is here so the gate can be re-run by hand the moment
+  # tandem-api merges, rather than waiting for 06:00 UTC.
+  #
+  # Both triggers only take effect once this branch is on main - GitHub schedules and manual
+  # dispatches read the workflow from the default branch only.
+  schedule: [{ cron: '0 6 * * *' }]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      - run: npm run verify
+      # I2: this is the missing middle link in the anti-drift chain. types-check (above, inside
+      # `verify`) only proves src/types/api.ts matches the openapi.json committed in THIS repo -
+      # it says nothing about whether that committed copy still matches tandem-api's. Without
+      # this step, tandem-api can merge a contract change with green CI while this repo's spec
+      # goes stale and this repo's CI stays green too, because nothing here ever looks upstream.
+      #
+      # Points at tandem-api's `main`, the correct steady state - not at the branch under review,
+      # even though main 404s until tandem-api's pull request merges (verified manually against
+      # wave-0-foundation instead; see the wave's fix report). tandem-api must therefore merge
+      # first. This step is expected to fail until then: a gate that tolerates a 404 by passing
+      # when the upstream file is simply missing is not a gate.
+      - name: The committed OpenAPI document matches tandem-api's
+        run: |
+          curl -fsSL -o /tmp/upstream-openapi.json \
+            https://raw.githubusercontent.com/denischweya/tandem-api/main/openapi.json
+          diff -u openapi.json /tmp/upstream-openapi.json || {
+            echo "::error::openapi.json is stale. Run 'npm run sync' against a tandem-api checkout, commit, and cut a new tag."
+            exit 1
+          }
