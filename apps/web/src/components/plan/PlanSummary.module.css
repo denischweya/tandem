@@ -1,0 +1,33 @@
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.title {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-stretch: condensed;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
+  font-size: 40px;
+  margin: 0;
+}
+
+@media (min-width: 640px) {
+  .title {
+    font-size: 46px;
+  }
+}
+
+.when {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 17px;
+}
+
+.where {
+  font-size: 15px;
+  color: var(--color-neutral-600);
+}

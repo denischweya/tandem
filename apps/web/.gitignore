@@ -1,0 +1,55 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# Project additions
+!.env.example
+/test-results/
+/playwright-report/
+# The live suite's storage state and the account it registered. Both hold a REAL session
+# (access + refresh cookie) and a real password for a real local account - never committed.
+/e2e/.auth/
+
+# Vendor agent files: `next dev` regenerates these, and this project keeps its
+# agent conventions in tandem-docs. Ignored so a routine `git add -A` cannot
+# silently re-stage what Step 8 deliberately deleted.
+AGENTS.md
+CLAUDE.md

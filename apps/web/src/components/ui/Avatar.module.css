@@ -1,0 +1,19 @@
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 50%;
+  font-weight: 600;
+  border: 2px solid var(--color-bg);
+}
+
+.accent2 {
+  background: var(--color-accent-2);
+  color: #fff;
+}
+
+.inverse {
+  background: var(--color-text);
+  color: var(--color-bg);
+}

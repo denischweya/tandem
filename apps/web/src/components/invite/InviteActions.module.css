@@ -1,0 +1,21 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.heading {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-stretch: condensed;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
+  font-size: 22px;
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}

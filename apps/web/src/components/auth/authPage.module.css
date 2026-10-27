@@ -1,0 +1,68 @@
+/**
+ * One shared stylesheet for every auth page's outer chrome (`/signin`, `/signup`,
+ * `/forgot-password`, `/reset-password`, `/verify-email`, `/plans`) - a CSS Module is scoped
+ * by the FILE, not by each importer, so six `page.tsx` files importing this one module all
+ * get the same generated class names, which is the point: one page shell, not six transcribed
+ * copies of the same flex/padding/max-width rules.
+ */
+.page {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  padding: 48px 20px;
+}
+
+.card {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.heading {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.subtitle {
+  font-size: 15px;
+  color: var(--color-neutral-600);
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.notice {
+  font-size: 14px;
+  color: var(--color-accent-2-700);
+}
+
+.links {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+
+.link {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-accent-2-700);
+}
+
+.banner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  border-radius: 12px;
+  background: var(--color-accent-2-100);
+  color: var(--color-accent-2-900);
+  font-size: 14px;
+}

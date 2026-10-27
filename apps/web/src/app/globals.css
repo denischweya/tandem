@@ -1,0 +1,40 @@
+/**
+ * Task 11: both `prefers-color-scheme: dark` blocks are gone (there were two, not one - see
+ * tokens.css's own docblock for why), and so are the `--background`/`--foreground` pair the
+ * first of them governed. This wave commits to the light palette `tokens.css` promotes to
+ * `:root`, so `body` now reads `--font-body`/`--color-text`/`--color-bg` from there instead of
+ * Arial and a locally-owned light/dark pair. That leaves ONE font stack where there were four
+ * (Arial here, `system-ui` inline in the old page.tsx, Geist on `<html>`, `--font-body` in the
+ * invite subtree) and ONE token system where there were two.
+ */
+html {
+  height: 100%;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+body {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-body);
+  color: var(--color-text);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}

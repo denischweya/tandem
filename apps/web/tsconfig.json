@@ -1,0 +1,47 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    // exactOptionalPropertyTypes and noUncheckedIndexedAccess must match tandem-shared and
+    // tandem-mobile (review finding I6, 2026-10-08 final whole-branch review): @tandem/shared
+    // ships raw TypeScript, so its Zod-vs-generated-type assignability harness is typechecked
+    // by each consumer's own compiler, not shared's. A weaker option here would make that
+    // harness pass in tandem-web while it fails in tandem-shared's own CI for the same code
+    // (exactOptionalPropertyTypes in particular changes assignability for optional properties,
+    // which is most of an OpenAPI request body). Could not be centralized in a single base
+    // tsconfig all three repos extend: @tandem/shared is consumed as a pinned git-tag
+    // dependency (not a workspace), and only its "files" (src/, package.json, README.md) are
+    // installed — no tsconfig ships with it. Set explicitly here and in tandem-mobile instead;
+    // see spec §14.1.
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules"]
+}

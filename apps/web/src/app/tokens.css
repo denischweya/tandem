@@ -1,0 +1,60 @@
+/**
+ * The screen-3j palette, promoted from src/components/invite/design-tokens.module.css to
+ * :root. It was scoped to a `.tokens` CLASS that each page applied by hand
+ * (`${tokens.tokens} ${styles.page}`), which meant the design system quietly stayed
+ * invite-only - and this wave adds six pages. Every value below is transcribed verbatim from
+ * that module; only the selector changed, from `.tokens` to `:root`.
+ *
+ * The handoff's device-frame chrome (height:100%, overflow:hidden) is still deliberately
+ * dropped: these are real scrollable pages.
+ *
+ * NO DARK VARIANT. globals.css owned TWO prefers-color-scheme: dark blocks - one redefining
+ * --background/--foreground and one setting `html { color-scheme: dark }` - and these colours
+ * never participated in either, so the repo had one palette and two orphaned dark overrides.
+ * Both are deleted there. Resolving it honestly means either designing a dark palette (no
+ * design source exists for one - the handoff is not committed anywhere in the three repos) or
+ * committing to light. This wave commits to light, matching tandem-mobile's
+ * `userInterfaceStyle: "light"`, and deletes the orphaned dark block rather than leaving two
+ * systems half-wired. A dark palette is a design task, not a CSS task.
+ */
+:root {
+  --color-bg: #ffffff;
+  --color-surface: #faf5f7;
+  --color-text: #2a1a26;
+  --color-neutral-100: #faf4f7;
+  --color-neutral-200: #f3e9ee;
+  --color-neutral-300: #e7d9e0;
+  --color-neutral-400: #cdb9c3;
+  --color-neutral-500: #a8929d;
+  --color-neutral-600: #85707b;
+  --color-neutral-700: #66535d;
+  --color-neutral-800: #4a3a43;
+  --color-neutral-900: #2f222a;
+  --color-accent: #ec1c7f;
+  --color-accent-100: #ffeef5;
+  --color-accent-200: #ffd6e7;
+  --color-accent-300: #ffadcf;
+  --color-accent-400: #ff6fa8;
+  --color-accent-500: #ec1c7f;
+  --color-accent-600: #cc0f6b;
+  --color-accent-700: #a80c58;
+  --color-accent-800: #7f0943;
+  --color-accent-900: #55062d;
+  --color-accent-2: #8a3ffc;
+  --color-accent-2-100: #f4edff;
+  --color-accent-2-200: #e6d7ff;
+  --color-accent-2-300: #ccafff;
+  --color-accent-2-400: #a97cff;
+  --color-accent-2-500: #8a3ffc;
+  --color-accent-2-600: #7226e6;
+  --color-accent-2-700: #5b1bbd;
+  --color-accent-2-800: #43148c;
+  --color-accent-2-900: #2d0d5e;
+  --shadow-sm: 0 1px 3px rgba(236, 28, 127, 0.1);
+  --shadow-md: 0 8px 24px rgba(236, 28, 127, 0.14);
+  --shadow-lg: 0 20px 48px rgba(236, 28, 127, 0.18);
+  --font-heading:
+    'SF Pro Display Condensed', 'SF Pro Condensed', -apple-system, BlinkMacSystemFont, system-ui,
+    sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+}

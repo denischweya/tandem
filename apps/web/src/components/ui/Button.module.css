@@ -1,0 +1,87 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.button:focus-visible {
+  outline: 3px solid var(--color-accent-2-400);
+  outline-offset: 2px;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* `pending` is also `disabled` (see Button.tsx), so this layers on top of the rule above
+ * rather than replacing it - a slightly different cursor is the only extra signal, since
+ * `aria-busy` is what actually tells assistive tech, and the box size is untouched. */
+.button[aria-busy='true'] {
+  cursor: wait;
+}
+
+.primary {
+  width: 100%;
+  height: 54px;
+  padding: 0 20px;
+  background: var(--color-accent-2);
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.primary.pressed {
+  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.55);
+}
+
+.secondary {
+  flex: 1;
+  height: 54px;
+  padding: 0 16px;
+  background: var(--color-accent-2-100);
+  color: var(--color-accent-2-800);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.secondary.pressed {
+  background: var(--color-accent-2);
+  color: #fff;
+}
+
+.chip {
+  flex: none;
+  white-space: nowrap;
+  height: 36px;
+  padding: 0 14px;
+  background: var(--color-neutral-100);
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* Same shape as `.primary` - a full-width 54px pill - with `--color-accent-700` instead of
+ * `--color-accent-2`, the exact hex tandem-mobile's `destructive` variant uses. */
+.destructive {
+  width: 100%;
+  height: 54px;
+  padding: 0 20px;
+  background: var(--color-accent-700);
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.destructive.pressed {
+  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.55);
+}
