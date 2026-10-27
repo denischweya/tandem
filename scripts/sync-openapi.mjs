@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-const API_REPO = process.env.TANDEM_API_PATH ?? resolve('../tandem-api');
+const API_REPO = process.env.TANDEM_API_PATH ?? resolve('../../backend');
 const SOURCE = resolve(API_REPO, 'openapi.json');
 const SPEC = resolve('openapi.json');
 const OUT = resolve('src/types/api.ts');
