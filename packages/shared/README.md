@@ -12,6 +12,16 @@ three things both clients must agree with the API about:
 It is consumed by `tandem-mobile` and `tandem-web` as a **private Git dependency pinned to a
 ref**, never from a registry.
 
+> **Correction, 2026-10-27, per ADR 0010:** `tandem-api`, this package and `tandem-web` were
+> merged into one repository, `tandem`, where this package now lives at `packages/shared`.
+> `apps/web` now consumes it as a real npm workspace member, not a private Git dependency — only
+> `tandem-mobile` still pins it that way, via the merged repo's subtree-split tags. Later in this
+> README, the stated reason for not centralising the strict-compiler-options `tsconfig`
+> ("this package is consumed as a pinned Git dependency, not a workspace") is false for
+> `apps/web` now; the standalone `tsconfig.json` decision itself still stands, per ADR 0010, on a
+> different ground: the subtree split that produces `tandem-mobile`'s release still needs this
+> package to type-check with no parent config to extend once flattened to repo root.
+
 ---
 
 ## It ships raw TypeScript, not a build

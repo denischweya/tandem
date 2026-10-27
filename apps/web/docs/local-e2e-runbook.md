@@ -16,6 +16,11 @@ npm run e2e        # fixture project only. No API needed. This is what CI runs.
 npm run e2e:live   # every project: fixture + live-setup + live. Needs everything below.
 ```
 
+> **Correction, 2026-10-27, per ADR 0010:** `tandem-api` is no longer a sibling repository — it
+> was merged into this repo as `backend/`. The `cd` commands below have been updated from the
+> old sibling path (`.../tandem-api`) to `.../tandem/backend`; everything else in this runbook
+> (Mailpit, the outbox dispatcher loop, the trap list) is unchanged and still accurate.
+
 ---
 
 ## 0. Node 22
@@ -28,7 +33,7 @@ node -v             # must print v22.x
 ## 1. Infrastructure
 
 ```bash
-cd '/Volumes/M2 Cloud/projects/Tandem/tandem-api'
+cd '/Volumes/M2 Cloud/projects/Tandem/tandem/backend'
 make up                 # postgres 17, redis 7, mailpit — docker only, never installed locally
 make migrate
 ```
@@ -53,7 +58,7 @@ names this fix, rather than an `ERR_CONNECTION_REFUSED`. Restart `make api` afte
 ## 3. The API, and the outbox dispatcher
 
 ```bash
-cd '/Volumes/M2 Cloud/projects/Tandem/tandem-api'
+cd '/Volumes/M2 Cloud/projects/Tandem/tandem/backend'
 make api                # :8000   (leave running)
 
 # A SECOND terminal. Mail goes through outbox_events, so WITHOUT a dispatcher no verification
@@ -108,7 +113,7 @@ success clears it). One clean run uses **two registrations** (the setup project,
 in a row — which is exactly what the vacuity proofs below need. The reset:
 
 ```bash
-cd '/Volumes/M2 Cloud/projects/Tandem/tandem-api'
+cd '/Volumes/M2 Cloud/projects/Tandem/tandem/backend'
 docker compose exec -T redis redis-cli FLUSHALL
 ```
 

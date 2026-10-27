@@ -18,6 +18,14 @@ cookies and browser JavaScript never handles a token.
 
 ---
 
+> **Correction, 2026-10-27, per ADR 0010:** `tandem-api`, `tandem-shared` and this repo
+> (`tandem-web`) were merged into one repository, `tandem`. The five-repository table and the
+> private-Git-dependency / PAT setup instructions below describe the pre-merge world and no
+> longer apply: `@tandem/shared` is now an npm workspace member (`packages/shared`), installed
+> by a single root `npm ci` with no GitHub credentials needed for it, and CI is
+> `.github/workflows/web-ci.yml`, not a separate `tandem-web` workflow. See ADR 0010 for the
+> full picture.
+
 ## Read this first
 
 ### 1. All five repositories are private
