@@ -1,11 +1,17 @@
-name: CI
+name: Backend CI
 on:
-  push: { branches: [main, wave-0-foundation] }
+  push:
+    branches: [main]
+    paths: ['backend/**']
   pull_request:
+    paths: ['backend/**']
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
 
     services:
       postgres:
@@ -48,14 +54,8 @@ jobs:
           DB_HOST: 127.0.0.1
           REDIS_HOST: 127.0.0.1
 
-      # One definition of the gate (I10): `make verify` and this workflow used to be free
-      # to diverge, because CI re-implemented lint, stan and test inline instead of calling
-      # the Makefile. `verify-ci` is `verify` minus `COMPOSER` (hardcodes a path that does
-      # not exist on this runner) and `test-db` (shells into `docker compose`, which the
-      # services: block above does not provide - the test database is created by hand two
-      # steps up instead). `PHP=php` is a command-line assignment, which make exports to
-      # every recipe's environment, so it overrides both the Makefile's own `PHP` variable
-      # and bin/check-openapi.sh's environment-read default in one go.
+      # Same gate tandem-api's own CI ran before this merge (I10): one definition of
+      # "verify", not a second one re-implemented inline here.
       - name: Verify (lint, static analysis, OpenAPI drift, tests)
         run: make verify-ci PHP=php
         env:
