@@ -1,0 +1,63 @@
+name: CI
+on:
+  push: { branches: [main, wave-0-foundation] }
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: tandem
+          POSTGRES_USER: tandem
+          POSTGRES_PASSWORD: tandem
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U tandem -d tandem"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo_pgsql, intl
+          coverage: none
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      - run: cp .env.example .env && php artisan key:generate
+
+      - name: Create the test database
+        run: |
+          PGPASSWORD=tandem psql -h 127.0.0.1 -U tandem -d tandem \
+            -c "CREATE DATABASE tandem_test" || echo "already exists"
+
+      - run: php artisan migrate --force
+        env:
+          DB_HOST: 127.0.0.1
+          REDIS_HOST: 127.0.0.1
+
+      # One definition of the gate (I10): `make verify` and this workflow used to be free
+      # to diverge, because CI re-implemented lint, stan and test inline instead of calling
+      # the Makefile. `verify-ci` is `verify` minus `COMPOSER` (hardcodes a path that does
+      # not exist on this runner) and `test-db` (shells into `docker compose`, which the
+      # services: block above does not provide - the test database is created by hand two
+      # steps up instead). `PHP=php` is a command-line assignment, which make exports to
+      # every recipe's environment, so it overrides both the Makefile's own `PHP` variable
+      # and bin/check-openapi.sh's environment-read default in one go.
+      - name: Verify (lint, static analysis, OpenAPI drift, tests)
+        run: make verify-ci PHP=php
+        env:
+          DB_HOST: 127.0.0.1
+          REDIS_HOST: 127.0.0.1

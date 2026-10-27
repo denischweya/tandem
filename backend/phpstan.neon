@@ -1,0 +1,38 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 8
+    paths:
+        - app
+        - database
+        - routes
+        - tests
+    excludePaths:
+        - tests/Architecture/*
+    tmpDir: build/phpstan
+
+# Closes the domain-purity guard's measured gap (ADR 0001; the architecture test's own
+# comment in tests/Architecture/DomainPurityTest.php): six of the eight root facade
+# aliases tried (\DB::, \Log::, \Hash::, \Redis::, \Http::, \Storage::) evaded the Pest
+# arch rule entirely, because toOnlyUse() is a name check and the alias form never spells
+# "Illuminate". See phpstan-rules/src/DomainPurity/ForbiddenRootFacadeAliases.php for the
+# full account, including why \Redis needed special handling.
+# Closes the OTHER measured gap in the same arch rule: toOnlyUse() admits every PHP internal
+# class, because pest-plugin-arch's walker does not count one as a use. Reducing that rule to
+# toOnlyUse(['App\Domain']) left the suite green, and a domain class using DateTime,
+# ArrayObject, SplQueue and Closure was flagged for none of them - so the three names in its
+# allow-list were decoration. See phpstan-rules/src/DomainPurity/NoUnlistedGlobalClassRule.php.
+services:
+    -
+        class: PhpStanRules\DomainPurity\NoUnlistedGlobalClassRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: PhpStanRules\DomainPurity\NoRootFacadeAliasInStaticCallRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: PhpStanRules\DomainPurity\NoRootFacadeAliasInClassConstFetchRule
+        tags:
+            - phpstan.rules.rule
