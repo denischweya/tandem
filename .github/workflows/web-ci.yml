@@ -1,0 +1,56 @@
+name: Web/Shared CI
+on:
+  push:
+    branches: [main]
+    paths: ['apps/web/**', 'packages/shared/**']
+  pull_request:
+    paths: ['apps/web/**', 'packages/shared/**']
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version-file: '.nvmrc', cache: npm }
+
+      # Per the Global Constraints' npm-version note: npm <11 crashes resolving this
+      # workspace's dependency graph from scratch (reproduced locally, not specific to
+      # this machine). `engine-strict=true` + root package.json's `engines.npm` make an
+      # incompatible npm fail fast with EBADENGINE instead of that cryptic crash — this
+      # step is what keeps the runner's bundled npm (whatever actions/setup-node resolved
+      # for this Node version) from ever being the one that's incompatible.
+      - run: npm install -g npm@11
+
+      - run: npm ci
+
+      - name: packages/shared's OpenAPI spec matches backend's — a local file diff, no network call
+        # Closes the gap tandem-shared's own CI comment named: a curl with no credentials
+        # against a public mirror, correct only nightly. backend/ is checked out by the
+        # same actions/checkout step above, in the same job, so this compares the two
+        # committed files directly and runs on every commit, not on a cron.
+        run: |
+          diff -u packages/shared/openapi.json backend/openapi.json || {
+            echo "::error::packages/shared/openapi.json is stale. Run 'npm run sync' from packages/shared (against this same checkout — no TANDEM_API_PATH override needed), commit, and cut a new shared-vX.Y.Z tag via scripts/release-shared.sh."
+            exit 1
+          }
+
+      - run: npm run verify --workspace=packages/shared
+      - run: npm run verify --workspace=apps/web
+      - run: npx playwright install --with-deps chromium --prefix apps/web
+
+      # The gap tandem-web's own CI comment named: the live suite needs tandem-api checked
+      # out into this job. It now is, in the same checkout, for free.
+      - name: Live e2e suite (needs backend/ running)
+        working-directory: apps/web
+        run: |
+          cd ../../backend
+          cp .env.example .env
+          php artisan key:generate
+          make up
+          make migrate
+          make api &
+          php artisan outbox:dispatch --once || true
+          cd ../apps/web
+          APP_WEB_URL_OVERRIDE_PORT=3100 npm run e2e:live
