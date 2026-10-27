@@ -2,7 +2,8 @@
   "name": "tandem",
   "private": true,
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "npm": ">=11.0.0"
   },
   "workspaces": [
     "apps/web",
