@@ -14,14 +14,18 @@ final class PlanMessageResource extends JsonResource
     /** @return array<string, mixed> */
     public function toArray(Request $request): array
     {
-        // Build reactions array explicitly from scalar reads to avoid Scramble inferring an
-        // unresolved template type from the PlanMessageReactionSummary[] property. The pattern
-        // matches PlanActivityController's device for CursorPage::nextCursor: a ternary that
-        // ensures the accessed property is freshly typed by the context, not by the DTO.
-        $reactions = [];
-        foreach ($this->reactions as $r) {
-            $reactions[] = ['reaction' => (string) $r->reaction, 'count' => (int) $r->count, 'reacted_by_viewer' => (bool) $r->reactedByViewer];
-        }
+        // Build reactions array with ternary+cast to avoid Scramble inferring an unresolved
+        // template type from the PlanMessageReactionSummary[] property. The pattern matches
+        // PlanActivityController's device for CursorPage::nextCursor: a ternary that ensures
+        // the accessed property is freshly typed by the context, not by the DTO.
+        $reactions = $this->reactions === [] ? [] : array_map(
+            static fn ($r) => [
+                'reaction' => (string) $r->reaction,
+                'count' => (int) $r->count,
+                'reacted_by_viewer' => (bool) $r->reactedByViewer,
+            ],
+            $this->reactions,
+        );
 
         return [
             'id' => $this->id,
