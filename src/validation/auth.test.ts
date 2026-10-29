@@ -87,12 +87,12 @@ describe('RegisterSchema', () => {
     expect(padded.success && padded.data.email).toBe('Ada@Example.test');
   });
 
-  it('rejects a password of 11 characters and accepts 12', () => {
+  it('rejects a password of 7 characters and accepts 8', () => {
     expect(
-      RegisterSchema.safeParse({ ...validRegistration, password: 'a'.repeat(11) }).success,
+      RegisterSchema.safeParse({ ...validRegistration, password: 'a'.repeat(7) }).success,
     ).toBe(false);
     expect(
-      RegisterSchema.safeParse({ ...validRegistration, password: 'a'.repeat(12) }).success,
+      RegisterSchema.safeParse({ ...validRegistration, password: 'a'.repeat(8) }).success,
     ).toBe(true);
   });
 
@@ -176,11 +176,11 @@ describe('RegisterSchema', () => {
 
   it('accepts a whitespace-only password the API would 422, which is a recorded divergence', () => {
     // Pinned rather than fixed. `required` runs PHP's trim() before calling a value empty, so
-    // twelve spaces is a 422 upstream and is accepted here. Closing it needs a value-PRESERVING
+    // eight spaces is a 422 upstream and is accepted here. Closing it needs a value-PRESERVING
     // check, not a `.trim()` - see the MIDDLEWARE note in auth.ts. If this starts failing,
     // someone has closed it and that note must be rewritten rather than this line deleted.
     expect(
-      RegisterSchema.safeParse({ ...validRegistration, password: ' '.repeat(12) }).success,
+      RegisterSchema.safeParse({ ...validRegistration, password: ' '.repeat(8) }).success,
     ).toBe(true);
   });
 
@@ -197,7 +197,7 @@ describe('RegisterSchema', () => {
 
 describe('LoginSchema', () => {
   it('rejects an empty password and imposes no length beyond that', () => {
-    // LoginRequest deliberately omits Password::min(12): a rule on the submitted password
+    // LoginRequest deliberately omits Password::min(8): a rule on the submitted password
     // would refuse a legacy credential before checking it. So one character is accepted...
     expect(LoginSchema.safeParse({ email: 'ada@example.test', password: 'x' }).success).toBe(true);
     // ...and the empty string is not, which is most of what `required` means. Without this
@@ -284,13 +284,11 @@ describe('ResetPasswordSchema', () => {
     expect(padded.success && padded.data.token).toBe('f'.repeat(64));
   });
 
-  it('enforces the 12-character minimum the register endpoint enforces', () => {
-    expect(ResetPasswordSchema.safeParse({ ...valid, password: 'a'.repeat(11) }).success).toBe(
+  it('enforces the 8-character minimum the register endpoint enforces', () => {
+    expect(ResetPasswordSchema.safeParse({ ...valid, password: 'a'.repeat(7) }).success).toBe(
       false,
     );
-    expect(ResetPasswordSchema.safeParse({ ...valid, password: 'a'.repeat(12) }).success).toBe(
-      true,
-    );
+    expect(ResetPasswordSchema.safeParse({ ...valid, password: 'a'.repeat(8) }).success).toBe(true);
   });
 });
 
@@ -473,7 +471,7 @@ describe("the contract's own constraints", () => {
   /** Every constraint the schemas in this directory encode, as openapi.json states it. */
   const ENCODED: ReadonlyArray<readonly [string, string, Constraints]> = [
     ['RegisterRequest', 'email', { maxLength: 254, format: 'email' }],
-    ['RegisterRequest', 'password', { minLength: 12 }],
+    ['RegisterRequest', 'password', { minLength: 8 }],
     ['RegisterRequest', 'display_name', { maxLength: 80 }],
     ['RegisterRequest', 'locale', { maxLength: 10 }],
     ['LoginRequest', 'email', { maxLength: 254, format: 'email' }],
@@ -483,7 +481,7 @@ describe("the contract's own constraints", () => {
     ['ForgotPasswordRequest', 'email', { maxLength: 254, format: 'email' }],
     ['ResetPasswordRequest', 'token', { minLength: 64, maxLength: 64 }],
     ['ResetPasswordRequest', 'email', { maxLength: 254, format: 'email' }],
-    ['ResetPasswordRequest', 'password', { minLength: 12 }],
+    ['ResetPasswordRequest', 'password', { minLength: 8 }],
     ['UpdateProfileRequest', 'display_name', { maxLength: 80 }],
     ['UpdateProfileRequest', 'locale', { maxLength: 10 }],
     // The response side of the same chain. SessionSchema parses both expiries with
