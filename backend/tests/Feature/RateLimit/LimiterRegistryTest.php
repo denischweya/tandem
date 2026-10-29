@@ -50,7 +50,7 @@ uses(RefreshDatabase::class);
  *     endpoint, before ForgotPasswordRequest's own 'string' rule ever got a chance to answer
  *     422. plan-invites' route-parameter guard exists for the identical reason. Both Wave 1a
  *     limiters are asserted here by name, not only listed in the route-table literal, because a
- *     five-row literal that only NAMES a limiter proves nothing about what is inside it.
+ *     six-row literal that only NAMES a limiter proves nothing about what is inside it.
  *
  * So this file invokes the registered closures directly and compares the route table against an
  * exact literal. Each of key, maxAttempts and decaySeconds is its own expectation, so a break
@@ -64,7 +64,7 @@ uses(RefreshDatabase::class);
  * what it is for. tests/Feature/RateLimit/LimiterKeyHygieneTest.php is the gate on that
  * distinction.
  */
-it('throttles exactly five routes, and every limiter they name is registered', function (): void {
+it('throttles exactly six routes, and every limiter they name is registered', function (): void {
     $router = app('router');
 
     // Route::getRoutes() returns the RouteCollection; the collection's own getRoutes() returns
@@ -142,21 +142,20 @@ it('throttles exactly five routes, and every limiter they name is registered', f
     expect($allUris)->toContain('api/v1/plans/{plan}/join');
     expect($throttledUris)->not->toContain('api/v1/plans/{plan}/join');
 
-    // Spec §8.2's two Wave 1a rows and §13's three Wave 2 rows. Nothing else in the API is rate
-    // limited: /auth/login counts failures from inside Login::execute() and carries no
-    // throttle:, /auth/verify-email and /auth/reset-password are bounded by their own
-    // credentials, and the 'api' group assertion above is what makes "there is no global cap"
-    // a checked fact.
+    // Spec §8.2's two Wave 1a rows and §13's four Wave 2 rows (chat-send is the chat feature's
+    // own addition to §13's set, not a sixth thing outside it - it is the same "limit the write,
+    // not the read" shape as plans-create and plan-invites).
     //
-    // A SIXTH ROW HERE IS NOT A TEST FAILURE TO BE FIXED BY EDITING THIS LIST. It means a rate
+    // A SEVENTH ROW HERE IS NOT A TEST FAILURE TO BE FIXED BY EDITING THIS LIST. It means a rate
     // limit landed without a §13 decision; amend §13 first, then this literal.
     expect($throttled)->toBe([
         ['auth.forgot-password', 'api/v1/auth/forgot-password', 'auth-forgot-password'],
         ['auth.register', 'api/v1/auth/register', 'auth-register'],
         ['invites.preview', 'api/v1/invites/{token}', 'invite-lookup'],
         ['plans.invites.store', 'api/v1/plans/{plan}/invites', 'plan-invites'],
+        ['plans.messages.store', 'api/v1/plans/{plan}/messages', 'chat-send'],
         ['plans.store', 'api/v1/plans', 'plans-create'],
-    ], 'spec §8.2 and §13: five throttled routes in the whole API, three of the limiters new in Wave 2');
+    ], 'spec §8.2 and §13: six throttled routes in the whole API, four of the limiters new since Wave 1a');
 
     // A route may name a limiter nobody registered. Laravel's answer is
     // MissingRateLimiterException - "Rate limiter [<name>] is not defined." from
@@ -432,7 +431,7 @@ it('keys auth-forgot-password on the normalized email, three per hour, and survi
     // history: an array `email` once passed route dispatch and a bare (string) cast emitted an
     // E_WARNING the kernel promotes to an ErrorException INSIDE this closure - a reachable 500
     // on a public, unauthenticated endpoint, before ForgotPasswordRequest's own 'string' rule
-    // ever got a chance to answer 422. The five-row route-table literal above names this
+    // ever got a chance to answer 422. The six-row route-table literal above names this
     // limiter but asserts nothing about its key, window or guard - this block closes that gap.
     $closure = RateLimiter::limiter('auth-forgot-password');
 

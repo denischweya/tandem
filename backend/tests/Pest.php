@@ -608,6 +608,8 @@ function planRoutePayloads(): array
         // suites (§17.2) and the row exists so that the key set stays complete.
         'post /plans/{plan}/join' => ['token' => '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'],
         'get /plans/{plan}/activity' => [],
+        'get /plans/{plan}/messages' => [],
+        'post /plans/{plan}/messages' => ['body' => 'Hello from the refusal matrix'],
     ];
 }
 

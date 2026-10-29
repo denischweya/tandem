@@ -17,7 +17,7 @@ uses(RefreshDatabase::class);
  * without any refusal coverage fails this file instead of being skipped by it. The devices
  * that stop that derivation from passing vacuously, all three of which have a break step below:
  *
- *   1. planRouteKeys() is compared against a hand-written list of fourteen. The derived list
+ *   1. planRouteKeys() is compared against a hand-written list of sixteen. The derived list
  *      and the literal cannot be emptied together.
  *   2. Every loop increments $checked and every test ends with expect($checked)->toBe(n). A
  *      filter that matches nothing fails here, loudly, naming the number it expected.
@@ -36,8 +36,8 @@ uses(RefreshDatabase::class);
  * added to either test needs the call added with it.
  */
 it('accounts for every api/v1 route as Wave 1a, a Plan route, or a named exemption', function (): void {
-    // Spec §8's fourteen Plan routes, as documentedRoutes() spells them. Sorted ascending,
-    // which is the order planRouteKeys() returns.
+    // Spec §8's fourteen Plan routes, plus the chat feature's two message routes. Sorted
+    // ascending, which is the order planRouteKeys() returns.
     $expected = [
         'delete /plans/{plan}',
         'delete /plans/{plan}/invites/{invite}',
@@ -47,12 +47,14 @@ it('accounts for every api/v1 route as Wave 1a, a Plan route, or a named exempti
         'get /plans/{plan}/activity',
         'get /plans/{plan}/invites',
         'get /plans/{plan}/members',
+        'get /plans/{plan}/messages',
         'patch /plans/{plan}',
         'patch /plans/{plan}/members/{user}',
         'post /plans',
         'post /plans/{plan}/archive',
         'post /plans/{plan}/invites',
         'post /plans/{plan}/join',
+        'post /plans/{plan}/messages',
     ];
 
     // Both directions at once: a Plan route missing from the matrix fails, and a matrix entry
@@ -60,7 +62,7 @@ it('accounts for every api/v1 route as Wave 1a, a Plan route, or a named exempti
     // emptying of both sides cannot satisfy - the same shape as the envelope/bodyless pair
     // counter in tests/Feature/Contract/OpenApiContractTest.php.
     expect(planRouteKeys())->toBe($expected);
-    expect(planRouteKeys())->toHaveCount(14);
+    expect(planRouteKeys())->toHaveCount(16);
 
     // A payload row per route, checked here rather than discovered as a RuntimeException in
     // the middle of a loop three tests later.
@@ -126,7 +128,7 @@ it('declares no route pattern on any Plan route', function (): void {
         $checked++;
     }
 
-    expect($checked)->toBe(14);
+    expect($checked)->toBe(16);
 });
 
 it('answers 404 with the one Plan-not-found body on every Plan route a non-member can reach', function (): void {
@@ -163,9 +165,9 @@ it('answers 404 with the one Plan-not-found body on every Plan route a non-membe
         $checked++;
     }
 
-    // Fourteen Plan routes, minus `get /plans` and `post /plans` (no {plan} to be a non-member
-    // of) and minus `post /plans/{plan}/join` (the exemption above) = eleven.
-    expect($checked)->toBe(11);
+    // Sixteen Plan routes, minus `get /plans` and `post /plans` (no {plan} to be a non-member
+    // of) and minus `post /plans/{plan}/join` (the exemption above) = thirteen.
+    expect($checked)->toBe(13);
 });
 
 it('answers 200, 201 or 204 on the same routes for the Plan owner', function (): void {
@@ -210,5 +212,5 @@ it('answers 200, 201 or 204 on the same routes for the Plan owner', function ():
         $checked++;
     }
 
-    expect($checked)->toBe(11);
+    expect($checked)->toBe(13);
 });

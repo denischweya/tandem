@@ -303,6 +303,30 @@ function planRoleMatrix(): array
                 'expect' => ['owner' => 'allowed', 'admin' => 'allowed', 'member' => 'allowed'],
             ]],
         ],
+
+        // The chat feature's two message routes. SendMessage/ListPlanMessages carry no
+        // PlanPermissions::allows() check of their own - findVisibleTo()'s membership
+        // resolution IS the authorization, the same reasoning get /plans/{plan}/activity
+        // above already gives for its sibling feed - so every role that can see the Plan may
+        // read or send.
+        'get /plans/{plan}/messages' => [
+            'expectedCases' => 1,
+            'cases' => [[
+                'case' => 'read the messages',
+                'target' => 'none',
+                'payload' => [],
+                'expect' => ['owner' => 'allowed', 'admin' => 'allowed', 'member' => 'allowed'],
+            ]],
+        ],
+        'post /plans/{plan}/messages' => [
+            'expectedCases' => 1,
+            'cases' => [[
+                'case' => 'send a message',
+                'target' => 'none',
+                'payload' => ['body' => 'Hello from the role matrix'],
+                'expect' => ['owner' => 'allowed', 'admin' => 'allowed', 'member' => 'allowed'],
+            ]],
+        ],
     ];
 }
 
@@ -358,7 +382,7 @@ it('covers every Plan route in the role matrix', function (): void {
 
     expect($unrowed)->toBeEmpty('Plan routes with no planRoleMatrix() entry: '.implode(', ', $unrowed));
     expect($stale)->toBeEmpty('planRoleMatrix() entries naming no Plan route: '.implode(', ', $stale));
-    expect($keys)->toHaveCount(14);
+    expect($keys)->toHaveCount(16);
 
     $cases = 0;
 
@@ -539,13 +563,14 @@ it('covers every Plan route in the role matrix', function (): void {
         expect($missingSelf)->toBeEmpty("{$key} dispatches on whether {user} is the actor, so it needs a target=self case with a verdict for every role; these roles have none: ".implode(', ', $missingSelf));
     }
 
-    // Eleven routes carry cases, and the arithmetic is 1+1+1+1+1+3+4+2+1+1+1: one each for
-    // GET/PATCH/DELETE /plans/{plan}, POST /archive, GET /members, GET /invites, DELETE
-    // /invites/{invite} and GET /activity, three for PATCH /members/{user}, four for DELETE
-    // /members/{user} and two for POST /invites. The three routes with no role check carry
-    // none. The grand total is the floor under every route at once: a matrix whose lists were
-    // all emptied fails here even where no pair obligation applies.
-    expect($cases)->toBe(17);
+    // Thirteen routes carry cases, and the arithmetic is 1+1+1+1+1+3+4+2+1+1+1+1+1: one each
+    // for GET/PATCH/DELETE /plans/{plan}, POST /archive, GET /members, GET /invites, DELETE
+    // /invites/{invite}, GET /activity, GET /messages and POST /messages, three for PATCH
+    // /members/{user}, four for DELETE /members/{user} and two for POST /invites. The three
+    // routes with no role check carry none. The grand total is the floor under every route at
+    // once: a matrix whose lists were all emptied fails here even where no pair obligation
+    // applies.
+    expect($cases)->toBe(19);
 });
 
 it('answers 403 for every role the matrix forbids and 200, 201 or 204 for every role it allows', function (): void {
@@ -627,7 +652,7 @@ it('answers 403 for every role the matrix forbids and 200, 201 or 204 for every 
         }
     }
 
-    // 17 cases x 3 roles. A filter that matched no routes, or a matrix whose lists were all
+    // 19 cases x 3 roles. A filter that matched no routes, or a matrix whose lists were all
     // emptied, fails here rather than passing green with nothing asserted.
-    expect($checked)->toBe(51);
+    expect($checked)->toBe(57);
 });
