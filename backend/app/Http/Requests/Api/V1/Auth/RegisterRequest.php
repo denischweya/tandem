@@ -86,7 +86,7 @@ final class RegisterRequest extends FormRequest
         return [
             /** @format email */
             'email' => ['required', 'string', new ValidEmail, 'max:254', 'unique:users,email'],
-            'password' => ['required', 'string', Password::min(12)],
+            'password' => ['required', 'string', Password::min(8)],
             'display_name' => ['required', 'string', 'max:80'],
             /** An IANA time zone identifier, such as "Europe/London" or "America/New_York". */
             'timezone' => ['required', 'string', new IanaTimeZone],

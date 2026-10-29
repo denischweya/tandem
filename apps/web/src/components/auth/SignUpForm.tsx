@@ -175,7 +175,7 @@ export function SignUpForm({ next }: SignUpFormProps) {
         <Input
           label="Password"
           revealable
-          helpText="At least 12 characters."
+          helpText="At least 8 characters."
           autoComplete="new-password"
           error={form.formState.errors.password?.message}
           data-testid="create-account-password"

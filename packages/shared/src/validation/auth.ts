@@ -139,7 +139,7 @@ type RegisterBody = NonNullable<
  * file whose job is to prove the shapes agree, so a camelCase alias here would be proving
  * the wrong thing. A transform belongs in each client.
  *
- * password is length-only at 12, matching Password::min(12). No composition rules, for the
+ * password is length-only at 8, matching Password::min(8). No composition rules, for the
  * reason RegisterRequest records: NIST SP 800-63B advises against them.
  *
  * `.trim()` before `.min(1)` mirrors prepareForValidation(), which trims display_name before
@@ -169,7 +169,7 @@ type RegisterBody = NonNullable<
  */
 export const RegisterSchema = z.object({
   email: apiEmail,
-  password: z.string().min(12),
+  password: z.string().min(8),
   display_name: z.string().trim().min(1).max(80),
   timezone: z.string().trim().min(1),
   locale: z.string().trim().min(1).max(10).optional(),
@@ -190,9 +190,9 @@ type LoginBody = NonNullable<
  * Mirrors LoginRequest::rules().
  *
  * `password` is `.min(1)` and nothing more: the empty string is rejected and no length is
- * imposed beyond that. The API's LoginRequest deliberately omits Password::min(12), because a
+ * imposed beyond that. The API's LoginRequest deliberately omits Password::min(8), because a
  * length rule on a *submitted* password would refuse a sign-in attempt for a legacy credential
- * before checking it - so there is no 12-character minimum here either. `.min(1)` is a near
+ * before checking it - so there is no 8-character minimum here either. `.min(1)` is a near
  * mirror of `required` rather than an exact one, and the gap is the whitespace-only case the
  * MIDDLEWARE note records: the empty string agrees (422 both sides), '   ' does not.
  *
@@ -276,7 +276,7 @@ type ResetPasswordBody = NonNullable<
 export const ResetPasswordSchema = z.object({
   token: z.string().trim().length(64),
   email: apiEmail,
-  password: z.string().min(12),
+  password: z.string().min(8),
 });
 
 export type _ResetPasswordMatchesApi = Expect<

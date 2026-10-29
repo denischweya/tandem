@@ -106,10 +106,15 @@ it('rejects an address email:rfc accepts but the domain value object rejects', f
     expect(User::count())->toBe(0);
 });
 
-it('rejects a password shorter than twelve characters', function (): void {
-    postJson('/api/v1/auth/register', validRegistration(['password' => 'short']))
+it('rejects a password shorter than eight characters', function (): void {
+    postJson('/api/v1/auth/register', validRegistration(['password' => 'seven67']))
         ->assertStatus(422)
         ->assertJsonValidationErrorFor('password');
+});
+
+it('accepts a password exactly eight characters long', function (): void {
+    postJson('/api/v1/auth/register', validRegistration(['password' => 'eightchr']))
+        ->assertCreated();
 });
 
 it('rejects a timezone that is not an IANA identifier', function (): void {

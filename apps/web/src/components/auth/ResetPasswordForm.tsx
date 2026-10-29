@@ -132,7 +132,7 @@ export function ResetPasswordForm({ token, email }: ResetPasswordFormProps) {
         <Input
           label="New password"
           revealable
-          helpText="At least 12 characters."
+          helpText="At least 8 characters."
           autoComplete="new-password"
           error={form.formState.errors.password?.message}
           data-testid="reset-password-new-password"

@@ -180,6 +180,17 @@ it('enforces the password rule on the new password', function (): void {
     ])->assertStatus(422)->assertJsonValidationErrorFor('password');
 });
 
+it('accepts a new password exactly eight characters long', function (): void {
+    $user = User::factory()->hasProfile()->create();
+    $plain = requestReset($user);
+
+    postJson('/api/v1/auth/reset-password', [
+        'token' => $plain,
+        'email' => $user->email,
+        'password' => 'eightchr',
+    ])->assertNoContent();
+});
+
 it('rate limits reset requests to three per hour per email', function (): void {
     $user = User::factory()->hasProfile()->create();
 
