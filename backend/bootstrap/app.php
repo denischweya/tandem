@@ -37,6 +37,7 @@ return Application::configure(basePath: dirname(__DIR__))
                     require __DIR__.'/../routes/api/v1/me.php';
                     require __DIR__.'/../routes/api/v1/plans.php';
                     require __DIR__.'/../routes/api/v1/invites.php';
+                    require __DIR__.'/../routes/api/v1/messages.php';
                 });
         },
     )

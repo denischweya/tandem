@@ -7,6 +7,7 @@ namespace App\Providers;
 use App\Application\Plans\InviteRepository;
 use App\Application\Plans\PlanActivityRepository;
 use App\Application\Plans\PlanMemberRepository;
+use App\Application\Plans\PlanMessageRepository;
 use App\Application\Plans\PlanRepository;
 use App\Domain\Shared\Clock;
 use App\Domain\Shared\SystemClock;
@@ -20,6 +21,7 @@ use App\Infrastructure\Outbox\OutboxHandlers;
 use App\Infrastructure\Persistence\Eloquent\EloquentInviteRepository;
 use App\Infrastructure\Persistence\Eloquent\EloquentPlanActivityRepository;
 use App\Infrastructure\Persistence\Eloquent\EloquentPlanMemberRepository;
+use App\Infrastructure\Persistence\Eloquent\EloquentPlanMessageRepository;
 use App\Infrastructure\Persistence\Eloquent\EloquentPlanRepository;
 use App\Models\PersonalAccessToken;
 use App\Models\Plan;
@@ -46,6 +48,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->bind(PlanMemberRepository::class, EloquentPlanMemberRepository::class);
         $this->app->bind(InviteRepository::class, EloquentInviteRepository::class);
         $this->app->bind(PlanActivityRepository::class, EloquentPlanActivityRepository::class);
+        $this->app->bind(PlanMessageRepository::class, EloquentPlanMessageRepository::class);
         $this->app->singleton(OutboxHandlers::class);
 
         // Scramble documents the string rule `min:12` but ships nothing that understands
@@ -193,6 +196,17 @@ class AppServiceProvider extends ServiceProvider
         // of ?? as nullsafe.neverNull ("unnecessary, use -> instead"), regardless of whether the
         // object is actually nullable, while a nullsafe METHOD call in the same position does
         // not trip it. getAuthIdentifier() returns the same uuid $this->id would.
+        // §13 (chat): 30 per minute per user, counting requests rather than outcomes - the same
+        // reasoning 'plans-create' above gives for a per-user rather than a per-Plan key: sending
+        // thirty messages a minute is the thing being limited whether or not each one succeeds.
+        // ?->getAuthIdentifier() rather than ?->id, for the same measured PHPStan reason
+        // 'plans-create' and 'plan-invites' above give: level 8 flags a nullsafe PROPERTY fetch on
+        // the left of ?? as nullsafe.neverNull, while a nullsafe METHOD call in the same position
+        // does not. $request->user() is non-null on this route (auth:sanctum sorts before
+        // ThrottleRequests), so the 'unknown' fallback is unreachable here and kept only because
+        // RateLimiter::for() registers this limiter globally.
+        RateLimiter::for('chat-send', fn (Request $request) => Limit::perMinute(30)->by($request->user()?->getAuthIdentifier() ?? 'unknown'));
+
         RateLimiter::for('plan-invites', function (Request $request): array {
             $plan = $request->route('plan');
 
