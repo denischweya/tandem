@@ -2720,6 +2720,26 @@
                 ],
                 "title": "PlanMemberResource"
             },
+            "PlanMessageReactionResource": {
+                "type": "object",
+                "properties": {
+                    "reaction": {
+                        "type": "string"
+                    },
+                    "count": {
+                        "type": "integer"
+                    },
+                    "reacted_by_viewer": {
+                        "type": "boolean"
+                    }
+                },
+                "required": [
+                    "reaction",
+                    "count",
+                    "reacted_by_viewer"
+                ],
+                "title": "PlanMessageReactionResource"
+            },
             "PlanMessageResource": {
                 "type": "object",
                 "properties": {
@@ -2753,23 +2773,7 @@
                     "reactions": {
                         "type": "array",
                         "items": {
-                            "type": "object",
-                            "properties": {
-                                "reaction": {
-                                    "type": "string"
-                                },
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "reacted_by_viewer": {
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "reaction",
-                                "count",
-                                "reacted_by_viewer"
-                            ]
+                            "$ref": "#/components/schemas/PlanMessageReactionResource"
                         }
                     }
                 },
