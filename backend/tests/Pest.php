@@ -12,6 +12,7 @@ use App\Infrastructure\Outbox\OutboxDispatcher;
 use App\Models\Plan;
 use App\Models\PlanInvite;
 use App\Models\PlanMember;
+use App\Models\PlanMessage;
 use App\Models\User;
 use Illuminate\Contracts\Translation\Translator;
 use Illuminate\Http\Request;
@@ -641,6 +642,8 @@ function planRoutePayloads(): array
         'get /plans/{plan}/activity' => [],
         'get /plans/{plan}/messages' => [],
         'post /plans/{plan}/messages' => ['body' => 'Hello from the refusal matrix'],
+        'patch /plans/{plan}/messages/{message}' => ['body' => 'Edited by the refusal matrix'],
+        'delete /plans/{plan}/messages/{message}' => [],
     ];
 }
 
@@ -661,25 +664,31 @@ function planRoutePayload(string $key): array
 }
 
 /**
- * The Plan every refusal suite probes: active, with an owner, one other active member, and one
- * outstanding invite.
+ * The Plan every refusal suite probes: active, with an owner, one other active member, one
+ * outstanding invite, and one chat message authored by the owner.
  *
  * Every path parameter the Wave 2 route table declares has a REAL, valid value here - the Plan
- * exists, {user} names an active member of it, {invite} names an invite of it - so when a
- * non-member is refused, non-membership is the only thing left that can be causing it. A
- * fixture whose Plan did not exist would answer 404 on every row with the membership check
- * deleted, which is the vacuous shape an owner-side control exists to rule out.
+ * exists, {user} names an active member of it, {invite} names an invite of it, {message} names
+ * a message of it - so when a non-member is refused, non-membership is the only thing left
+ * that can be causing it. A fixture whose Plan did not exist would answer 404 on every row with
+ * the membership check deleted, which is the vacuous shape an owner-side control exists to rule
+ * out.
  *
  * The owner arrives as a parameter because an owner-side control signs one owner in and then
  * builds a fresh Plan per route: DELETE /plans/{plan} answers 204, and a shared Plan would make
- * every later row 404 for an ordering reason.
+ * every later row 404 for an ordering reason. $message is authored BY THE OWNER, not by
+ * $activeMember, for the same reason: the owner-side control's positive-control row for
+ * PATCH/DELETE .../messages/{message} needs the owner's own request to succeed, and
+ * EditMessage/DeleteMessage both refuse an actor who is not the message's author regardless of
+ * Plan role (see NotMessageAuthor).
  *
- * Guarantee: $plan is visible to $owner and to $activeMember, and $invite belongs to $plan.
- * Limit: this does not sign anyone in and returns no bearer token - every caller supplies its
- * own actor and token, which is what lets the same fixture serve both a non-member suite (whose
- * caller is a THIRD party, authenticated separately) and an owner-side control.
+ * Guarantee: $plan is visible to $owner and to $activeMember, $invite belongs to $plan, and
+ * $message belongs to $plan and is authored by $owner. Limit: this does not sign anyone in and
+ * returns no bearer token - every caller supplies its own actor and token, which is what lets
+ * the same fixture serve both a non-member suite (whose caller is a THIRD party, authenticated
+ * separately) and an owner-side control.
  *
- * @return array{Plan, User, PlanInvite}
+ * @return array{Plan, User, PlanInvite, PlanMessage}
  */
 function refusalFixture(User $owner): array
 {
@@ -693,7 +702,17 @@ function refusalFixture(User $owner): array
         'invited_by' => $owner->id,
     ]);
 
-    return [$plan, $activeMember, $invite];
+    // Field-by-field through `new PlanMessage`, not a factory: PlanMessage is $guarded = ['*']
+    // (see PlanMessage's own docblock reference in the chat suite's activeMemberOf()), and this
+    // feature carries no PlanMessageFactory.
+    $message = new PlanMessage;
+    $message->id = (string) Str::uuid7();
+    $message->plan_id = $plan->id;
+    $message->user_id = $owner->id;
+    $message->body = 'A message the refusal suites probe.';
+    $message->save();
+
+    return [$plan, $activeMember, $invite, $message];
 }
 
 /**

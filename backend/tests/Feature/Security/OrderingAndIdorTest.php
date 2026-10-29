@@ -6,6 +6,7 @@ use App\Models\Plan;
 use App\Models\PlanActivity;
 use App\Models\PlanInvite;
 use App\Models\PlanMember;
+use App\Models\PlanMessage;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
@@ -104,8 +105,9 @@ function twoParameterRoutes(): array
  *
  * Keyed by parameter name rather than by route, because the body is a property of the
  * subresource: every route that resolves a {user} answers PlanMemberNotFound, every route that
- * resolves an {invite} answers PlanInviteNotFound. A route whose second parameter is neither
- * fails the completeness check in the suite below by name.
+ * resolves an {invite} answers PlanInviteNotFound, every route that resolves a {message}
+ * answers PlanMessageNotFound. A route whose second parameter is none of the three fails the
+ * completeness check in the suite below by name.
  *
  * @return array<string, string>
  */
@@ -114,6 +116,7 @@ function subresourceRefusalBodies(): array
     return [
         'user' => '{"message":"That person is not a member of this Plan."}',
         'invite' => '{"message":"That invite is no longer available."}',
+        'message' => '{"message":"That message is no longer available."}',
     ];
 }
 
@@ -162,11 +165,15 @@ function orderingVariants(string $parameter): array
  * rather than userWithPassword() because they never sign in; hasProfile() is not optional
  * decoration, for the reason userWithPassword()'s own docblock in tests/Pest.php records.
  *
- * @return array{Plan, User, PlanInvite, User, User}
+ * $message is refusalFixture()'s own, authored by $owner - its own docblock states the
+ * guarantee this suite needs: the owner's `a real row of this Plan` request against
+ * PATCH/DELETE .../messages/{message} must succeed, and only the message's author may.
+ *
+ * @return array{Plan, User, PlanInvite, User, User, PlanMessage}
  */
 function orderingPlan(User $owner): array
 {
-    [$plan, $activeMember, $invite] = refusalFixture($owner);
+    [$plan, $activeMember, $invite, $message] = refusalFixture($owner);
 
     $leftMember = User::factory()->hasProfile()->create();
     PlanMember::factory()->left()->create([
@@ -180,15 +187,18 @@ function orderingPlan(User $owner): array
         'user_id' => $removedMember->id,
     ]);
 
-    return [$plan, $activeMember, $invite, $leftMember, $removedMember];
+    return [$plan, $activeMember, $invite, $leftMember, $removedMember, $message];
 }
 
 it('covers every Plan route with a second path parameter', function (): void {
-    // Spec §8's two-parameter routes, sorted ascending.
+    // Spec §8's two-parameter routes, plus the chat feature's own edit/delete-message routes,
+    // sorted ascending.
     $expected = [
         'delete /plans/{plan}/invites/{invite}',
         'delete /plans/{plan}/members/{user}',
+        'delete /plans/{plan}/messages/{message}',
         'patch /plans/{plan}/members/{user}',
+        'patch /plans/{plan}/messages/{message}',
     ];
 
     $keys = array_map(fn (array $row): string => $row[0].' '.$row[1], twoParameterRoutes());
@@ -198,7 +208,7 @@ it('covers every Plan route with a second path parameter', function (): void {
     // a literal in this file and $keys is derived from the route table, so adding a route with
     // a second parameter fails here until an ordering row is decided for it.
     expect($keys)->toBe($expected);
-    expect($keys)->toHaveCount(3);
+    expect($keys)->toHaveCount(5);
 
     // The variant lists are pinned by value, not merely probed for the positive control. A set
     // with no pin on its membership can be edited - e.g. a duplicate 'a non-uuid' standing in
@@ -218,6 +228,16 @@ it('covers every Plan route with a second path parameter', function (): void {
         'a non-uuid',
         'an unknown uuid',
     ]);
+    // {message} has no analogous "left" or "removed" state - a plan_message row is either
+    // there or soft-deleted, and a soft-deleted one already answers through 'an unknown uuid's
+    // own reasoning (listForPlan() excludes it, and find() treats it as gone) rather than
+    // needing its own variant.
+    expect(orderingVariants('message'))->toBe([
+        'a real row of this Plan',
+        'a real row of another Plan',
+        'a non-uuid',
+        'an unknown uuid',
+    ]);
 
     $checked = 0;
 
@@ -232,7 +252,7 @@ it('covers every Plan route with a second path parameter', function (): void {
         $checked++;
     }
 
-    expect($checked)->toBe(3);
+    expect($checked)->toBe(5);
 });
 
 it('answers the vague body to a non-member and the precise body to a member who can see the Plan', function (): void {
@@ -248,7 +268,7 @@ it('answers the vague body to a non-member and the precise body to a member who 
     // $strangerPlan is kept (not discarded) so the cross-Plan state check below can read the
     // target's own plan_members row back by its real (plan_id, user_id) pair.
     $strangerOwner = userWithPassword();
-    [$strangerPlan, $otherMember, $otherInvite] = refusalFixture($strangerOwner);
+    [$strangerPlan, $otherMember, $otherInvite, $otherMessage] = refusalFixture($strangerOwner);
 
     $variantsChecked = 0;
     $requestsMade = 0;
@@ -258,11 +278,24 @@ it('answers the vague body to a non-member and the precise body to a member who 
         $precise = subresourceRefusalBodies()[$parameter];
 
         foreach (orderingVariants($parameter) as $variant) {
-            [$plan, $activeMember, $invite, $leftMember, $removedMember] = orderingPlan($owner);
+            [$plan, $activeMember, $invite, $leftMember, $removedMember, $message] = orderingPlan($owner);
 
+            // A match per PARAMETER inside each variant arm, not a two-way ternary: {message}
+            // added a third subresource, and $parameter === 'user' ? a : b can only ever name
+            // two.
             $value = match ($variant) {
-                'a real row of this Plan' => $parameter === 'user' ? $activeMember->id : $invite->id,
-                'a real row of another Plan' => $parameter === 'user' ? $otherMember->id : $otherInvite->id,
+                'a real row of this Plan' => match ($parameter) {
+                    'user' => $activeMember->id,
+                    'invite' => $invite->id,
+                    'message' => $message->id,
+                    default => throw new RuntimeException("Unknown parameter [{$parameter}] for [{$key}]."),
+                },
+                'a real row of another Plan' => match ($parameter) {
+                    'user' => $otherMember->id,
+                    'invite' => $otherInvite->id,
+                    'message' => $otherMessage->id,
+                    default => throw new RuntimeException("Unknown parameter [{$parameter}] for [{$key}]."),
+                },
                 'a left member of this Plan' => $leftMember->id,
                 'a removed member of this Plan' => $removedMember->id,
                 'a non-uuid' => 'not-a-uuid',
@@ -334,9 +367,10 @@ it('answers the vague body to a non-member and the precise body to a member who 
         }
     }
 
-    // Two {user} routes at six variants each, plus one {invite} route at four: 12 + 4 = 16
-    // variants, each probed by both callers, so 32 requests. A derivation that matched no
-    // routes fails here rather than passing green with nothing asserted.
-    expect($variantsChecked)->toBe(16);
-    expect($requestsMade)->toBe(32);
+    // Two {user} routes at six variants each, one {invite} route at four, plus two {message}
+    // routes at four each: 12 + 4 + 8 = 24 variants, each probed by both callers, so 48
+    // requests. A derivation that matched no routes fails here rather than passing green with
+    // nothing asserted.
+    expect($variantsChecked)->toBe(24);
+    expect($requestsMade)->toBe(48);
 });

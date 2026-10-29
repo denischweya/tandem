@@ -7,10 +7,12 @@ use App\Application\Auth\InvalidPasswordResetToken;
 use App\Application\Auth\InvalidRefreshToken;
 use App\Application\Plans\ActorEmailNotVerified;
 use App\Application\Plans\InviteNotUsable;
+use App\Application\Plans\NotMessageAuthor;
 use App\Application\Plans\OwnerCannotLeave;
 use App\Application\Plans\OwnerInviteNotAcceptable;
 use App\Application\Plans\PlanInviteNotFound;
 use App\Application\Plans\PlanMemberNotFound;
+use App\Application\Plans\PlanMessageNotFound;
 use App\Application\Plans\PlanNotEditable;
 use App\Application\Plans\PlanNotInvitable;
 use App\Application\Plans\PlanNotVisible;
@@ -30,14 +32,19 @@ use Illuminate\Http\Request;
  * below is derived from the exception classes on disk and from the real handler's own state,
  * never from a list of sections or a regex over bootstrap/app.php's source text.
  *
- * TWELVE application exceptions exist at this task's start commit, not eleven: the three
- * inherited from Wave 1a, the eight this section's own vocabulary table names, and a twelfth,
- * OwnerInviteNotAcceptable, which protects spec §9.1's one-owner invariant on the invite-accept
- * path (see its own docblock for the human ruling) and is deliberately NOT in dontReport() -
- * unlike every other refusal in this file, it is meant to be noticed, not absorbed. The fourth
- * test below is written to discover that split from the real handler rather than to assume every
- * tabulated exception is silenced, which was true the day this section was drafted and stopped
- * being true before this task ran.
+ * FOURTEEN application exceptions exist as of the chat feature's edit/delete-message task, not
+ * twelve: the three inherited from Wave 1a, the eight this section's own vocabulary table
+ * names, OwnerInviteNotAcceptable, which protects spec §9.1's one-owner invariant on the
+ * invite-accept path (see its own docblock for the human ruling) and is deliberately NOT in
+ * dontReport() - unlike every other refusal in this file, it is meant to be noticed, not
+ * absorbed - and two more the chat feature added, PlanMessageNotFound and NotMessageAuthor.
+ * PlanMessageNotFound is an ordinary silenced 404, the same shape as PlanMemberNotFound and
+ * PlanInviteNotFound before it; NotMessageAuthor repeats OwnerInviteNotAcceptable's own shape -
+ * deliberately reportable, for the reason its own docblock gives - so dontReportClasses() now
+ * splits twelve-and-two rather than eleven-and-one. The fourth test below is written to
+ * discover that split from the real handler rather than to assume every tabulated exception is
+ * silenced, which was true the day this section was drafted and stopped being true before this
+ * task ran.
  *
  * Every body below is compared as a STRING, never with assertJsonPath. A closure's JsonResponse
  * encodes with options 0 (JsonResponse's own constructor default, which overwrites Symfony's
@@ -68,12 +75,13 @@ use Illuminate\Http\Request;
  * Every application exception, with the status and the exact bytes bootstrap/app.php must
  * answer for it.
  *
- * Twelve rows: Wave 1a's three, this section's own eight, and OwnerInviteNotAcceptable - see
- * this file's docblock for why a twelfth row exists where the section that owns this task did
- * not expect one. "Exactly one body per exception" is a property of the whole seam regardless of
- * which task's work produced each row: a closure mistyped `fn (InvalidRefreshToken $e)` would be
- * shadowed by the Wave 1a closure registered above it and would never run, and nothing but this
- * table would say so.
+ * Fourteen rows: Wave 1a's three, this section's own eight, OwnerInviteNotAcceptable, and the
+ * chat feature's own PlanMessageNotFound and NotMessageAuthor - see this file's docblock for
+ * why rows exist here that the section originally drafting this file did not expect.
+ * "Exactly one body per exception" is a property of the whole seam regardless of which task's
+ * work produced each row: a closure mistyped `fn (InvalidRefreshToken $e)` would be shadowed by
+ * the Wave 1a closure registered above it and would never run, and nothing but this table would
+ * say so.
  *
  * @return array<class-string<RuntimeException>, array{int, string}>
  */
@@ -86,6 +94,10 @@ function refusalBodyTable(): array
         PlanNotVisible::class => [404, '{"message":"Plan not found."}'],
         PlanMemberNotFound::class => [404, '{"message":"That person is not a member of this Plan."}'],
         PlanInviteNotFound::class => [404, '{"message":"That invite is no longer available."}'],
+        // The chat feature's own {message} 404, the same shape as PlanMemberNotFound and
+        // PlanInviteNotFound immediately above it: silenced, one body, for a malformed id, an
+        // unknown one, or one belonging to a different Plan.
+        PlanMessageNotFound::class => [404, '{"message":"That message is no longer available."}'],
         InviteNotUsable::class => [404, '{"message":"This invite link is no longer valid. Ask whoever invited you for a new one."}'],
         PlanNotEditable::class => [409, '{"message":"This Plan has been archived."}'],
         PlanNotInvitable::class => [409, '{"message":"This Plan is private, so nobody else can be invited to it."}'],
@@ -97,11 +109,17 @@ function refusalBodyTable(): array
         // goes through Handler::prepareJsonResponse() and is PRETTY-PRINTED, so the two are not
         // byte-identical.
         ActorEmailNotVerified::class => [403, '{"message":"Your email address is not verified."}'],
-        // The twelfth, and the odd one out: see this file's docblock and
-        // OwnerInviteNotAcceptable's own docblock. 409 for the same reason PlanNotEditable and
-        // PlanNotInvitable are 409 - a well-formed request refused for a state reason, not a
-        // validation reason - but, UNLIKE every other row above, this class carries no
-        // dontReport() entry, which the fourth test below asserts rather than assumes.
+        // The chat feature's second addition, and a second odd one out alongside
+        // OwnerInviteNotAcceptable below: an authorship check, not a role check, so
+        // AuthorizationException's generic pretty-printed body would be indistinguishable from
+        // a role refusal. UNLIKE every row above except OwnerInviteNotAcceptable, this class
+        // carries no dontReport() entry - see NotMessageAuthor's own docblock.
+        NotMessageAuthor::class => [403, '{"message":"You can only edit or delete your own messages."}'],
+        // The odd one out: see this file's docblock and OwnerInviteNotAcceptable's own
+        // docblock. 409 for the same reason PlanNotEditable and PlanNotInvitable are 409 - a
+        // well-formed request refused for a state reason, not a validation reason - but, UNLIKE
+        // every other row above except NotMessageAuthor, this class carries no dontReport()
+        // entry, which the fourth test below asserts rather than assumes.
         OwnerInviteNotAcceptable::class => [409, '{"message":"This invite cannot be accepted because it would make you a second owner of this Plan."}'],
     ];
 }
@@ -366,8 +384,9 @@ it('renders exactly one compact body for every application exception', function 
     // The loop is derived from a literal table in this file, so this cannot be the vacuous
     // shape - but the counter is here because every derived loop in this section carries one,
     // and because it names the arithmetic: Wave 1a's 3, plus this section's own 8, plus the
-    // AcceptInvite lock-race fix's 1.
-    expect($checked)->toBe(12);
+    // AcceptInvite lock-race fix's 1, plus the chat feature's own 2 (PlanMessageNotFound,
+    // NotMessageAuthor).
+    expect($checked)->toBe(14);
 });
 
 it('registers exactly one render closure for every application exception', function (): void {
@@ -386,7 +405,7 @@ it('registers exactly one render closure for every application exception', funct
         $checked++;
     }
 
-    expect($checked)->toBe(12);
+    expect($checked)->toBe(14);
 });
 
 it('covers every application exception class on disk', function (): void {
@@ -411,18 +430,18 @@ it('covers every application exception class on disk', function (): void {
     // no longer exists fails. The two sides cannot be emptied together, because $tabulated is
     // a literal in this file and $onDisk is read off the filesystem.
     expect($onDisk)->toBe($tabulated);
-    expect($onDisk)->toHaveCount(12);
+    expect($onDisk)->toHaveCount(14);
 });
 
-it('reports none of the refusals marked silent in bootstrap/app.php, reports the one that is not, and still reports a genuine error', function (): void {
+it('reports none of the refusals marked silent in bootstrap/app.php, reports the ones that are not, and still reports a genuine error', function (): void {
     $handler = app(ExceptionHandler::class);
 
     // Derived from the real handler, not assumed: every exception in refusalBodyTable() used to
     // be silenced, until OwnerInviteNotAcceptable arrived deliberately unsilenced (see this
-    // file's docblock). Splitting against dontReportClasses() - the handler's own $dontReport -
-    // rather than hand-partitioning the table is what makes this test notice a THIRTEENTH
-    // exception that repeats the same shape, instead of assuming the split stays "eleven and
-    // one" forever.
+    // file's docblock), and the chat feature's NotMessageAuthor repeated that same shape.
+    // Splitting against dontReportClasses() - the handler's own $dontReport - rather than
+    // hand-partitioning the table is what makes this test notice a FIFTEENTH exception that
+    // repeats the same shape, instead of assuming the split stays "twelve and two" forever.
     $allClasses = array_keys(refusalBodyTable());
     $silenced = array_values(array_intersect($allClasses, dontReportClasses()));
     $reportable = array_values(array_diff($allClasses, dontReportClasses()));
@@ -437,14 +456,15 @@ it('reports none of the refusals marked silent in bootstrap/app.php, reports the
         $checked++;
     }
 
-    expect($checked)->toBe(11);
+    expect($checked)->toBe(12);
     expect(capturedLogRecords($logs))->toBe([]);
 
-    // Exactly one application exception is deliberately reportable. If this list is empty,
-    // OwnerInviteNotAcceptable has regained a dontReport() entry it must not have (its own
-    // docblock explains why); if it holds more than one, a new exception has repeated the same
-    // shape without this test being told.
-    expect($reportable)->toBe([OwnerInviteNotAcceptable::class]);
+    // Exactly two application exceptions are deliberately reportable, in refusalBodyTable()'s
+    // own order: NotMessageAuthor before OwnerInviteNotAcceptable. If this list is shorter,
+    // one of the two has regained a dontReport() entry it must not have (their own docblocks
+    // explain why); if it holds more than two, a new exception has repeated the same shape
+    // without this test being told.
+    expect($reportable)->toBe([NotMessageAuthor::class, OwnerInviteNotAcceptable::class]);
 
     foreach ($reportable as $class) {
         $handler->report(new $class);
@@ -452,23 +472,25 @@ it('reports none of the refusals marked silent in bootstrap/app.php, reports the
 
     $afterReportable = capturedLogRecords($logs);
 
-    expect($afterReportable)->toHaveCount(1);
+    expect($afterReportable)->toHaveCount(2);
+    // Empty on both, exactly like PlanNotVisible's in A8's break step: `new NotMessageAuthor`
+    // and `new OwnerInviteNotAcceptable` with no constructor argument carry no message, and
+    // Handler::reportThrowable() logs $e->getMessage() verbatim.
     expect($afterReportable[0]['level'])->toBe('ERROR');
-    // Empty, exactly like PlanNotVisible's in A8's break step: `new OwnerInviteNotAcceptable`
-    // with no constructor argument carries no message, and Handler::reportThrowable() logs
-    // $e->getMessage() verbatim.
     expect($afterReportable[0]['message'])->toBe('');
+    expect($afterReportable[1]['level'])->toBe('ERROR');
+    expect($afterReportable[1]['message'])->toBe('');
 
-    // The half that matters most, and the reason the two assertions above are not vacuous: a
+    // The half that matters most, and the reason the assertions above are not vacuous: a
     // dontReport() list is exactly the kind of change that silences more than intended, and an
     // empty record list also agrees with a logging pipeline that captures nothing at all.
     $handler->report(new RuntimeException('a genuinely unexpected failure'));
 
     $unexpected = capturedLogRecords($logs);
 
-    expect($unexpected)->toHaveCount(2);
-    expect($unexpected[1]['level'])->toBe('ERROR');
-    expect($unexpected[1]['message'])->toBe('a genuinely unexpected failure');
+    expect($unexpected)->toHaveCount(3);
+    expect($unexpected[2]['level'])->toBe('ERROR');
+    expect($unexpected[2]['message'])->toBe('a genuinely unexpected failure');
 });
 
 it('leaves every refusal status to bootstrap/app.php', function (): void {

@@ -5,10 +5,12 @@ use App\Application\Auth\InvalidPasswordResetToken;
 use App\Application\Auth\InvalidRefreshToken;
 use App\Application\Plans\ActorEmailNotVerified;
 use App\Application\Plans\InviteNotUsable;
+use App\Application\Plans\NotMessageAuthor;
 use App\Application\Plans\OwnerCannotLeave;
 use App\Application\Plans\OwnerInviteNotAcceptable;
 use App\Application\Plans\PlanInviteNotFound;
 use App\Application\Plans\PlanMemberNotFound;
+use App\Application\Plans\PlanMessageNotFound;
 use App\Application\Plans\PlanNotEditable;
 use App\Application\Plans\PlanNotInvitable;
 use App\Application\Plans\PlanNotVisible;
@@ -104,6 +106,10 @@ return Application::configure(basePath: dirname(__DIR__))
             // in this file relates the two lists' orders to each other, so there is no ordering
             // to preserve.
             PlanInviteNotFound::class,
+            // A malformed {message}, an unknown message id, or one belonging to a different
+            // Plan than the one named in the route - a client acting on stale chat state,
+            // same argument as PlanMemberNotFound and PlanInviteNotFound above.
+            PlanMessageNotFound::class,
         ]);
 
         $exceptions->render(fn (InvalidCredentials $e) => new JsonResponse(
@@ -227,5 +233,22 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (PlanInviteNotFound $e) => new JsonResponse(
             ['message' => 'That invite is no longer available.'],
             404,
+        ));
+
+        // One body for a malformed {message}, an unknown message id, and a message id that
+        // belongs to a different Plan - see PlanMessageNotFound. Encoded compactly, like every
+        // closure above it, for the same reason: Laravel's own handler pretty-prints.
+        $exceptions->render(fn (PlanMessageNotFound $e) => new JsonResponse(
+            ['message' => 'That message is no longer available.'],
+            404,
+        ));
+
+        // 403 with its own body, not Laravel's generic one: NotMessageAuthor is an
+        // authorship check, not a role check, so AuthorizationException's pretty-printed
+        // "This action is unauthorized." would be indistinguishable from a role refusal the
+        // role matrix already owns. Left reportable - see NotMessageAuthor's own docblock.
+        $exceptions->render(fn (NotMessageAuthor $e) => new JsonResponse(
+            ['message' => 'You can only edit or delete your own messages.'],
+            403,
         ));
     })->create();

@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\V1\Plans\DeleteMessageController;
+use App\Http\Controllers\Api\V1\Plans\EditMessageController;
 use App\Http\Controllers\Api\V1\Plans\ListPlanMessagesController;
 use App\Http\Controllers\Api\V1\Plans\SendMessageController;
 use Illuminate\Support\Facades\Route;
@@ -15,4 +17,12 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/plans/{plan}/messages', SendMessageController::class)
         ->middleware(['verified', 'throttle:chat-send'])
         ->name('plans.messages.store');
+
+    Route::patch('/plans/{plan}/messages/{message}', EditMessageController::class)
+        ->middleware('verified')
+        ->name('plans.messages.update');
+
+    Route::delete('/plans/{plan}/messages/{message}', DeleteMessageController::class)
+        ->middleware('verified')
+        ->name('plans.messages.destroy');
 });

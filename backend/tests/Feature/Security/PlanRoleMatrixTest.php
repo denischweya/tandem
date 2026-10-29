@@ -327,6 +327,19 @@ function planRoleMatrix(): array
                 'expect' => ['owner' => 'allowed', 'admin' => 'allowed', 'member' => 'allowed'],
             ]],
         ],
+
+        // Author-only, not role-based: NotMessageAuthor's check is
+        // $message->userId !== $actor->getAuthIdentifier(), which no MemberRole enters - an
+        // owner editing or deleting another member's message is refused exactly as that other
+        // member's fellow member would be, and the Plan's own owner gets no special standing
+        // over a message they did not write. §3.6's role matrix has nothing to say about a
+        // check that is the same verdict for every role, the same reasoning 'get /plans',
+        // 'post /plans' and 'post /plans/{plan}/join' above give for their own empty lists -
+        // this is a fourth case of "no role to be below", not a gap in this file's coverage.
+        // The actor-vs-author distinction these two routes DO need is covered by
+        // tests/Feature/Chat/EditMessageTest.php and tests/Feature/Chat/DeleteMessageTest.php.
+        'patch /plans/{plan}/messages/{message}' => ['expectedCases' => 0, 'cases' => []],
+        'delete /plans/{plan}/messages/{message}' => ['expectedCases' => 0, 'cases' => []],
     ];
 }
 
@@ -382,7 +395,7 @@ it('covers every Plan route in the role matrix', function (): void {
 
     expect($unrowed)->toBeEmpty('Plan routes with no planRoleMatrix() entry: '.implode(', ', $unrowed));
     expect($stale)->toBeEmpty('planRoleMatrix() entries naming no Plan route: '.implode(', ', $stale));
-    expect($keys)->toHaveCount(16);
+    expect($keys)->toHaveCount(18);
 
     $cases = 0;
 

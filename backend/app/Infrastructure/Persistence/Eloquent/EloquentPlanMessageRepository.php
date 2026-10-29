@@ -12,6 +12,8 @@ use App\Domain\Shared\PageCursor;
 use App\Models\PlanMessage;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use RuntimeException;
 
 /**
  * create() writes through the PlanMessage model, field by field - PlanMessage is
@@ -98,6 +100,85 @@ final readonly class EloquentPlanMessageRepository implements PlanMessageReposit
         $nextCursor = $last === null ? null : PageCursor::fromKeys(Carbon::parse($last->created_at)->toImmutable(), $last->id)->toString();
 
         return new CursorPage($items, $nextCursor);
+    }
+
+    /**
+     * Str::isUuid() first, for the same reason EloquentPlanRepository's and
+     * EloquentInviteRepository's own finders give: `where id = 'not-a-uuid'` against a uuid
+     * column is Postgres 22P02, surfacing as a 500 rather than the 404 PlanMessageNotFound
+     * already owns. PlanMessage::find() is fine for the rest - one row by primary key for an
+     * authorship check is not the keyset-list query EloquentPlanActivityRepository's own
+     * comment protects.
+     *
+     * Null for a soft-deleted row too: a caller editing or deleting an already-gone message
+     * should see the same PlanMessageNotFound a never-existed id gives, not resurrect it by
+     * editing a row listForPlan() has already dropped out of every list.
+     */
+    public function find(string $messageId): ?PlanMessageSummary
+    {
+        if (! Str::isUuid($messageId)) {
+            return null;
+        }
+
+        $message = PlanMessage::find($messageId);
+
+        if ($message === null || $message->deleted_at !== null) {
+            return null;
+        }
+
+        return self::toSummary($message);
+    }
+
+    /**
+     * PlanMessage::find(), not findOrFail(): tests/Feature/Security/RefusalSeamTest.php's
+     * "leaves every refusal status to bootstrap/app.php" forbids findOrFail() outright -
+     * ModelNotFoundException maps to a pretty-printed 404 that leaks the model class and the
+     * id, a second body for a refusal PlanMessageNotFound already owns. A null here means the
+     * row vanished between EditMessage's own find() and this call - a concurrent delete -
+     * which is a genuine, unexpected failure, not a 404 silently handed back for a message
+     * that existed moments ago.
+     */
+    public function update(string $messageId, string $body): PlanMessageSummary
+    {
+        $message = PlanMessage::find($messageId);
+
+        if ($message === null) {
+            throw new RuntimeException("plan_messages row {$messageId} vanished between EditMessage's find() and update().");
+        }
+
+        $message->body = $body;
+        $message->edited_at = Carbon::now();
+        $message->save();
+
+        return self::toSummary($message);
+    }
+
+    /** See update()'s own comment for why this is find(), not softDelete()'s former findOrFail(). */
+    public function softDelete(string $messageId): void
+    {
+        $message = PlanMessage::find($messageId);
+
+        if ($message === null) {
+            throw new RuntimeException("plan_messages row {$messageId} vanished between DeleteMessage's find() and softDelete().");
+        }
+
+        $message->deleted_at = Carbon::now();
+        $message->save();
+    }
+
+    /** The one place a PlanMessage model becomes a PlanMessageSummary - find() and update() both route through it. */
+    private static function toSummary(PlanMessage $message): PlanMessageSummary
+    {
+        return new PlanMessageSummary(
+            id: $message->id,
+            planId: $message->plan_id,
+            userId: $message->user_id,
+            body: $message->body,
+            editedAt: $message->edited_at?->toImmutable(),
+            createdAt: $message->created_at->toImmutable(),
+            updatedAt: $message->updated_at->toImmutable(),
+            reactions: [],
+        );
     }
 
     /** §6.2 caps a page at 100 - matching every sibling repository's own pageSize(). */
