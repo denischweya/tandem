@@ -10,13 +10,16 @@ use App\Http\Requests\Api\V1\Auth\RefreshTokenRequest;
 use App\Http\Requests\Api\V1\Auth\RegisterRequest;
 use App\Http\Requests\Api\V1\Auth\ResetPasswordRequest;
 use App\Http\Requests\Api\V1\Auth\VerifyEmailRequest;
+use App\Http\Requests\Api\V1\Plans\AddReactionRequest;
 use App\Http\Requests\Api\V1\Plans\ChangeMemberRoleRequest;
 use App\Http\Requests\Api\V1\Plans\CreatePlanRequest;
+use App\Http\Requests\Api\V1\Plans\EditMessageRequest;
 use App\Http\Requests\Api\V1\Plans\InvitePlanMemberRequest;
 use App\Http\Requests\Api\V1\Plans\JoinPlanRequest;
 use App\Http\Requests\Api\V1\Plans\ListPlanActivityRequest;
 use App\Http\Requests\Api\V1\Plans\ListPlanMembersRequest;
 use App\Http\Requests\Api\V1\Plans\ListPlansRequest;
+use App\Http\Requests\Api\V1\Plans\SendMessageRequest;
 use App\Http\Requests\Api\V1\Plans\UpdatePlanRequest;
 use App\Http\Requests\Api\V1\UpdateProfileRequest;
 use Dedoc\Scramble\Attributes\Response as ScrambleResponseAttribute;
@@ -338,6 +341,32 @@ it('declares every error status the application itself raises', function (): voi
         ['delete', '/plans/{plan}/invites/{invite}', '409'],
         // ActivityFeedTest: "answers 404 with the one Plan body for a signed-in non-member"
         ['get', '/plans/{plan}/activity', '404'],
+        // SendMessageTest: "refuses an unverified user with 403"
+        ['post', '/plans/{plan}/messages', '403'],
+        // SendMessageTest: "answers 404 to a non-member"
+        ['post', '/plans/{plan}/messages', '404'],
+        // SendMessageTest: "rate limits messages to one a second per user"
+        ['post', '/plans/{plan}/messages', '429'],
+        // ListPlanMessagesTest: "answers 404 with the one Plan body for a signed-in non-member"
+        ['get', '/plans/{plan}/messages', '404'],
+        // EditMessageTest: "lets the author edit and refuses a non-author with 403"
+        ['patch', '/plans/{plan}/messages/{message}', '403'],
+        // EditMessageTest: "answers 404 to a non-member"
+        ['patch', '/plans/{plan}/messages/{message}', '404'],
+        // DeleteMessageTest: "lets the author delete and refuses a non-author with 403"
+        ['delete', '/plans/{plan}/messages/{message}', '403'],
+        // DeleteMessageTest: "answers 404 to a non-member"
+        ['delete', '/plans/{plan}/messages/{message}', '404'],
+        // AddReactionTest: "refuses an unverified user with 403"
+        ['post', '/plans/{plan}/messages/{message}/reactions', '403'],
+        // AddReactionTest: "answers 404 to a non-member"
+        ['post', '/plans/{plan}/messages/{message}/reactions', '404'],
+        // AddReactionTest: "rate limits reactions to sixty per minute"
+        ['post', '/plans/{plan}/messages/{message}/reactions', '429'],
+        // RemoveReactionTest: "refuses an unverified user with 403"
+        ['delete', '/plans/{plan}/messages/{message}/reactions/{reaction}', '403'],
+        // RemoveReactionTest: "answers 404 to a non-member"
+        ['delete', '/plans/{plan}/messages/{message}/reactions/{reaction}', '404'],
     ];
 
     foreach ($expected as [$method, $path, $status]) {
@@ -583,12 +612,12 @@ it('wraps every success response in the data envelope', function (): void {
     // GET /plans/{plan}/activity are enveloped; DELETE /me, reset-password and
     // DELETE /plans/{plan}/members/{user} are bodyless.
     //
-    // 18 and 7, measured off the regenerated document (the command is in this task's report),
+    // 21 and 10, measured off the regenerated document (the command is in this task's report),
     // not summed from any task's own arithmetic: every list-route controller adds one enveloped
     // 2xx (its collection, `data`-wrapped) and every write-route controller adds either one
     // enveloped 2xx (a Resource) or one bodyless 204, and nothing here needs that restated by
     // hand once the pair above is read directly off the thing it counts.
-    expect([$enveloped, $bodyless])->toBe([18, 7]);
+    expect([$enveloped, $bodyless])->toBe([21, 10]);
 });
 
 it('publishes both session expiries as date-time, not as a bare string', function (): void {
@@ -681,6 +710,11 @@ it('publishes required-versus-optional exactly as the rules state it', function 
         // publishes a request BODY schema exactly as ChangeMemberRoleRequest and
         // InvitePlanMemberRequest do, unlike ListPlanMembersRequest and ListPlansRequest.
         'JoinPlanRequest' => JoinPlanRequest::class,
+        // The plan chat endpoints from Task 5. SendMessageRequest, EditMessageRequest, and
+        // AddReactionRequest all publish request body schemas.
+        'SendMessageRequest' => SendMessageRequest::class,
+        'EditMessageRequest' => EditMessageRequest::class,
+        'AddReactionRequest' => AddReactionRequest::class,
     ];
 
     expect(array_keys($classes))->toEqualCanonicalizing(
@@ -863,15 +897,16 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     // sums count($route->parameterNames()) over documentedRoutes(), which is the route table
     // itself, not a copy of it.
     //
-    // The QUERY half stays a literal, because deriving it would mean instantiating the same four
+    // The QUERY half stays a literal, because deriving it would mean instantiating the same five
     // FormRequest classes a second time - VerifyEmailRequest for the case at the top of this
-    // file, and the three list requests for "publishes every list filter as a query parameter",
-    // which already does exactly that. Eleven, from those four classes and no others:
+    // file, and the four list requests for "publishes every list filter as a query parameter",
+    // which already does exactly that. Thirteen, from those five classes and no others:
     // VerifyEmailRequest's id/hash/expires/signature (4), ListPlansRequest's
-    // status/limit/cursor (3), ListPlanMembersRequest's limit/cursor (2) and
-    // ListPlanActivityRequest's limit/cursor (2) - each of those four counts is independently
-    // asserted by name, by the two cases named above, so this literal is not the only thing
-    // that would catch one of them drifting. No other route has a query FormRequest.
+    // status/limit/cursor (3), ListPlanMembersRequest's limit/cursor (2),
+    // ListPlanActivityRequest's limit/cursor (2), and ListPlanMessagesRequest's limit/cursor (2) -
+    // each of those five counts is independently asserted by name, by the two cases named above,
+    // so this literal is not the only thing that would catch one of them drifting. No other route
+    // has a query FormRequest.
     $expectedPathParameterCount = 0;
 
     foreach (documentedRoutes() as [$method, $path, $route]) {
@@ -887,11 +922,11 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
     );
 
     expect($queryParameterCount)->toBe(
-        11,
-        'The parameter walk above visited a different number of QUERY parameters than the four '
+        13,
+        'The parameter walk above visited a different number of QUERY parameters than the five '
         .'FormRequests with query keys publish - VerifyEmailRequest (4), ListPlansRequest (3), '
-        .'ListPlanMembersRequest (2) and ListPlanActivityRequest (2). A new filter on one of '
-        .'those four moves this number and is meant to.',
+        .'ListPlanMembersRequest (2), ListPlanActivityRequest (2) and ListPlanMessagesRequest (2). '
+        .'A new filter on one of those five moves this number and is meant to.',
     );
 
     expect($prose)->toEqualCanonicalizing([
@@ -1135,6 +1170,28 @@ it('publishes the IANA note on registration timezone, and no other prose anywher
         'components.responses.AuthenticationException.content.application/json.schema.properties.message.description',
         'paths./plans/{plan}/activity.get.responses.200.description',
         'paths./plans/{plan}/activity.get.responses.404.description',
+        // Task 5: plan chat endpoints (SendMessage, EditMessage, DeleteMessage, AddReaction,
+        // RemoveReaction) - each adds descriptions for all published responses, matching the
+        // pattern of every other Plan route this wave.
+        'paths./plans/{plan}/messages.get.responses.200.description',
+        'paths./plans/{plan}/messages.get.responses.404.description',
+        'paths./plans/{plan}/messages.post.responses.201.description',
+        'paths./plans/{plan}/messages.post.responses.403.description',
+        'paths./plans/{plan}/messages.post.responses.404.description',
+        'paths./plans/{plan}/messages.post.responses.429.description',
+        'paths./plans/{plan}/messages/{message}.patch.responses.200.description',
+        'paths./plans/{plan}/messages/{message}.patch.responses.403.description',
+        'paths./plans/{plan}/messages/{message}.patch.responses.404.description',
+        'paths./plans/{plan}/messages/{message}.delete.responses.204.description',
+        'paths./plans/{plan}/messages/{message}.delete.responses.403.description',
+        'paths./plans/{plan}/messages/{message}.delete.responses.404.description',
+        'paths./plans/{plan}/messages/{message}/reactions.post.responses.204.description',
+        'paths./plans/{plan}/messages/{message}/reactions.post.responses.403.description',
+        'paths./plans/{plan}/messages/{message}/reactions.post.responses.404.description',
+        'paths./plans/{plan}/messages/{message}/reactions.post.responses.429.description',
+        'paths./plans/{plan}/messages/{message}/reactions/{reaction}.delete.responses.204.description',
+        'paths./plans/{plan}/messages/{message}/reactions/{reaction}.delete.responses.403.description',
+        'paths./plans/{plan}/messages/{message}/reactions/{reaction}.delete.responses.404.description',
     ], 'The document now publishes a different set of description/summary paths than were last '
         .'enumerated here, in a position neither $prose nor either parameter count names above. The '
         .'diff names the exact path that was added, removed or changed - add it to $prose\'s '

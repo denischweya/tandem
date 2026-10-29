@@ -13,7 +13,7 @@ final class AddReactionRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'reaction' => ['required', Rule::in(['👍', '❤️', '😂', '🎉', '❓'])],
+            'reaction' => ['required', 'string', Rule::in(['👍', '❤️', '😂', '🎉', '❓'])],
         ];
     }
 }
