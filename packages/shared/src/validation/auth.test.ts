@@ -521,6 +521,9 @@ describe("the contract's own constraints", () => {
     ['PlanInviteCreatedResource', 'accepted_at', { format: 'date-time' }],
     ['PlanInviteCreatedResource', 'revoked_at', { format: 'date-time' }],
     ['PlanActivityResource', 'created_at', { format: 'date-time' }],
+    // --- Wave 3. Chat request-side lengths, the same end of the chain openapi-typescript erases.
+    ['SendMessageRequest', 'body', { maxLength: 4000 }],
+    ['EditMessageRequest', 'body', { maxLength: 4000 }],
   ];
 
   const loadConstraints = async (): Promise<z.infer<typeof ConstraintDocument>> => {
@@ -532,14 +535,14 @@ describe("the contract's own constraints", () => {
 
   it('still states every length, format and enum the schemas encode', async () => {
     // The same argument the schemaCount floor in 'the assertion harness itself' makes, applied
-    // to this table's own length, because the table had no such floor and the two waves grew it
-    // from 16 rows to 35. Without this, a row DELETED here takes its constraint out of the
-    // anti-drift chain and leaves the loop below iterating a shorter list, all green - which is
-    // the one failure this table cannot otherwise see, since every assertion it makes is about
-    // rows that are present. A floor rather than an exact count, so adding a thirty-sixth row
-    // with its constraint must not fail; it has to MOVE with each wave for the same reason the
-    // schema floor does.
-    expect(ENCODED.length).toBeGreaterThanOrEqual(35);
+    // to this table's own length, because the table had no such floor and the first three waves
+    // grew it from 16 rows to 35 to 37. Without this, a row DELETED here takes its constraint out
+    // of the anti-drift chain and leaves the loop below iterating a shorter list, all green -
+    // which is the one failure this table cannot otherwise see, since every assertion it makes is
+    // about rows that are present. A floor rather than an exact count, so adding a thirty-eighth
+    // row with its constraint must not fail; it has to MOVE with each wave for the same reason
+    // the schema floor does.
+    expect(ENCODED.length).toBeGreaterThanOrEqual(37);
 
     const document = await loadConstraints();
 
