@@ -20,6 +20,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plans/{plan}/messages/{message}/reactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["plans.messages.reactions.store"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plans/{plan}/archive": {
         parameters: {
             query?: never;
@@ -50,6 +66,22 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/plans/{plan}/messages/{message}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["plans.messages.destroy"];
+        options?: never;
+        head?: never;
+        patch: operations["plans.messages.update"];
         trace?: never;
     };
     "/plans/{plan}": {
@@ -94,6 +126,22 @@ export interface paths {
         get: operations["plans.invites.index"];
         put?: never;
         post: operations["plans.invites.store"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plans/{plan}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["plans.messages.index"];
+        put?: never;
+        post: operations["plans.messages.store"];
         delete?: never;
         options?: never;
         head?: never;
@@ -244,6 +292,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plans/{plan}/messages/{message}/reactions/{reaction}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["plans.messages.reactions.destroy"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/reset-password": {
         parameters: {
             query?: never;
@@ -300,6 +364,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AddReactionRequest */
+        AddReactionRequest: {
+            /** @enum {string} */
+            reaction: "👍" | "❤️" | "😂" | "🎉" | "❓";
+        };
         /** ChangeMemberRoleRequest */
         ChangeMemberRoleRequest: {
             /** @enum {string} */
@@ -311,6 +380,10 @@ export interface components {
             description?: string;
             /** @description An IANA time zone identifier, such as "Europe/London" or "America/New_York". */
             timezone: string;
+        };
+        /** EditMessageRequest */
+        EditMessageRequest: {
+            body: string;
         };
         /** ForgotPasswordRequest */
         ForgotPasswordRequest: {
@@ -394,6 +467,26 @@ export interface components {
             /** Format: date-time */
             joined_at: string;
         };
+        /** PlanMessageReactionResource */
+        PlanMessageReactionResource: {
+            reaction: string;
+            count: number;
+            reacted_by_viewer: boolean;
+        };
+        /** PlanMessageResource */
+        PlanMessageResource: {
+            id: string;
+            plan_id: string;
+            user_id: string;
+            body: string;
+            /** Format: date-time */
+            edited_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            reactions: components["schemas"]["PlanMessageReactionResource"][];
+        };
         /** PlanResource */
         PlanResource: {
             id: string;
@@ -432,6 +525,10 @@ export interface components {
             /** Format: email */
             email: string;
             password: string;
+        };
+        /** SendMessageRequest */
+        SendMessageRequest: {
+            body: string;
         };
         /** SessionResource */
         SessionResource: {
@@ -566,6 +663,66 @@ export interface operations {
             422: components["responses"]["ValidationException"];
         };
     };
+    "plans.messages.reactions.store": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+                message: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddReactionRequest"];
+            };
+        };
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description Your email address is not verified. Reacting to a message is one of the actions that needs a verified address, because every other member of the Plan will see it. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description Either no Plan with this id is visible to the signed-in user, or no message with this id belongs to that Plan. The two carry different messages; a message that belongs to a different Plan is indistinguishable from one that does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            422: components["responses"]["ValidationException"];
+            /** @description Too many reactions from this account: 60 per minute. Carries Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
     "plans.archive": {
         parameters: {
             query?: never;
@@ -692,6 +849,103 @@ export interface operations {
                     };
                 };
             };
+        };
+    };
+    "plans.messages.destroy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+                message: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description The signed-in user is a member of this Plan but is not this message's author. Only the author may delete a message. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description Either no Plan with this id is visible to the signed-in user, or no message with this id belongs to that Plan. The two carry different messages; a message that belongs to a different Plan is indistinguishable from one that does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    "plans.messages.update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+                message: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description `PlanMessageResource` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PlanMessageResource"];
+                    };
+                };
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description The signed-in user is a member of this Plan but is not this message's author. Only the author may edit a message. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description Either no Plan with this id is visible to the signed-in user, or no message with this id belongs to that Plan. The two carry different messages; a message that belongs to a different Plan is indistinguishable from one that does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            422: components["responses"]["ValidationException"];
         };
     };
     "plans.show": {
@@ -978,6 +1232,112 @@ export interface operations {
             };
             422: components["responses"]["ValidationException"];
             /** @description Too many invites: 50 per day per user, and 20 per hour per Plan. Carries Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    "plans.messages.index": {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                plan: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of `PlanMessageResource` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PlanMessageResource"][];
+                        meta: {
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description No Plan with this id is visible to the signed-in user. A Plan that does not exist and a Plan the user is not an active member of answer identically. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            422: components["responses"]["ValidationException"];
+        };
+    };
+    "plans.messages.store": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description `PlanMessageResource` */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PlanMessageResource"];
+                    };
+                };
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description Your email address is not verified. Sending a message is one of the actions that needs a verified address, because every other member of the Plan will see it. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description No Plan with this id is visible to the signed-in user. A Plan that does not exist and a Plan the user is not an active member of answer identically. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            422: components["responses"]["ValidationException"];
+            /** @description Too many messages sent from this account: 30 per minute. Carries Retry-After. */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -1449,6 +1809,51 @@ export interface operations {
             422: components["responses"]["ValidationException"];
             /** @description Too many registrations from this IP address: 5 per hour. Carries Retry-After. */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+        };
+    };
+    "plans.messages.reactions.destroy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan: string;
+                message: string;
+                reaction: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["AuthenticationException"];
+            /** @description Your email address is not verified. Removing your reaction from a message is one of the actions that needs a verified address, because every other member of the Plan will see it. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                    };
+                };
+            };
+            /** @description Either no Plan with this id is visible to the signed-in user, or no message with this id belongs to that Plan. The two carry different messages; a message that belongs to a different Plan is indistinguishable from one that does not exist. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
