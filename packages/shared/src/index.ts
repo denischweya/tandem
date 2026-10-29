@@ -38,3 +38,11 @@ export {
   ValidationErrorSchema,
   ErrorEnvelopeSchema,
 } from './validation/plans';
+export {
+  PlanMessageResourceSchema,
+  PlanMessageReactionSummarySchema,
+  PlanMessagePageSchema,
+  SendMessageRequestSchema,
+  EditMessageRequestSchema,
+  AddReactionRequestSchema,
+} from './validation/chat';
