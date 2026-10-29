@@ -36,13 +36,14 @@ uses(RefreshDatabase::class);
  * added to either test needs the call added with it.
  */
 it('accounts for every api/v1 route as Wave 1a, a Plan route, or a named exemption', function (): void {
-    // Spec §8's fourteen Plan routes, plus the chat feature's four message routes (read, send,
-    // edit, delete). Sorted ascending, which is the order planRouteKeys() returns.
+    // Spec §8's fourteen Plan routes, plus the chat feature's six message routes (read, send,
+    // edit, delete, react, unreact). Sorted ascending, which is the order planRouteKeys() returns.
     $expected = [
         'delete /plans/{plan}',
         'delete /plans/{plan}/invites/{invite}',
         'delete /plans/{plan}/members/{user}',
         'delete /plans/{plan}/messages/{message}',
+        'delete /plans/{plan}/messages/{message}/reactions/{reaction}',
         'get /plans',
         'get /plans/{plan}',
         'get /plans/{plan}/activity',
@@ -57,6 +58,7 @@ it('accounts for every api/v1 route as Wave 1a, a Plan route, or a named exempti
         'post /plans/{plan}/invites',
         'post /plans/{plan}/join',
         'post /plans/{plan}/messages',
+        'post /plans/{plan}/messages/{message}/reactions',
     ];
 
     // Both directions at once: a Plan route missing from the matrix fails, and a matrix entry
@@ -64,7 +66,7 @@ it('accounts for every api/v1 route as Wave 1a, a Plan route, or a named exempti
     // emptying of both sides cannot satisfy - the same shape as the envelope/bodyless pair
     // counter in tests/Feature/Contract/OpenApiContractTest.php.
     expect(planRouteKeys())->toBe($expected);
-    expect(planRouteKeys())->toHaveCount(18);
+    expect(planRouteKeys())->toHaveCount(20);
 
     // A payload row per route, checked here rather than discovered as a RuntimeException in
     // the middle of a loop three tests later.
@@ -130,7 +132,7 @@ it('declares no route pattern on any Plan route', function (): void {
         $checked++;
     }
 
-    expect($checked)->toBe(18);
+    expect($checked)->toBe(20);
 });
 
 it('answers 404 with the one Plan-not-found body on every Plan route a non-member can reach', function (): void {
@@ -152,12 +154,16 @@ it('answers 404 with the one Plan-not-found body on every Plan route a non-membe
         $key = $method.' '.$path;
 
         // Every second parameter names a real row OF THIS PLAN, so non-membership is the only
-        // thing that can be causing the refusal.
+        // thing that can be causing the refusal. 'reaction' is a literal, valid emoji rather
+        // than a row of anything - removeReaction() has no not-found story for it (see
+        // PlanMessageRepository::removeReaction()'s own docblock), so it carries no ordering
+        // story of its own and planRouteUri() ignores it on every route that does not name it.
         $uri = planRouteUri($path, [
             'plan' => $plan->id,
             'user' => $activeMember->id,
             'invite' => $invite->id,
             'message' => $message->id,
+            'reaction' => reactionPathSegment(),
         ]);
 
         $response = withToken($outsiderAccess)->json(strtoupper($method), $uri, planRoutePayload($key));
@@ -168,9 +174,9 @@ it('answers 404 with the one Plan-not-found body on every Plan route a non-membe
         $checked++;
     }
 
-    // Eighteen Plan routes, minus `get /plans` and `post /plans` (no {plan} to be a non-member
-    // of) and minus `post /plans/{plan}/join` (the exemption above) = fifteen.
-    expect($checked)->toBe(15);
+    // Twenty Plan routes, minus `get /plans` and `post /plans` (no {plan} to be a non-member
+    // of) and minus `post /plans/{plan}/join` (the exemption above) = seventeen.
+    expect($checked)->toBe(17);
 });
 
 it('answers 200, 201 or 204 on the same routes for the Plan owner', function (): void {
@@ -201,6 +207,7 @@ it('answers 200, 201 or 204 on the same routes for the Plan owner', function ():
             'user' => $activeMember->id,
             'invite' => $invite->id,
             'message' => $message->id,
+            'reaction' => reactionPathSegment(),
         ]);
 
         $response = withToken($ownerAccess)->json(strtoupper($method), $uri, planRoutePayload($key));
@@ -211,12 +218,15 @@ it('answers 200, 201 or 204 on the same routes for the Plan owner', function ():
         // a status drawn from a small fixed set (see the envelope-schema check in
         // tests/Feature/Contract/OpenApiContractTest.php). The owner is also the message's
         // author (refusalFixture()'s own guarantee), which is what lets PATCH/DELETE
-        // .../messages/{message} succeed here alongside every role-based route.
+        // .../messages/{message} succeed here alongside every role-based route. Reacting and
+        // unreacting need no such guarantee - both are open to any active member (see
+        // AddReaction's own docblock) and removeReaction() is a no-op success even when
+        // nothing matches, so the owner succeeds on both regardless of who reacted.
         expect(in_array($response->getStatusCode(), [200, 201, 204], true))
             ->toBeTrue("{$key} must answer 200, 201 or 204 for the Plan's owner, not {$response->getStatusCode()} - the suite above proves nothing unless this one passes");
 
         $checked++;
     }
 
-    expect($checked)->toBe(15);
+    expect($checked)->toBe(17);
 });

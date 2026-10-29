@@ -5,8 +5,10 @@ declare(strict_types=1);
 use App\Domain\Plans\MemberRole;
 use App\Models\Plan;
 use App\Models\PlanInvite;
+use App\Models\PlanMessage;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 
 use function Pest\Laravel\withToken;
 
@@ -340,12 +342,38 @@ function planRoleMatrix(): array
         // tests/Feature/Chat/EditMessageTest.php and tests/Feature/Chat/DeleteMessageTest.php.
         'patch /plans/{plan}/messages/{message}' => ['expectedCases' => 0, 'cases' => []],
         'delete /plans/{plan}/messages/{message}' => ['expectedCases' => 0, 'cases' => []],
+
+        // The chat feature's two reaction routes. Per the design (unlike the author-only
+        // edit/delete pair just above), reacting carries no authorship check at all - any
+        // active member may add or remove their OWN reaction to or from any message in the
+        // Plan, regardless of who sent it and regardless of the reactor's role. AddReaction's
+        // and RemoveReaction's own docblocks give the same reasoning
+        // 'post /plans/{plan}/messages' above gives for sending: findVisibleTo()'s own
+        // membership resolution IS the authorization.
+        'post /plans/{plan}/messages/{message}/reactions' => [
+            'expectedCases' => 1,
+            'cases' => [[
+                'case' => 'react to a message',
+                'target' => 'none',
+                'payload' => ['reaction' => '👍'],
+                'expect' => ['owner' => 'allowed', 'admin' => 'allowed', 'member' => 'allowed'],
+            ]],
+        ],
+        'delete /plans/{plan}/messages/{message}/reactions/{reaction}' => [
+            'expectedCases' => 1,
+            'cases' => [[
+                'case' => 'remove a reaction',
+                'target' => 'none',
+                'payload' => [],
+                'expect' => ['owner' => 'allowed', 'admin' => 'allowed', 'member' => 'allowed'],
+            ]],
+        ],
     ];
 }
 
 /**
  * One active Plan with the owner and four other fixture users seeded as members, plus one
- * outstanding invite.
+ * outstanding invite and one chat message authored by the owner.
  *
  * A fresh Plan per (case, role) pair, because an `allowed` verdict mutates state: DELETE
  * /plans/{plan} answers 204 and takes the Plan with it, POST /plans/{plan}/archive leaves a
@@ -358,7 +386,12 @@ function planRoleMatrix(): array
  * outcome depends on insertion order. ownedPlan() has already written the owner's own active
  * row at 2026-01-01T00:00:00+00:00.
  *
- * @return array{Plan, PlanInvite}
+ * $message exists for the chat feature's two reaction routes, which this matrix opens to every
+ * role (see planRoleMatrix()'s own comment beside them) and which therefore need a real
+ * {message} to substitute - who authored it does not matter, because reacting carries no
+ * authorship check (AddReaction's and RemoveReaction's own docblocks).
+ *
+ * @return array{Plan, PlanInvite, PlanMessage}
  */
 function roleMatrixPlan(User $owner, User $admin, User $planMember, User $targetAdmin, User $targetMember): array
 {
@@ -369,12 +402,22 @@ function roleMatrixPlan(User $owner, User $admin, User $planMember, User $target
     member($plan, $targetAdmin, MemberRole::Admin, '2026-01-04T00:00:00+00:00');
     member($plan, $targetMember, MemberRole::Member, '2026-01-05T00:00:00+00:00');
 
+    // Field-by-field through `new PlanMessage`, not a factory: PlanMessage is $guarded = ['*']
+    // and this feature carries no PlanMessageFactory, the same reasoning refusalFixture()'s
+    // own comment in tests/Pest.php gives.
+    $message = new PlanMessage;
+    $message->id = (string) Str::uuid7();
+    $message->plan_id = $plan->id;
+    $message->user_id = $owner->id;
+    $message->body = 'A message the role matrix probes.';
+    $message->save();
+
     $invite = PlanInvite::factory()->create([
         'plan_id' => $plan->id,
         'invited_by' => $owner->id,
     ]);
 
-    return [$plan, $invite];
+    return [$plan, $invite, $message];
 }
 
 it('covers every Plan route in the role matrix', function (): void {
@@ -395,7 +438,7 @@ it('covers every Plan route in the role matrix', function (): void {
 
     expect($unrowed)->toBeEmpty('Plan routes with no planRoleMatrix() entry: '.implode(', ', $unrowed));
     expect($stale)->toBeEmpty('planRoleMatrix() entries naming no Plan route: '.implode(', ', $stale));
-    expect($keys)->toHaveCount(18);
+    expect($keys)->toHaveCount(20);
 
     $cases = 0;
 
@@ -576,14 +619,15 @@ it('covers every Plan route in the role matrix', function (): void {
         expect($missingSelf)->toBeEmpty("{$key} dispatches on whether {user} is the actor, so it needs a target=self case with a verdict for every role; these roles have none: ".implode(', ', $missingSelf));
     }
 
-    // Thirteen routes carry cases, and the arithmetic is 1+1+1+1+1+3+4+2+1+1+1+1+1: one each
-    // for GET/PATCH/DELETE /plans/{plan}, POST /archive, GET /members, GET /invites, DELETE
-    // /invites/{invite}, GET /activity, GET /messages and POST /messages, three for PATCH
-    // /members/{user}, four for DELETE /members/{user} and two for POST /invites. The three
-    // routes with no role check carry none. The grand total is the floor under every route at
-    // once: a matrix whose lists were all emptied fails here even where no pair obligation
-    // applies.
-    expect($cases)->toBe(19);
+    // Fifteen routes carry cases, and the arithmetic is
+    // 1+1+1+1+1+3+4+2+1+1+1+1+1+1+1: one each for GET/PATCH/DELETE /plans/{plan}, POST
+    // /archive, GET /members, GET /invites, DELETE /invites/{invite}, GET /activity, GET
+    // /messages, POST /messages and the chat feature's own two reaction routes, three for
+    // PATCH /members/{user}, four for DELETE /members/{user} and two for POST /invites. The
+    // three routes with no role check carry none, and so do the author-only edit/delete
+    // message routes. The grand total is the floor under every route at once: a matrix whose
+    // lists were all emptied fails here even where no pair obligation applies.
+    expect($cases)->toBe(21);
 });
 
 it('answers 403 for every role the matrix forbids and 200, 201 or 204 for every role it allows', function (): void {
@@ -620,7 +664,7 @@ it('answers 403 for every role the matrix forbids and 200, 201 or 204 for every 
 
         foreach ($entry['cases'] as $case) {
             foreach (['owner', 'admin', 'member'] as $role) {
-                [$plan, $invite] = roleMatrixPlan($owner, $admin, $planMember, $targetAdmin, $targetMember);
+                [$plan, $invite, $message] = roleMatrixPlan($owner, $admin, $planMember, $targetAdmin, $targetMember);
 
                 $target = match ($case['target']) {
                     'self' => $actors[$role],
@@ -633,10 +677,17 @@ it('answers 403 for every role the matrix forbids and 200, 201 or 204 for every 
                     default => throw new RuntimeException("Unknown target [{$case['target']}] for [{$key}]."),
                 };
 
+                // 'message' and 'reaction' are likewise ignored by every route that does not
+                // name them - only the chat feature's two reaction routes do. reactionPathSegment()
+                // is the percent-encoded form a real HTTP client would send (see its own
+                // docblock in tests/Pest.php); the raw emoji corrupts this test's own
+                // Request::create() call on this project's pinned PHP build.
                 $uri = planRouteUri($path, [
                     'plan' => $plan->id,
                     'user' => $target->id,
                     'invite' => $invite->id,
+                    'message' => $message->id,
+                    'reaction' => reactionPathSegment(),
                 ]);
 
                 $label = "{$key} [{$case['case']}] as {$role}";
@@ -665,7 +716,7 @@ it('answers 403 for every role the matrix forbids and 200, 201 or 204 for every 
         }
     }
 
-    // 19 cases x 3 roles. A filter that matched no routes, or a matrix whose lists were all
+    // 21 cases x 3 roles. A filter that matched no routes, or a matrix whose lists were all
     // emptied, fails here rather than passing green with nothing asserted.
-    expect($checked)->toBe(57);
+    expect($checked)->toBe(63);
 });

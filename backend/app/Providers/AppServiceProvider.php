@@ -207,6 +207,14 @@ class AppServiceProvider extends ServiceProvider
         // RateLimiter::for() registers this limiter globally.
         RateLimiter::for('chat-send', fn (Request $request) => Limit::perMinute(30)->by($request->user()?->getAuthIdentifier() ?? 'unknown'));
 
+        // Task 4 (chat): 60 per minute per user, same reasoning and the same
+        // ?->getAuthIdentifier() measurement as 'chat-send' just above - reacting is a write
+        // too, counted by request rather than outcome, and the nullsafe is a method call
+        // rather than a property fetch for the identical PHPStan level-8 reason. Only
+        // POST .../reactions is throttled; DELETE .../reactions/{reaction} is not (removing
+        // one's own reaction is idempotent and carries nothing to brute-force).
+        RateLimiter::for('chat-react', fn (Request $request) => Limit::perMinute(60)->by($request->user()?->getAuthIdentifier() ?? 'unknown'));
+
         RateLimiter::for('plan-invites', function (Request $request): array {
             $plan = $request->route('plan');
 

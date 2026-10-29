@@ -68,9 +68,23 @@ uses(RefreshDatabase::class);
 /**
  * Every Plan route with a second path parameter, as [method, path, secondParameterName].
  *
- * The throw is the growth guard. A route with three parameters, or one whose first parameter
- * is not {plan}, is a shape this suite's fixture does not know how to build, and the honest
- * answer is to stop rather than to request it with an undecided expectation.
+ * The throw is the growth guard. A route whose first parameter is not {plan}, or whose extra
+ * parameters are not one of the two shapes named below, is a shape this suite's fixture does
+ * not know how to build, and the honest answer is to stop rather than to request it with an
+ * undecided expectation.
+ *
+ * DELETE .../messages/{message}/reactions/{reaction} is the first THREE-parameter route this
+ * suite has ever carried, and it is admitted as a NAMED exception rather than a general "two
+ * extra parameters are fine" widening: {reaction} is not a lookup at all.
+ * removeReaction()'s own interface docblock states that a non-matching reaction is a no-op
+ * success, not a 404 - there is no PlanReactionNotFound and no precise body for a bad or
+ * missing reaction to disclose, so {reaction} carries no ordering story of its own. The
+ * property this suite exists to prove - that findVisibleTo() runs before anything about the
+ * second parameter is disclosed - is already fully exercised by sweeping {message}, exactly as
+ * it is for the other two /messages/{message} routes; {reaction} is therefore held at a
+ * constant, valid value (reactionPathSegment()) by the main test below rather than swept as its
+ * own dimension. A fourth parameter, or a third one that is not literally named 'reaction', is
+ * still unknown ground and still throws.
  *
  * @return list<array{string, string, string}>
  */
@@ -87,10 +101,14 @@ function twoParameterRoutes(): array
 
         $parameters = $matches[1];
 
-        if (! isset($parameters[0], $parameters[1]) || count($parameters) !== 2 || $parameters[0] !== 'plan') {
+        $isReactionRoute = count($parameters) === 3 && $parameters[2] === 'reaction';
+
+        if (! isset($parameters[0], $parameters[1])
+            || $parameters[0] !== 'plan'
+            || ! (count($parameters) === 2 || $isReactionRoute)) {
             throw new RuntimeException(
-                "Expected [{$path}] to carry exactly two path parameters with {plan} first; found ["
-                .implode(', ', $parameters).'].'
+                "Expected [{$path}] to carry exactly two path parameters with {plan} first, or "
+                .'three with {reaction} third; found ['.implode(', ', $parameters).'].'
             );
         }
 
@@ -191,14 +209,18 @@ function orderingPlan(User $owner): array
 }
 
 it('covers every Plan route with a second path parameter', function (): void {
-    // Spec §8's two-parameter routes, plus the chat feature's own edit/delete-message routes,
-    // sorted ascending.
+    // Spec §8's two-parameter routes, plus the chat feature's own edit/delete-message routes
+    // and its two reaction routes - add-reaction is its own ordinary {message} row, and
+    // remove-reaction is the one THREE-parameter row (see twoParameterRoutes()'s own docblock
+    // for why {reaction} does not add an eighth, separately-swept dimension), sorted ascending.
     $expected = [
         'delete /plans/{plan}/invites/{invite}',
         'delete /plans/{plan}/members/{user}',
         'delete /plans/{plan}/messages/{message}',
+        'delete /plans/{plan}/messages/{message}/reactions/{reaction}',
         'patch /plans/{plan}/members/{user}',
         'patch /plans/{plan}/messages/{message}',
+        'post /plans/{plan}/messages/{message}/reactions',
     ];
 
     $keys = array_map(fn (array $row): string => $row[0].' '.$row[1], twoParameterRoutes());
@@ -208,7 +230,7 @@ it('covers every Plan route with a second path parameter', function (): void {
     // a literal in this file and $keys is derived from the route table, so adding a route with
     // a second parameter fails here until an ordering row is decided for it.
     expect($keys)->toBe($expected);
-    expect($keys)->toHaveCount(5);
+    expect($keys)->toHaveCount(7);
 
     // The variant lists are pinned by value, not merely probed for the positive control. A set
     // with no pin on its membership can be edited - e.g. a duplicate 'a non-uuid' standing in
@@ -252,7 +274,7 @@ it('covers every Plan route with a second path parameter', function (): void {
         $checked++;
     }
 
-    expect($checked)->toBe(5);
+    expect($checked)->toBe(7);
 });
 
 it('answers the vague body to a non-member and the precise body to a member who can see the Plan', function (): void {
@@ -303,7 +325,11 @@ it('answers the vague body to a non-member and the precise body to a member who 
                 default => throw new RuntimeException("Unknown ordering variant [{$variant}]."),
             };
 
-            $uri = planRouteUri($path, ['plan' => $plan->id, $parameter => $value]);
+            // 'reaction' is harmless on every route except the one DELETE route that names it
+            // (planRouteUri()'s own docblock) - held constant rather than swept, for the
+            // reason twoParameterRoutes()'s own docblock gives: {reaction} has no ordering
+            // story of its own for this suite to distinguish.
+            $uri = planRouteUri($path, ['plan' => $plan->id, $parameter => $value, 'reaction' => reactionPathSegment()]);
             $payload = planRoutePayload($key);
 
             // T33-1 (round 1 fix): captured BEFORE either request, for the one variant whose
@@ -367,10 +393,11 @@ it('answers the vague body to a non-member and the precise body to a member who 
         }
     }
 
-    // Two {user} routes at six variants each, one {invite} route at four, plus two {message}
-    // routes at four each: 12 + 4 + 8 = 24 variants, each probed by both callers, so 48
+    // Two {user} routes at six variants each, one {invite} route at four, plus four {message}
+    // routes at four each (edit, delete, and the chat feature's own add-reaction and
+    // remove-reaction routes): 12 + 4 + 16 = 32 variants, each probed by both callers, so 64
     // requests. A derivation that matched no routes fails here rather than passing green with
     // nothing asserted.
-    expect($variantsChecked)->toBe(24);
-    expect($requestsMade)->toBe(48);
+    expect($variantsChecked)->toBe(32);
+    expect($requestsMade)->toBe(64);
 });

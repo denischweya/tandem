@@ -2,9 +2,11 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\V1\Plans\AddReactionController;
 use App\Http\Controllers\Api\V1\Plans\DeleteMessageController;
 use App\Http\Controllers\Api\V1\Plans\EditMessageController;
 use App\Http\Controllers\Api\V1\Plans\ListPlanMessagesController;
+use App\Http\Controllers\Api\V1\Plans\RemoveReactionController;
 use App\Http\Controllers\Api\V1\Plans\SendMessageController;
 use Illuminate\Support\Facades\Route;
 
@@ -25,4 +27,12 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::delete('/plans/{plan}/messages/{message}', DeleteMessageController::class)
         ->middleware('verified')
         ->name('plans.messages.destroy');
+
+    Route::post('/plans/{plan}/messages/{message}/reactions', AddReactionController::class)
+        ->middleware(['verified', 'throttle:chat-react'])
+        ->name('plans.messages.reactions.store');
+
+    Route::delete('/plans/{plan}/messages/{message}/reactions/{reaction}', RemoveReactionController::class)
+        ->middleware('verified')
+        ->name('plans.messages.reactions.destroy');
 });

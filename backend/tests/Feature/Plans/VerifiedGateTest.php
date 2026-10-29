@@ -53,7 +53,7 @@ it('gates exactly the Plan routes spec 7.5 names, read off the route table', fun
     }
 
     // Spec §7.5's partition for EVERY Plan route under api/v1/plans - not only the ones that
-    // exist at this commit, but all eighteen the section will ever carry, one row each below
+    // exist at this commit, but all twenty the section will ever carry, one row each below
     // (the previous wording counted today's routes as "six", which Task 21's and this task's
     // routes each falsified in turn: a count of the file's own contents decays silently, so this
     // sentence now counts only the literal immediately below it). A literal rather than
@@ -86,6 +86,8 @@ it('gates exactly the Plan routes spec 7.5 names, read off the route table', fun
         'plans.messages.store' => true,    // creates state other members see (a chat message)
         'plans.messages.update' => true,   // edits a chat message every other member sees
         'plans.messages.destroy' => true,  // deletes a chat message every other member sees
+        'plans.messages.reactions.store' => true,   // creates state other members see (a reaction)
+        'plans.messages.reactions.destroy' => true, // removes state other members see
     ];
 
     // The note promised above: §7.5's table lists DELETE .../members/{user} in BOTH columns -
@@ -160,6 +162,8 @@ it('gates exactly the Plan routes spec 7.5 names, read off the route table', fun
         'plans.messages.store' => true,
         'plans.messages.update' => true,
         'plans.messages.destroy' => true,
+        'plans.messages.reactions.store' => true,
+        'plans.messages.reactions.destroy' => true,
     ], 'every Plan route resolves an actor, including join - plan_invites.accepted_by records who accepted');
 });
 

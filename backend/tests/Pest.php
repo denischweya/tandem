@@ -599,6 +599,35 @@ function planRouteUri(string $path, array $parameters): string
 }
 
 /**
+ * A real, valid reaction emoji, percent-encoded - the value every cross-cutting suite that
+ * sweeps `{reaction}` as a PATH parameter (not a request body field) must pass to
+ * planRouteUri(), rather than the raw emoji.
+ *
+ * rawurlencode(), not the raw character: measured against this project's pinned
+ * /opt/homebrew/opt/php/bin/php 8.4.2, a raw multi-byte emoji spliced directly into a test
+ * URI is corrupted by PHP's OWN parse_url() - called by
+ * Symfony\Component\HttpFoundation\Request::create(), which every Pest HTTP helper routes
+ * through (MakesHttpRequests::call()). parse_url() treats bytes in the 0x80-0x9F range as
+ * suspect even when they are UTF-8 continuation bytes rather than control characters, and
+ * replaces them with `_`, corrupting the path into invalid UTF-8 and failing
+ * Illuminate\Http\Middleware\ValidatePathEncoding with a 400 before routing ever runs. That is
+ * a property of how a raw character survives THIS construction path, not of the application:
+ * a real HTTP client always percent-encodes a non-ASCII path segment before putting it on the
+ * wire, and Laravel decodes it back before binding {reaction} - confirmed separately against
+ * AddReactionController/RemoveReactionController. This function is that same encoding, done
+ * once, rather than three suites each discovering the 400 independently.
+ *
+ * Nothing about the VALUE is load-bearing for any suite that calls this - removeReaction() has
+ * no not-found story for an unmatched reaction (see PlanMessageRepository::removeReaction()'s
+ * own docblock), so {reaction} carries no ordering or role story of its own for these suites to
+ * distinguish, unlike {user}, {invite} and {message}.
+ */
+function reactionPathSegment(): string
+{
+    return rawurlencode('👍');
+}
+
+/**
  * A request body each Plan route's FormRequest accepts, keyed "<method> <path>".
  *
  * Every refusal suite needs these because validation runs BEFORE the repository: a FormRequest
@@ -644,6 +673,8 @@ function planRoutePayloads(): array
         'post /plans/{plan}/messages' => ['body' => 'Hello from the refusal matrix'],
         'patch /plans/{plan}/messages/{message}' => ['body' => 'Edited by the refusal matrix'],
         'delete /plans/{plan}/messages/{message}' => [],
+        'post /plans/{plan}/messages/{message}/reactions' => ['reaction' => '👍'],
+        'delete /plans/{plan}/messages/{message}/reactions/{reaction}' => [],
     ];
 }
 

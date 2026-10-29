@@ -142,20 +142,21 @@ it('throttles exactly six routes, and every limiter they name is registered', fu
     expect($allUris)->toContain('api/v1/plans/{plan}/join');
     expect($throttledUris)->not->toContain('api/v1/plans/{plan}/join');
 
-    // Spec §8.2's two Wave 1a rows and §13's four Wave 2 rows (chat-send is the chat feature's
-    // own addition to §13's set, not a sixth thing outside it - it is the same "limit the write,
-    // not the read" shape as plans-create and plan-invites).
+    // Spec §8.2's two Wave 1a rows and §13's five Wave 2 rows (chat-send and chat-react are
+    // the chat feature's own additions to §13's set, not extras outside it - both are the same
+    // "limit the write, not the read" shape as plans-create and plan-invites).
     //
-    // A SEVENTH ROW HERE IS NOT A TEST FAILURE TO BE FIXED BY EDITING THIS LIST. It means a rate
+    // AN EIGHTH ROW HERE IS NOT A TEST FAILURE TO BE FIXED BY EDITING THIS LIST. It means a rate
     // limit landed without a §13 decision; amend §13 first, then this literal.
     expect($throttled)->toBe([
         ['auth.forgot-password', 'api/v1/auth/forgot-password', 'auth-forgot-password'],
         ['auth.register', 'api/v1/auth/register', 'auth-register'],
         ['invites.preview', 'api/v1/invites/{token}', 'invite-lookup'],
         ['plans.invites.store', 'api/v1/plans/{plan}/invites', 'plan-invites'],
+        ['plans.messages.reactions.store', 'api/v1/plans/{plan}/messages/{message}/reactions', 'chat-react'],
         ['plans.messages.store', 'api/v1/plans/{plan}/messages', 'chat-send'],
         ['plans.store', 'api/v1/plans', 'plans-create'],
-    ], 'spec §8.2 and §13: six throttled routes in the whole API, four of the limiters new since Wave 1a');
+    ], 'spec §8.2 and §13: seven throttled routes in the whole API, five of the limiters new since Wave 1a');
 
     // A route may name a limiter nobody registered. Laravel's answer is
     // MissingRateLimiterException - "Rate limiter [<name>] is not defined." from
