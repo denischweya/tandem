@@ -3,29 +3,12 @@
 declare(strict_types=1);
 
 use App\Models\Plan;
-use App\Models\PlanMember;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Str;
 
 use function Pest\Laravel\postJson;
 
 uses(RefreshDatabase::class);
-
-function activeMemberOf(Plan $plan): User
-{
-    $user = User::factory()->hasProfile()->create();
-    $member = new PlanMember;
-    $member->id = (string) Str::uuid7();
-    $member->plan_id = $plan->id;
-    $member->user_id = $user->id;
-    $member->role = 'member';
-    $member->status = 'active';
-    $member->joined_at = now();
-    $member->save();
-
-    return $user;
-}
 
 it('sends a message as an active member and returns it', function (): void {
     $plan = Plan::factory()->create();

@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Str;
 use Illuminate\Testing\PendingCommand;
 use Illuminate\Translation\PotentiallyTranslatedString;
 use Monolog\Handler\TestHandler;
@@ -323,6 +324,36 @@ function ownedPlan(User $owner): Plan
     member($plan, $owner, MemberRole::Owner, '2026-01-01T00:00:00+00:00');
 
     return $plan;
+}
+
+/**
+ * A brand-new user with an active `member` row on $plan, for the chat suite's send/list tests.
+ *
+ * Moved here from tests/Feature/Chat/SendMessageTest.php (fix round 1): this file's own header
+ * states the rule - Pest loads every test file into the global namespace, so a bare function
+ * declared in one test file is process-global, and a SIBLING file that calls it without its own
+ * copy or this file's copy is one `require` order away from "Call to undefined function
+ * activeMemberOf()". tests/Feature/Chat/ListPlanMessagesTest.php called this with no definition
+ * of its own, which is exactly that defect - measured by running that one file in isolation.
+ *
+ * Field-by-field through `new PlanMember`, not the `member()` helper above: PlanMember is
+ * $guarded = ['*'] (see Plan's own docblock for why), and this is kept as originally authored
+ * rather than refactored onto member()'s MemberRole/MemberStatus-typed signature, since this
+ * is a relocation, not a rewrite.
+ */
+function activeMemberOf(Plan $plan): User
+{
+    $user = User::factory()->hasProfile()->create();
+    $member = new PlanMember;
+    $member->id = (string) Str::uuid7();
+    $member->plan_id = $plan->id;
+    $member->user_id = $user->id;
+    $member->role = 'member';
+    $member->status = 'active';
+    $member->joined_at = now();
+    $member->save();
+
+    return $user;
 }
 
 /** A user soft-deleted $days ago, which is what the day-30 purge selects on. */
