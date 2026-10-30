@@ -427,6 +427,100 @@ it('keys auth-register on the IP, five per hour', function (): void {
     expect($limit->decaySeconds)->toBe(3600, 'spec §8.2: per HOUR - 60 here would be per minute and no 429 test could tell');
 });
 
+it('keys chat-send on the authenticated user, thirty per minute', function (): void {
+    // The chat feature's own limiter, asserted here by name rather than only listed in the
+    // route-table literal above - which is exactly the gap (4) in this file's docblock names,
+    // and the gap this limiter shipped with: the six-row literal named 'chat-send' and nothing
+    // checked its key, its count or its window.
+    $user = User::factory()->create();
+
+    // 198.51.100.7 is RFC 5737 documentation space and appears in no assertion below, for the
+    // reason the plans-create block above states: an IP-keyed closure passes every exhaustion
+    // test in this suite, because every request here arrives with REMOTE_ADDR = 127.0.0.1.
+    $request = Request::create('/api/v1/plans/'.$user->id.'/messages', 'POST', server: ['REMOTE_ADDR' => '198.51.100.7']);
+    $request->setUserResolver(fn () => $user);
+
+    $closure = RateLimiter::limiter('chat-send');
+
+    if (! $closure instanceof Closure) {
+        throw new RuntimeException("No limiter is registered under the name 'chat-send'.");
+    }
+
+    $limit = $closure($request);
+
+    if (! $limit instanceof Limit) {
+        throw new RuntimeException('The chat-send limiter returned something other than one Limit.');
+    }
+
+    // Per USER and not per Plan, which is the decision §13 records for this limiter and which
+    // no 429 could see: sending thirty messages a minute is the thing being limited, whichever
+    // Plans they land in. No route is matched above for the same reason the invite-lookup block
+    // gives - this closure never calls route(), so the {plan} segment is cosmetic.
+    expect($limit->key)->toBe($user->getAuthIdentifier(), '§13: keyed on the user id, not on the Plan');
+    expect($limit->maxAttempts)->toBe(30, '§13: thirty');
+    // 60, not 3600: perMinute(30) and perHour(30) are indistinguishable to any exhaustion test,
+    // and this is the one limiter in the set whose window is a MINUTE - which is also what makes
+    // OpenApiContractTest's former "one a second per user" description wrong twice over.
+    expect($limit->decaySeconds)->toBe(60, '§13: per MINUTE - 3600 here would be per hour and no 429 test could tell');
+});
+
+it('keys chat-react on the authenticated user, sixty per minute', function (): void {
+    $user = User::factory()->create();
+
+    $request = Request::create('/api/v1/plans/p/messages/m/reactions', 'POST', server: ['REMOTE_ADDR' => '198.51.100.7']);
+    $request->setUserResolver(fn () => $user);
+
+    $closure = RateLimiter::limiter('chat-react');
+
+    if (! $closure instanceof Closure) {
+        throw new RuntimeException("No limiter is registered under the name 'chat-react'.");
+    }
+
+    $limit = $closure($request);
+
+    if (! $limit instanceof Limit) {
+        throw new RuntimeException('The chat-react limiter returned something other than one Limit.');
+    }
+
+    // Deliberately a DIFFERENT number from chat-send's thirty: the two limiters are registered
+    // from near-identical one-line closures, so a copy-paste that left this at perMinute(30)
+    // would be invisible to every other assertion in the suite.
+    expect($limit->key)->toBe($user->getAuthIdentifier(), '§13: keyed on the user id, not on the message');
+    expect($limit->maxAttempts)->toBe(60, '§13: sixty - twice chat-send, because reacting is cheaper than writing');
+    expect($limit->decaySeconds)->toBe(60, '§13: per MINUTE - 3600 here would be per hour and no 429 test could tell');
+});
+
+it('falls back to the literal unknown for both chat limiters when nobody is authenticated', function (): void {
+    // Unreachable over HTTP - auth:sanctum sorts before ThrottleRequests on both routes, which
+    // AppServiceProvider's own comment beside these two closures records - and asserted anyway,
+    // because RateLimiter::for() registers a limiter GLOBALLY: a console command or queued job
+    // that builds a request and dispatches it through the router reaches the closure with no
+    // user. Without the `?? 'unknown'` the key would be null, which ThrottleRequests hashes as
+    // md5('chat-send'), giving every such caller one shared bucket.
+    foreach (['chat-send', 'chat-react'] as $name) {
+        $closure = RateLimiter::limiter($name);
+
+        if (! $closure instanceof Closure) {
+            throw new RuntimeException("No limiter is registered under the name '{$name}'.");
+        }
+
+        $anonymous = Request::create('/api/v1/plans/p/messages', 'POST');
+        // Removed rather than left in place: these closures have no ->ip() arm at all, unlike
+        // plans-create's, so 'unknown' is the fallback for an absent USER and the REMOTE_ADDR
+        // is irrelevant either way. Removing it states that.
+        $anonymous->server->remove('REMOTE_ADDR');
+        $anonymous->setUserResolver(fn () => null);
+
+        $limit = $closure($anonymous);
+
+        if (! $limit instanceof Limit) {
+            throw new RuntimeException("The {$name} limiter returned something other than one Limit.");
+        }
+
+        expect($limit->key)->toBe('unknown');
+    }
+});
+
 it('keys auth-forgot-password on the normalized email, three per hour, and survives a non-string email', function (): void {
     // Wave 1a's other limiter. Its is_string() guard is the one with a recorded, expensive
     // history: an array `email` once passed route dispatch and a bare (string) cast emitted an
