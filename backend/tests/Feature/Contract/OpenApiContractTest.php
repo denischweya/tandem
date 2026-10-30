@@ -341,31 +341,66 @@ it('declares every error status the application itself raises', function (): voi
         ['delete', '/plans/{plan}/invites/{invite}', '409'],
         // ActivityFeedTest: "answers 404 with the one Plan body for a signed-in non-member"
         ['get', '/plans/{plan}/activity', '404'],
-        // SendMessageTest: "refuses an unverified user with 403"
+        // --- The chat rows. CORRECTED: every citation below used to name a test file or a test
+        // case that does not exist - "AddReactionTest" and "RemoveReactionTest" (the real file
+        // is tests/Feature/Chat/ReactToMessageTest.php, and it owns neither route's refusals),
+        // "rate limits messages to one a second per user" (the real limit is thirty a minute),
+        // and an "answers 404 to a non-member" case on four different chat files, none of which
+        // has one. A citation that names a test which does not exist is worse than none: it
+        // reads as evidence and is not.
+        //
+        // Unlike every row above, chat's refusals are proved by the CROSS-CUTTING suites rather
+        // than by each route's own file, because that is where the chat routes were wired in
+        // (see the "register the two new message routes in every cross-cutting Plan-route
+        // registry" commit). Each of those sweeps derives its route set from the live route
+        // table and pins it against an exact literal or a count (seventeen, seven and twenty
+        // respectively), so a chat route dropping out of one is a red rather than a silently
+        // un-swept row - which is what makes a cross-file citation evidence here:
+        //
+        //   - 404 for a signed-in non-member, all six routes: NonMemberRefusalTest's "answers
+        //     404 with the one Plan-not-found body on every Plan route a non-member can reach",
+        //     which sweeps all seventeen {plan} routes with every second parameter naming a real
+        //     row OF THAT PLAN, so non-membership is the only thing that can be refusing.
+        //     OrderingAndIdorTest's "answers the vague body to a non-member and the precise body
+        //     to a member who can see the Plan" is the other half for the {message} and
+        //     {reaction} routes: that the Plan check runs BEFORE the message lookup.
+        //   - 403 from the verified gate, on the five gated routes (every chat route but the
+        //     read): VerifiedGateTest's "gates exactly the Plan routes spec 7.5 names, read off
+        //     the route table" is what pins `verified` onto each of them by name, and that same
+        //     file's "refuses all four Plan writes for an unverified owner, and writes nothing"
+        //     is what pins the gate's own status and sentence behaviourally. Structural plus
+        //     behavioural on a sibling route, stated as such: no chat file asserts an unverified
+        //     403 against a chat URI directly.
         ['post', '/plans/{plan}/messages', '403'],
-        // SendMessageTest: "answers 404 to a non-member"
         ['post', '/plans/{plan}/messages', '404'],
-        // SendMessageTest: "rate limits messages to one a second per user"
+        // SendMessageTest: "limits one user to thirty messages a minute and leaves a second
+        // member of the same Plan alone" - thirty, per MINUTE, per user. The window and the key
+        // themselves are LimiterRegistryTest's "keys chat-send on the authenticated user, thirty
+        // per minute", since no 429 can see either.
         ['post', '/plans/{plan}/messages', '429'],
-        // ListPlanMessagesTest: "answers 404 with the one Plan body for a signed-in non-member"
         ['get', '/plans/{plan}/messages', '404'],
-        // EditMessageTest: "lets the author edit and refuses a non-author with 403"
+        // EditMessageTest: "refuses another member editing someone else’s message". Its pair,
+        // "lets the author edit their own message", is what stops that passing against a route
+        // that refused everybody - and AnonymizedSenderTest's "refuses every member’s edit and
+        // delete of an anonymized message, not just a non-author’s" is the same status for the
+        // authorless case ADR 0012 introduced.
         ['patch', '/plans/{plan}/messages/{message}', '403'],
-        // EditMessageTest: "answers 404 to a non-member"
         ['patch', '/plans/{plan}/messages/{message}', '404'],
-        // DeleteMessageTest: "lets the author delete and refuses a non-author with 403"
+        // DeleteMessageTest: "refuses another member deleting someone else’s message", with
+        // "lets the author soft-delete their own message, and it drops out of the list" as its
+        // pair. Added in this same fix wave: this row previously cited a case that did not exist
+        // on a file that had only the happy path.
         ['delete', '/plans/{plan}/messages/{message}', '403'],
-        // DeleteMessageTest: "answers 404 to a non-member"
         ['delete', '/plans/{plan}/messages/{message}', '404'],
-        // AddReactionTest: "refuses an unverified user with 403"
         ['post', '/plans/{plan}/messages/{message}/reactions', '403'],
-        // AddReactionTest: "answers 404 to a non-member"
         ['post', '/plans/{plan}/messages/{message}/reactions', '404'],
-        // AddReactionTest: "rate limits reactions to sixty per minute"
+        // LimiterRegistryTest: "keys chat-react on the authenticated user, sixty per minute",
+        // plus that file's route-table literal, which is what pins throttle:chat-react onto this
+        // route. No behavioural 429 case for reactions, deliberately: it would be sixty requests
+        // to re-prove the one mechanism SendMessageTest's thirty already prove, and the limiter's
+        // own numbers - the part a 429 cannot see - are asserted directly.
         ['post', '/plans/{plan}/messages/{message}/reactions', '429'],
-        // RemoveReactionTest: "refuses an unverified user with 403"
         ['delete', '/plans/{plan}/messages/{message}/reactions/{reaction}', '403'],
-        // RemoveReactionTest: "answers 404 to a non-member"
         ['delete', '/plans/{plan}/messages/{message}/reactions/{reaction}', '404'],
     ];
 
