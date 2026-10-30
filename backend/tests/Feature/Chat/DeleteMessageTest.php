@@ -32,3 +32,28 @@ it('lets the author soft-delete their own message, and it drops out of the list'
 
     expect($list->json('data.*.id'))->not->toContain($message->id);
 });
+
+it('refuses another member deleting someone else’s message', function (): void {
+    // EditMessageTest's own non-author case, for DELETE. The two use cases have identical
+    // authorship gates - DeleteMessage::execute()'s docblock says so outright ("Identical shape
+    // to EditMessage::execute()") - and until this case existed only one of the two was pinned,
+    // so DeleteMessage could have lost its NotMessageAuthor check entirely while the suite
+    // stayed green and the contract table still claimed a 403.
+    $plan = Plan::factory()->create();
+    $author = activeMemberOf($plan);
+    $other = activeMemberOf($plan);
+    $message = new PlanMessage;
+    $message->id = (string) Str::uuid7();
+    $message->plan_id = $plan->id;
+    $message->user_id = $author->id;
+    $message->body = 'mine, not yours';
+    $message->save();
+
+    deleteJson("/api/v1/plans/{$plan->id}/messages/{$message->id}", [], [
+        'Authorization' => 'Bearer '.$other->createToken('t')->plainTextToken,
+    ])->assertStatus(403);
+
+    // The refusal is a refusal, not a 403 rendered after the write: a soft delete that had
+    // already happened would leave deleted_at set and drop the message out of every list.
+    expect($message->refresh()->deleted_at)->toBeNull();
+});
