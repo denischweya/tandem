@@ -477,7 +477,8 @@ export interface components {
         PlanMessageResource: {
             id: string;
             plan_id: string;
-            user_id: string;
+            user_id: string | null;
+            user_display_name: string | null;
             body: string;
             /** Format: date-time */
             edited_at: string | null;

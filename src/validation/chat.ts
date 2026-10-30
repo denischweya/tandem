@@ -81,6 +81,15 @@ export type _PlanMessageReactionSummaryAcceptsMessageResponse = Expect<
  * are `uuid` columns (plan_messages.id, .plan_id, .user_id), so a non-UUID is impossible rather
  * than merely unexpected - the same reasoning PlanResourceSchema.id and .owner_id record.
  *
+ * `user_id` and `user_display_name` are both `.nullable()`, and both null together in the
+ * ordinary case: account deletion anonymises `plan_messages.user_id` rather than deleting the
+ * message (ADR 0012), so an authorless message is a real response shape and not a defensive
+ * guess - PlanActivityResourceSchema's `actor_id`/`actor_name` pair in plans.ts is the same
+ * shape for the same reason. `user_display_name` can also be null on its own, for a `user_id`
+ * whose `user_profiles` row is gone (the day-30 hard purge CASCADEs the profile away while only
+ * SET NULLing this column) - a distinction a client cannot make and does not need to. NEITHER is
+ * optional: both keys are always present, because the Resource always emits them.
+ *
  * `edited_at` is nullable and NOT optional: the column is a nullable timestamptz, null means
  * never edited, and the key is always present. `created_at` and `updated_at` are never null -
  * every message row is written with both in the same request.
@@ -91,7 +100,8 @@ export type _PlanMessageReactionSummaryAcceptsMessageResponse = Expect<
 export const PlanMessageResourceSchema = z.object({
   id: z.uuid(),
   plan_id: z.uuid(),
-  user_id: z.uuid(),
+  user_id: z.uuid().nullable(),
+  user_display_name: z.string().nullable(),
   body: z.string(),
   edited_at: apiTimestamp.nullable(),
   created_at: apiTimestamp,
