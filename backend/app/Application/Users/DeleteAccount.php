@@ -16,6 +16,7 @@ use App\Models\Plan;
 use App\Models\PlanActivity;
 use App\Models\PlanInvite;
 use App\Models\PlanMember;
+use App\Models\PlanMessage;
 use App\Models\User;
 use DateTimeImmutable;
 use Illuminate\Database\Eloquent\Builder;
@@ -67,6 +68,19 @@ final readonly class DeleteAccount
             // stays first if a later cycle makes an ownership transfer write an activity row,
             // which must not then be anonymised by this same call.
             PlanActivity::query()->where('actor_id', $user->id)->update(['actor_id' => null]);
+
+            // Step 4's other half (ADR 0012). The chat design document §3 argues
+            // plan_messages.user_id from the line above - a conversation that loses messages as
+            // people leave is the same defect as a feed that does - and this statement is what
+            // that argument asks for. It was impossible to write until ADR 0012 made the column
+            // nullable, which is why it is new rather than original.
+            //
+            // The column's own ON DELETE SET NULL does not make this redundant, for the reason
+            // the comment on step 5 below already gives about plans.owner_id's RESTRICT: step 5
+            // is a SOFT delete, so no foreign key fires here at all. Without this statement the
+            // author reference survives the deletion in full and is only cleared 30 days later
+            // by PurgeDeletedUsersCommand - which is precisely the window §9.3 exists to close.
+            PlanMessage::query()->where('user_id', $user->id)->update(['user_id' => null]);
 
             // Steps 3 and 2, in that order, and the order between THESE TWO IS IMMATERIAL -
             // recorded because an earlier version of this comment claimed otherwise and would

@@ -10,9 +10,11 @@ use App\Models\Group;
 use App\Models\Plan;
 use App\Models\PlanActivity;
 use App\Models\PlanMember;
+use App\Models\PlanMessage;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 use function Pest\Laravel\assertDatabaseCount;
 use function Pest\Laravel\assertDatabaseHas;
@@ -36,6 +38,40 @@ it('hard-deletes a user past the grace window', function (): void {
     runArtisan('users:purge-deleted')->assertSuccessful();
 
     assertModelMissing($user);
+});
+
+it('purges a user who had sent chat messages, nulling the author rather than failing for ever', function (): void {
+    // The bug ADR 0012 fixes, pinned at the exact place it manifested. plan_messages.user_id
+    // shipped NOT NULL with a RESTRICT foreign key, so forceDelete() below raised
+    // "update or delete on table users violates foreign key constraint
+    // plan_messages_user_id_foreign" for any user who had ever sent one message - caught by
+    // the per-user catch, reported as a failure, and queued again at the next 03:00 run, for
+    // ever, with nothing an operator could do about it.
+    //
+    // softDeletedDaysAgo() soft-deletes the user DIRECTLY rather than through DeleteAccount,
+    // which is what makes this the backstop's own test: nothing has nulled user_id in the
+    // application, so the only thing standing between forceDelete() and a permanent failure is
+    // the foreign key's ON DELETE SET NULL.
+    $user = softDeletedDaysAgo(31);
+    $plan = Plan::factory()->create();
+    $message = new PlanMessage;
+    $message->id = (string) Str::uuid7();
+    $message->plan_id = $plan->id;
+    $message->user_id = $user->id;
+    $message->body = 'worth keeping';
+    $message->save();
+
+    runArtisan('users:purge-deleted')
+        ->expectsOutputToContain('"purged":1,"failed":0')
+        ->assertSuccessful();
+
+    assertModelMissing($user);
+
+    // SET NULL, not CASCADE: the message survives for the members who were talking to this
+    // person, with its author reference gone. CASCADE would have deleted it and reported the
+    // run successful, which is the quieter and worse of the two failures available here.
+    expect($message->refresh()->user_id)->toBeNull();
+    expect($message->refresh()->body)->toBe('worth keeping');
 });
 
 it('never touches a live user', function (): void {

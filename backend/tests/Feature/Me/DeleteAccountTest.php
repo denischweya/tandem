@@ -13,10 +13,12 @@ use App\Models\Plan;
 use App\Models\PlanActivity;
 use App\Models\PlanInvite;
 use App\Models\PlanMember;
+use App\Models\PlanMessage;
 use App\Models\RefreshToken;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 use function Pest\Laravel\assertDatabaseCount;
 use function Pest\Laravel\assertDatabaseEmpty;
@@ -286,6 +288,46 @@ it('anonymizes the departing user in the activity feed instead of deleting it', 
     assertDatabaseCount('plan_activity', 2);
     expect($mine->refresh()->actor_id)->toBeNull();
     expect($theirs->refresh()->actor_id)->toBe($other->id);
+});
+
+it('anonymizes the departing user’s chat messages instead of deleting them', function (): void {
+    // Step 4's other half (ADR 0012). The chat design document §3 argues plan_messages.user_id
+    // from plan_activity.actor_id's anonymisation - "a feed that loses rows as users leave is a
+    // worse feed" - and the conversation the remaining members are reading is the same case.
+    // Nothing anonymised plan_messages before this: the column shipped NOT NULL, so there was
+    // nowhere for this transaction to write the anonymised state.
+    [$user, , $access] = signIn();
+    $other = User::factory()->hasProfile()->create();
+
+    $plan = Plan::factory()->create(['owner_id' => $other->id]);
+    member($plan, $other, MemberRole::Owner, '2026-01-01 00:00:00');
+    member($plan, $user, MemberRole::Member, '2026-02-01 00:00:00');
+
+    // Field by field through `new PlanMessage`, not a factory: PlanMessage is $guarded = ['*']
+    // and this feature carries no PlanMessageFactory - the same construction every test under
+    // tests/Feature/Chat/ uses.
+    $mine = new PlanMessage;
+    $mine->id = (string) Str::uuid7();
+    $mine->plan_id = $plan->id;
+    $mine->user_id = $user->id;
+    $mine->body = 'see you there';
+    $mine->save();
+
+    $theirs = new PlanMessage;
+    $theirs->id = (string) Str::uuid7();
+    $theirs->plan_id = $plan->id;
+    $theirs->user_id = $other->id;
+    $theirs->body = 'bring cash';
+    $theirs->save();
+
+    withToken($access)->deleteJson('/api/v1/me')->assertNoContent();
+
+    // Two rows still, exactly as the activity-feed case above asserts for plan_activity: the
+    // author reference is nulled, not the message removed.
+    assertDatabaseCount('plan_messages', 2);
+    expect($mine->refresh()->user_id)->toBeNull();
+    expect($mine->refresh()->body)->toBe('see you there');
+    expect($theirs->refresh()->user_id)->toBe($other->id);
 });
 
 it('does nothing at all if any step fails', function (): void {

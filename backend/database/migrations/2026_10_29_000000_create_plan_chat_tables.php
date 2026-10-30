@@ -15,11 +15,15 @@ return new class extends Migration
         Schema::create('plan_messages', function (Blueprint $table): void {
             $table->uuid('id')->primary();
             $table->foreignUuid('plan_id')->constrained()->cascadeOnDelete();
-            // RESTRICT, not CASCADE: a message must survive the author's own account
-            // deletion, the same way plan_activity's actor_id survives it (by anonymising,
-            // not deleting). See docs/specs/2026-10-29-plan-chat-design.md §3 — the §9.3
-            // anonymisation step must be extended to this column; this migration only states
-            // the constraint.
+            // SUPERSEDED by 2026_10_30_000000_make_plan_messages_user_id_anonymizable.php
+            // (ADR 0012), which makes this column nullable with ON DELETE SET NULL. The intent
+            // below was right and this shape could not reach it: a message must survive the
+            // author's own account deletion by ANONYMISING, the way plan_activity.actor_id
+            // does - and plan_activity.actor_id is nullable with no foreign key at all, so a
+            // NOT NULL column had nowhere to write the anonymised state. The consequence
+            // landed at the day-30 hard purge, not at account deletion; the later migration's
+            // own header records it in full. Left as written rather than edited, because a
+            // migration that has run is history: read it with its successor.
             $table->foreignUuid('user_id')->constrained()->restrictOnDelete();
             $table->text('body');
             // 6 = microsecond precision: PageCursor compares cursor keys at microsecond

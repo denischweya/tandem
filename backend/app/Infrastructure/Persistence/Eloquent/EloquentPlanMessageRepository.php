@@ -36,6 +36,14 @@ use RuntimeException;
  * the same "one query, not N+1" discipline EloquentPlanActivityRepository::listForPlan() follows
  * for actor names. create() is the one exception, and deliberately so: a message that was just
  * inserted cannot yet have a reaction, so reactions: [] there is correct, not a placeholder.
+ *
+ * userDisplayName comes from displayNamesByUserId() below, which mirrors
+ * EloquentPlanActivityRepository::listForPlan()'s own batched user_profiles lookup exactly: the
+ * page's DISTINCT non-null user_ids in one whereIn, never a lookup per row. Unlike reactions it
+ * is populated on EVERY path including create() and update(), because both of those summaries
+ * ARE serialised to a client (201 on POST, 200 on PATCH) and a null name on a message its author
+ * wrote a millisecond ago would read as an anonymised sender rather than the one who just sent
+ * it. ADR 0012 is why the name can legitimately be null at all.
  */
 final readonly class EloquentPlanMessageRepository implements PlanMessageRepository
 {
@@ -47,16 +55,11 @@ final readonly class EloquentPlanMessageRepository implements PlanMessageReposit
         $message->body = $body;
         $message->save();
 
-        return new PlanMessageSummary(
-            id: $message->id,
-            planId: $message->plan_id,
-            userId: $message->user_id,
-            body: $message->body,
-            editedAt: null,
-            createdAt: $message->created_at->toImmutable(),
-            updatedAt: $message->updated_at->toImmutable(),
-            reactions: [],
-        );
+        // toSummary(), not a fourth hand-written construction of this object: editedAt is
+        // $message->edited_at (null on a row that was just inserted, so the literal null this
+        // used to pass is what toSummary() already computes), and routing through it is what
+        // keeps the display-name lookup in ONE place rather than three.
+        return self::toSummary($message);
     }
 
     public function listForPlan(string $planId, string $viewerId, PageQuery $query): CursorPage
@@ -89,6 +92,14 @@ final readonly class EloquentPlanMessageRepository implements PlanMessageReposit
         // not one plan_message_reactions lookup per row.
         $reactionsByMessageId = self::reactionsByMessageId($page->pluck('id')->all(), $viewerId);
 
+        // The same batching, for the same reason, over the other dimension: the page's distinct
+        // non-null senders in one user_profiles query. ->filter() drops the nulls an anonymised
+        // sender leaves (ADR 0012) before ->unique(), so a page of twenty messages from three
+        // people asks for three ids, not twenty - and a page of entirely anonymised messages
+        // asks nothing at all. Mirrors EloquentPlanActivityRepository::listForPlan()'s own
+        // actor-name lookup line for line.
+        $displayNames = self::displayNamesByUserId($page->pluck('user_id')->filter()->unique()->values()->all());
+
         // A plain push loop, not $page->values()->map(...)->all(): PHPStan's list-inference rule
         // accepts the former and not the latter for a constructor typed list<PlanMessageSummary>
         // - see EloquentPlanActivityRepository::listForPlan()'s own comment for the measurement.
@@ -99,6 +110,15 @@ final readonly class EloquentPlanMessageRepository implements PlanMessageReposit
                 id: $row->id,
                 planId: $row->plan_id,
                 userId: $row->user_id,
+                // Three states, not two, exactly as PlanActivitySummary::$actorName's own
+                // comment in the activity repository sets out: no user_id (anonymised, null), a
+                // user_id with a profile (the name), and a user_id whose user_profiles row is
+                // gone - which the day-30 hard purge produces, because user_profiles.user_id
+                // CASCADEs off users while this column only SET NULLs. The `?? null` renders
+                // the third like the first, and is held open by the test rather than by the
+                // analyser: reading $displayNames[$row->user_id] directly is an undefined-key
+                // E_WARNING that HandleExceptions promotes to an ErrorException at runtime.
+                userDisplayName: $row->user_id === null ? null : ($displayNames[$row->user_id] ?? null),
                 body: $row->body,
                 editedAt: $row->edited_at === null ? null : Carbon::parse($row->edited_at)->toImmutable(),
                 createdAt: Carbon::parse($row->created_at)->toImmutable(),
@@ -186,20 +206,28 @@ final readonly class EloquentPlanMessageRepository implements PlanMessageReposit
     }
 
     /**
-     * The one place a PlanMessage model becomes a PlanMessageSummary - find() and update() both
-     * route through it. $reactions defaults to [], which is what update() still passes
-     * implicitly: EditMessage's own HTTP response is this method's return value, and Task 4's
-     * brief scopes real reaction population to listForPlan() and find() only - update() keeps
-     * its shipped reactions: [] rather than this task widening what it touches.
+     * The one place a PlanMessage model becomes a PlanMessageSummary - create(), find() and
+     * update() all route through it. $reactions defaults to [], which is what create() and
+     * update() both pass implicitly: a just-inserted row cannot have one, and for update()
+     * Task 4's brief scoped real reaction population to listForPlan() and find() only, so
+     * EditMessage's own HTTP response keeps its shipped reactions: [].
+     *
+     * The display-name lookup is NOT skipped on those paths, unlike reactions - see this class's
+     * own docblock for why. It is the one-row form of listForPlan()'s batched query, through the
+     * same helper, so there is one definition of "how a sender's name is resolved".
      *
      * @param  list<PlanMessageReactionSummary>  $reactions
      */
     private static function toSummary(PlanMessage $message, array $reactions = []): PlanMessageSummary
     {
+        $displayNames = self::displayNamesByUserId($message->user_id === null ? [] : [$message->user_id]);
+
         return new PlanMessageSummary(
             id: $message->id,
             planId: $message->plan_id,
             userId: $message->user_id,
+            // Same three states as listForPlan()'s own construction - see the comment there.
+            userDisplayName: $message->user_id === null ? null : ($displayNames[$message->user_id] ?? null),
             body: $message->body,
             editedAt: $message->edited_at?->toImmutable(),
             createdAt: $message->created_at->toImmutable(),
@@ -327,6 +355,36 @@ final readonly class EloquentPlanMessageRepository implements PlanMessageReposit
         }
 
         return $summaries;
+    }
+
+    /**
+     * display_name for each of $userIds, in one query - the same batched user_profiles lookup
+     * EloquentPlanActivityRepository::listForPlan() performs for actor names, lifted into a
+     * named helper here because four call sites share it (listForPlan() and the three paths
+     * through toSummary()) rather than the one that file has.
+     *
+     * $userIds must already be non-null and distinct: listForPlan() does that with
+     * ->filter()->unique() over the page, and toSummary() passes nothing or one id. Keeping the
+     * filtering at the call sites rather than here is what lets the empty-array early return
+     * stand for "nothing to ask" in both cases - a page of entirely anonymised messages issues
+     * no query at all.
+     *
+     * @param  array<int, string>  $userIds
+     * @return array<string, string>
+     */
+    private static function displayNamesByUserId(array $userIds): array
+    {
+        if ($userIds === []) {
+            return [];
+        }
+
+        $names = [];
+
+        foreach (DB::table('user_profiles')->whereIn('user_id', $userIds)->get(['user_id', 'display_name']) as $row) {
+            $names[(string) $row->user_id] = (string) $row->display_name;
+        }
+
+        return $names;
     }
 
     /** §6.2 caps a page at 100 - matching every sibling repository's own pageSize(). */

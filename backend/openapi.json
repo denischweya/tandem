@@ -2750,7 +2750,16 @@
                         "type": "string"
                     },
                     "user_id": {
-                        "type": "string"
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "user_display_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
                     },
                     "body": {
                         "type": "string"
@@ -2781,6 +2790,7 @@
                     "id",
                     "plan_id",
                     "user_id",
+                    "user_display_name",
                     "body",
                     "edited_at",
                     "created_at",

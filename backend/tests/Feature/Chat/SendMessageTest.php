@@ -13,6 +13,7 @@ uses(RefreshDatabase::class);
 it('sends a message as an active member and returns it', function (): void {
     $plan = Plan::factory()->create();
     $user = activeMemberOf($plan);
+    $user->profile()->update(['display_name' => 'Ada Lovelace']);
 
     postJson("/api/v1/plans/{$plan->id}/messages", ['body' => 'Should we do Italian?'], [
         'Authorization' => 'Bearer '.$user->createToken('t')->plainTextToken,
@@ -20,6 +21,10 @@ it('sends a message as an active member and returns it', function (): void {
         ->assertCreated()
         ->assertJsonPath('data.body', 'Should we do Italian?')
         ->assertJsonPath('data.user_id', $user->id)
+        // The sender's name on the CREATE response, not only on the list: a null here would
+        // read as "anonymised author" for a message its author wrote one millisecond ago, and
+        // a client rendering the optimistic row would have nothing to show beside it.
+        ->assertJsonPath('data.user_display_name', 'Ada Lovelace')
         ->assertJsonPath('data.reactions', []);
 });
 

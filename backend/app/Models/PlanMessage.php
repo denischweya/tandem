@@ -13,7 +13,7 @@ use Illuminate\Support\Carbon;
 /**
  * @property string $id
  * @property string $plan_id
- * @property string $user_id
+ * @property string|null $user_id Null once the author's account is deleted - ADR 0012.
  * @property string $body
  * @property Carbon|null $edited_at
  * @property Carbon|null $deleted_at
