@@ -3,7 +3,9 @@
 declare(strict_types=1);
 
 use App\Models\Plan;
+use App\Models\PlanMember;
 use App\Models\PlanMessage;
+use App\Models\User;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -82,4 +84,50 @@ it('publishes each sender’s own display name, from one batched lookup', functi
     ])->assertOk();
 
     expect($queries)->toHaveCount(1, 'the display-name lookup must be batched over the page, not issued per row');
+});
+
+it('publishes a null display name for a sender who has no profile row, keeping the user_id', function (): void {
+    // The THIRD state PlanMessageSummary::$userDisplayName's docblock names, and the one that is
+    // neither "named" nor "anonymised": a live user_id whose user_profiles row is absent.
+    //
+    // user_profiles.user_id is UNIQUE NOT NULL with CASCADE and registration creates both rows,
+    // so this is defensive rather than a shape production produces today - which is exactly why
+    // it is pinned here. MEASURED: PHPStan at level 8 does NOT flag dropping the `?? null` in
+    // EloquentPlanMessageRepository::listForPlan() (errors: 0, because displayNamesByUserId() is
+    // declared array<string, string> and an offset on one is a string, not a possible null), so
+    // the analyser holds nothing open - this case is the only force that does. Without the
+    // guard, PHP 8.4's own undefined-array-key E_WARNING is promoted to an ErrorException by
+    // Illuminate\Foundation\Bootstrap\HandleExceptions and this read becomes a 500. The same
+    // attribution EloquentPlanActivityRepository's equivalent comment records for actor names,
+    // re-measured here rather than transcribed.
+    $plan = Plan::factory()->create();
+    $reader = activeMemberOf($plan);
+
+    // No ->hasProfile(): this is the one factory call in the chat suite that deliberately omits
+    // it, and the member row is written by hand because activeMemberOf() always makes a profile.
+    $profileless = User::factory()->create();
+    $member = new PlanMember;
+    $member->id = (string) Str::uuid7();
+    $member->plan_id = $plan->id;
+    $member->user_id = $profileless->id;
+    $member->role = 'member';
+    $member->status = 'active';
+    $member->joined_at = now();
+    $member->save();
+
+    $message = new PlanMessage;
+    $message->id = (string) Str::uuid7();
+    $message->plan_id = $plan->id;
+    $message->user_id = $profileless->id;
+    $message->body = 'from someone with no profile row';
+    $message->save();
+
+    $response = getJson("/api/v1/plans/{$plan->id}/messages", [
+        'Authorization' => 'Bearer '.$reader->createToken('t')->plainTextToken,
+    ])->assertOk();
+
+    // The id survives and only the name is missing, which is what makes this state different
+    // from an anonymised author - where both are null.
+    expect($response->json('data.0.user_id'))->toBe($profileless->id);
+    expect($response->json('data.0.user_display_name'))->toBeNull();
 });
